@@ -5,10 +5,11 @@ import UsersView from '$lib/components/views/UsersView.svelte';
 import CoursesView from '$lib/components/views/CoursesView.svelte';
 import AnalyticsView from '$lib/components/views/AnalyticsView.svelte';
 import AccountView from '$lib/components/views/AccountView.svelte';
+import ChatView from '$lib/components/views/ChatView.svelte';
 import HelpView from '$lib/components/views/HelpView.svelte';
 import type { FrameName } from '$lib/types/frame';
 
-export type FrameComponent = typeof DashboardView | typeof UsersView | typeof CoursesView | typeof AnalyticsView | typeof AccountView | typeof HelpView;
+export type FrameComponent = typeof DashboardView | typeof UsersView | typeof CoursesView | typeof AnalyticsView | typeof AccountView | typeof ChatView| typeof HelpView;
 export type { FrameName };
 const FRAME_CACHE_KEY = 'rocky_current_frame';
 const FRAME_CACHE_TTL_MS = 60 * 60 * 1000;
@@ -21,6 +22,7 @@ export const frameMap: Record<FrameName, FrameComponent> = {
     courses: CoursesView,
     analytics: AnalyticsView,
     account: AccountView,
+    chat: ChatView,
     help: HelpView
 };
 
