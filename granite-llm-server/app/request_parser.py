@@ -1,4 +1,9 @@
-DEFAULT_MODEL_NAME = "qwen3:0.6b"
+import os
+
+DEFAULT_MODEL_NAME = "gemma4:latest"
+
+def get_default_model():
+    return os.getenv("OLLAMA_MODEL", DEFAULT_MODEL_NAME)
 
 def extract_model(payload):
     model = payload.get("model")
