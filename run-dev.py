@@ -3,17 +3,22 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import shutil
 import subprocess
 import sys
 import time
 from pathlib import Path
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
 
 from run_env import (
     allowed_hosts,
     backend_url,
+    chat_api_bind,
+    chat_api_url,
     frontend_bind,
+    granite_bind,
+    granite_url,
     load_project_env,
 )
 
@@ -21,6 +26,8 @@ from run_env import (
 REPO_ROOT = Path(__file__).resolve().parent
 BACKEND_DIR = REPO_ROOT / "rocky-backend"
 FRONTEND_DIR = REPO_ROOT / "rocky-interface"
+GRANITE_DIR = REPO_ROOT / "granite-llm-server" / "app"
+CHAT_API_DIR = REPO_ROOT / "api-rocky"
 SEED_SCRIPT = BACKEND_DIR / "seed_from_backend.py"
 
 logging.basicConfig(level=logging.INFO)
@@ -78,12 +85,18 @@ def get_python_executable(require_backend_deps: bool = False) -> str:
 
 
 def get_npm_executable() -> str:
+    npm_path = shutil.which("npm")
+    if npm_path:
+        return npm_path
+    homebrew_npm = Path("/opt/homebrew/bin/npm")
+    if homebrew_npm.exists():
+        return str(homebrew_npm)
     if os.name == "nt":
         return "npm.cmd"
     return "npm"
 
 
-def _build_frontend_env(api_base_url: str | None = None) -> dict[str, str]:
+def _build_frontend_env(api_base_url: str | None = None, chat_api_url_value: str | None = None) -> dict[str, str]:
     env = os.environ.copy()
 
     # Validate shared launch config up-front to fail fast with actionable messages.
@@ -93,15 +106,20 @@ def _build_frontend_env(api_base_url: str | None = None) -> dict[str, str]:
     if api_base_url is not None:
         env["PUBLIC_API_BASE_URL"] = api_base_url
 
+    if chat_api_url_value is not None:
+        env["ROCKY_CHAT_API_URL"] = chat_api_url_value
+
     return env
 
 
-def wait_for_backend(backend_url: str, timeout_seconds: int = 15) -> bool:
+def wait_for_http(url: str, timeout_seconds: int = 15) -> bool:
     deadline = time.time() + timeout_seconds
     while time.time() < deadline:
         try:
-            with urlopen(f"{backend_url}/health", timeout=2):
+            with urlopen(url, timeout=2):
                 return True
+        except HTTPError:
+            return True
         except URLError:
             time.sleep(0.5)
     return False
@@ -119,7 +137,7 @@ def run_frontend_only() -> int:
     npm_exe = get_npm_executable()
     frontend_host, frontend_port = frontend_bind()
     log("Starting frontend only (backend API should be running separately).")
-    env = _build_frontend_env()
+    env = _build_frontend_env(chat_api_url_value=os.getenv("ROCKY_CHAT_API_URL", "").strip() or chat_api_url())
     return subprocess.call(
         [npm_exe, "run", "dev", "--", "--host", frontend_host, "--port", frontend_port],
         cwd=str(FRONTEND_DIR),
@@ -131,22 +149,47 @@ def run_both() -> int:
     python_exe = get_python_executable(require_backend_deps=True)
     npm_exe = get_npm_executable()
     resolved_backend_url = backend_url()
+    resolved_granite_url = os.getenv("ROCKY_GRANITE_URL", "").strip() or granite_url()
+    resolved_chat_api_url = os.getenv("ROCKY_CHAT_API_URL", "").strip() or chat_api_url()
     frontend_host, frontend_port = frontend_bind()
     log(f"Using Python interpreter: {python_exe}")
 
     log("Seeding backend with fixture data from rocky-backend/seed-data...")
     subprocess.run([python_exe, str(SEED_SCRIPT)], check=True, cwd=str(REPO_ROOT))
 
+    granite_process = None
+    if resolved_granite_url == granite_url():
+        granite_host, granite_port = granite_bind()
+        granite_env = os.environ.copy()
+        granite_env["ROCKY_GRANITE_HOST"] = granite_host
+        granite_env["ROCKY_GRANITE_PORT"] = granite_port
+        log(f"Launching Granite service on http://{granite_host}:{granite_port}")
+        granite_process = subprocess.Popen([python_exe, "main.py"], cwd=str(GRANITE_DIR), env=granite_env)
+
+    chat_host, chat_port = chat_api_bind()
+    chat_env = os.environ.copy()
+    chat_env["ROCKY_CHAT_API_HOST"] = chat_host
+    chat_env["ROCKY_CHAT_API_PORT"] = chat_port
+    chat_env["ROCKY_GRANITE_URL"] = resolved_granite_url
+    log(f"Launching Rocky chat API on http://{chat_host}:{chat_port}")
+    chat_api_process = subprocess.Popen([python_exe, "api.py"], cwd=str(CHAT_API_DIR), env=chat_env)
+
     log(f"Launching backend API on {resolved_backend_url}")
     backend_process = subprocess.Popen([python_exe, "main.py"], cwd=str(BACKEND_DIR), env=os.environ.copy())
 
     try:
-        if not wait_for_backend(resolved_backend_url):
+        if granite_process is not None and not wait_for_http(resolved_granite_url.replace("/generate", "/health")):
+            raise RuntimeError(f"Granite service did not become ready at {resolved_granite_url}")
+
+        if not wait_for_http(resolved_chat_api_url.replace("/rocky-api", "/health")):
+            raise RuntimeError(f"Rocky chat API did not become ready at {resolved_chat_api_url}")
+
+        if not wait_for_http(f"{resolved_backend_url}/health"):
             raise RuntimeError(f"Backend did not become ready on {resolved_backend_url}")
 
-        log("Backend is ready. Starting frontend against backend API...")
+        log("Backend services are ready. Starting frontend against backend API...")
 
-        env = _build_frontend_env(api_base_url=resolved_backend_url)
+        env = _build_frontend_env(api_base_url=resolved_backend_url, chat_api_url_value=resolved_chat_api_url)
 
         return subprocess.call(
             [npm_exe, "run", "dev", "--", "--host", frontend_host, "--port", frontend_port],
@@ -154,6 +197,22 @@ def run_both() -> int:
             env=env,
         )
     finally:
+        if granite_process is not None and granite_process.poll() is None:
+            log("Stopping Granite service...")
+            granite_process.terminate()
+            try:
+                granite_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                granite_process.kill()
+
+        if chat_api_process.poll() is None:
+            log("Stopping Rocky chat API...")
+            chat_api_process.terminate()
+            try:
+                chat_api_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                chat_api_process.kill()
+
         if backend_process.poll() is None:
             log("Stopping backend process...")
             backend_process.terminate()
@@ -164,7 +223,7 @@ def run_both() -> int:
 
 
 def main() -> int:
-    load_project_env(REPO_ROOT, BACKEND_DIR, FRONTEND_DIR)
+    load_project_env(REPO_ROOT, BACKEND_DIR, FRONTEND_DIR, REPO_ROOT / "granite-llm-server", CHAT_API_DIR)
 
     parser = argparse.ArgumentParser(description="Cross-platform Rocky dev runner")
     parser.add_argument(

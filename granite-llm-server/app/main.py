@@ -4,9 +4,19 @@ from ollama_client import call_ollama_chat
 from request_parser import extract_model
 from request_parser import extract_messages
 from request_parser import extract_generation_options
+import os
 
 
 app = Flask(__name__)
+GRANITE_HOST = os.getenv("ROCKY_GRANITE_HOST", "127.0.0.1")
+GRANITE_PORT = int(os.getenv("ROCKY_GRANITE_PORT", "5002"))
+
+
+@app.route("/health", methods=["GET"])
+def health():
+    return jsonify({"ok": True, "service": "granite-llm-server"}), 200
+
+
 @app.route("/generate", methods=["POST"])
 
 def generate():
@@ -53,6 +63,5 @@ def generate():
 
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=5002, debug=True)
-
+    app.run(host=GRANITE_HOST, port=GRANITE_PORT, debug=True)
 
