@@ -6,7 +6,7 @@ const frameLabels: Record<FrameName, string> = {
 	courses: 'Courses',
 	analytics: 'Analytics',
 	account: 'Account',
-	chat: 'ChatView',
+	chat: 'Chat',
 	help: 'Help'
 };
 
