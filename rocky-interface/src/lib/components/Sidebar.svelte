@@ -17,7 +17,7 @@
 		courses: '/courses-icon.svg',
 		analytics: '/analytics-icon.svg',
 		account: '/account-icon.svg',
-		chat: '/help-icon.svg', //placeholder for chat icon
+		chat: '/chat-icon.svg',
 		help: '/help-icon.svg'
 	};
 
