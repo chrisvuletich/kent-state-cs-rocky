@@ -89,20 +89,22 @@
         setTimeout(scrollToBottom, 0);
 
         try{
-            //TODO: Replace with Rocky API endpoint when backend is done.
-            // const response = await fetch("/api/chat", {
-            //     method:"POST",
-            //     headers:{
-            //         "Content-Type":"application/json"
-            //     },
-            //     body: JSON.stringify({
-            //         message: userMessage
-            //     })
-            // });
+            const response = await fetch("/api/chat", {
+                method:"POST",
+                headers:{
+                    "Content-Type":"application/json"
+                },
+                body: JSON.stringify({
+                    message: userMessage
+                })
+            });
 
-            //const data = await response.json();
-
-            const reply = "Rocky AI backend connection pending.";
+            const data = await response.json();
+            const reply = response.ok && typeof data?.reply === "string" && data.reply.trim() !== ""
+                ? data.reply
+                : (typeof data?.error === "string" && data.error.trim() !== ""
+                    ? data.error
+                    : "Rocky AI did not return a reply.");
 
             messages = [
                 ...messages,
@@ -112,7 +114,7 @@
                 }
             ];
         }
-        catch{
+        catch(error){
             console.error(error);
 
         messages = [

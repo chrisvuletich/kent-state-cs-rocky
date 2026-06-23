@@ -1,10 +1,22 @@
 from __future__ import annotations
 
+import os
+
 from flask import Flask, request, jsonify
 import requests
-import json
 
 app = Flask(__name__)
+
+CHAT_API_KEY = os.getenv("ROCKY_CHAT_API_KEY", "SOME_API_KEY")
+GRANITE_URL = os.getenv("ROCKY_GRANITE_URL", "http://127.0.0.1:5002/generate")
+DEFAULT_MODEL = os.getenv("ROCKY_CHAT_MODEL", "qwen3:0.6b")
+CHAT_API_HOST = os.getenv("ROCKY_CHAT_API_HOST", "127.0.0.1")
+CHAT_API_PORT = int(os.getenv("ROCKY_CHAT_API_PORT", "5003"))
+
+
+@app.route("/health", methods=["GET"])
+def health():
+    return jsonify({"ok": True, "service": "api-rocky"}), 200
 
 
 @app.route("/rocky-api", methods=["POST"])
@@ -18,7 +30,16 @@ def rocky_api():
     #verify and request AI
     if check_key(apirequest.get("apikey")):
         response = request_ai(apirequest.get("requestbody"))
-        return jsonify(response), 200
+        if response.get("error"):
+            status = 400 if response.get("error_type") == "bad_request" else 502
+            return jsonify({"error": response["error"]}), status
+        return jsonify(
+            {
+                "reply": response.get("output_text", ""),
+                "model": response.get("model"),
+                "metadata": response.get("metadata", {}),
+            }
+        ), 200
     else:
         return jsonify({"error": "Invalid API key"}), 401
 
@@ -41,39 +62,74 @@ def parse_api_request():
 
 def check_key(key):
     #impliment mongo interaction
-    if key == "SOME_API_KEY":
+    if key == CHAT_API_KEY:
         return True
     else:
         return False
 
+def _build_granite_payload(request_body):
+    if request_body is None:
+        return None
+
+    if isinstance(request_body, str):
+        message_text = request_body.strip()
+        if not message_text:
+            return None
+        return {
+            "model": DEFAULT_MODEL,
+            "input": [
+                {
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": message_text}],
+                }
+            ],
+        }
+
+    if not isinstance(request_body, dict):
+        return None
+
+    if isinstance(request_body.get("input"), list):
+        return request_body
+
+    message_text = str(request_body.get("message", "")).strip()
+    if not message_text:
+        return None
+
+    payload = {
+        "model": str(request_body.get("model") or DEFAULT_MODEL),
+        "input": [
+            {
+                "role": "user",
+                "content": [{"type": "input_text", "text": message_text}],
+            }
+        ],
+    }
+
+    if "temperature" in request_body:
+        payload["temperature"] = request_body["temperature"]
+    if "top_p" in request_body:
+        payload["top_p"] = request_body["top_p"]
+
+    return payload
+
+
 def request_ai(request_body):
-    """Send `request_body` to the AI endpoint at granite.cs.kent.edu and return the response body.
-
-    - If `request_body` is a dict, it will be sent as JSON.
-    - If it's a string, the function will try to parse it as JSON, otherwise send it as the value of an `input` field.
-    - On network or HTTP errors, returns an error string.
-    """
+    """Send a chat request to Granite and return the parsed response body."""
     try:
-        if request_body is None:
-            payload = {}
-        elif isinstance(request_body, str):
-            try:
-                payload = json.loads(request_body)
-            except Exception:
-                payload = {"input": request_body}
-        else:
-            payload = request_body
+        payload = _build_granite_payload(request_body)
+        if payload is None:
+            return {"error": "Missing message.", "error_type": "bad_request"}
 
-        resp = requests.post("https://granite.cs.kent.edu", json=payload, timeout=15)
+        resp = requests.post(GRANITE_URL, json=payload, timeout=60)
         resp.raise_for_status()
-        try:
-            return resp.json()
-        except ValueError:
-            return {"result": resp.text}
+        data = resp.json()
+        if not str(data.get("output_text", "")).strip():
+            return {"error": "Granite returned no output.", "error_type": "bad_response"}
+        return data
     except requests.RequestException as exc:
-        return {"error": f"Error contacting AI: {exc}"}
+        return {"error": f"Error contacting AI: {exc}", "error_type": "network"}
 
 
 if __name__ == "__main__":
 	# default local dev run
-	app.run(host="127.0.0.1", port=5001, debug=True)
+	app.run(host=CHAT_API_HOST, port=CHAT_API_PORT, debug=True)

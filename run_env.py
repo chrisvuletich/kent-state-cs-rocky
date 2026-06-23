@@ -8,6 +8,10 @@ API_PORT_VAR = "ROCKY_API_PORT"
 WEB_HOST_VAR = "ROCKY_WEB_HOST"
 WEB_PORT_VAR = "ROCKY_WEB_PORT"
 ALLOWED_HOSTS_VAR = "ROCKY_ALLOWED_HOSTS"
+GRANITE_HOST_VAR = "ROCKY_GRANITE_HOST"
+GRANITE_PORT_VAR = "ROCKY_GRANITE_PORT"
+CHAT_API_HOST_VAR = "ROCKY_CHAT_API_HOST"
+CHAT_API_PORT_VAR = "ROCKY_CHAT_API_PORT"
 
 
 def load_env_file(path: Path, *, override: bool) -> None:
@@ -29,7 +33,7 @@ def load_env_file(path: Path, *, override: bool) -> None:
             os.environ[key] = value
 
 
-def load_project_env(repo_root: Path, backend_dir: Path, frontend_dir: Path) -> None:
+def load_project_env(repo_root: Path, backend_dir: Path, frontend_dir: Path, *extra_dirs: Path) -> None:
     load_env_file(repo_root / ".env", override=False)
     load_env_file(repo_root / ".env.local", override=True)
 
@@ -38,6 +42,10 @@ def load_project_env(repo_root: Path, backend_dir: Path, frontend_dir: Path) -> 
 
     load_env_file(frontend_dir / ".env", override=False)
     load_env_file(frontend_dir / ".env.local", override=True)
+
+    for service_dir in extra_dirs:
+        load_env_file(service_dir / ".env", override=False)
+        load_env_file(service_dir / ".env.local", override=True)
 
 
 def require_env(name: str) -> str:
@@ -84,3 +92,25 @@ def allowed_hosts() -> str:
             "Invalid ROCKY_ALLOWED_HOSTS: provide at least one host, e.g. \"localhost,127.0.0.1\"."
         )
     return ",".join(hosts)
+
+
+def granite_bind() -> tuple[str, str]:
+    host = require_env(GRANITE_HOST_VAR)
+    port = require_port(GRANITE_PORT_VAR)
+    return host, port
+
+
+def granite_url() -> str:
+    host, port = granite_bind()
+    return f"http://{host}:{port}/generate"
+
+
+def chat_api_bind() -> tuple[str, str]:
+    host = require_env(CHAT_API_HOST_VAR)
+    port = require_port(CHAT_API_PORT_VAR)
+    return host, port
+
+
+def chat_api_url() -> str:
+    host, port = chat_api_bind()
+    return f"http://{host}:{port}/rocky-api"
