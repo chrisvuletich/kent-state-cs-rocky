@@ -4,17 +4,19 @@ import { loadEnv } from 'vite';
 
 export default defineConfig(({ mode }) => {
 	const env = loadEnv(mode, '.', '');
+	const baseConfig = {
+		plugins: [sveltekit()],
+		optimizeDeps: {
+			exclude: ['@azure/msal-browser']
+		}
+	};
 
 	if (mode === 'test') {
-		return {
-			plugins: [sveltekit()]
-		};
+		return baseConfig;
 	}
 
 	if (mode === 'production') {
-		return {
-			plugins: [sveltekit()]
-		};
+		return baseConfig;
 	}
 
 	const host = env.ROCKY_WEB_HOST?.trim();
@@ -47,7 +49,7 @@ export default defineConfig(({ mode }) => {
 	}
 
 	return {
-		plugins: [sveltekit()],
+		...baseConfig,
 		server: {
 			allowedHosts,
 			host,
@@ -55,7 +57,3 @@ export default defineConfig(({ mode }) => {
 		}
 	};
 });
-
-optimizeDeps: {
-    exclude: ['@azure/msal-browser']
-}

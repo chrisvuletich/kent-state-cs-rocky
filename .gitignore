@@ -1,12 +1,28 @@
+# Python
 __pycache__/
+*.pyc
+.venv/
+env/
 
+# Node / SvelteKit
+node_modules/
+rocky-interface/.svelte-kit/
+rocky-interface/build/
+rocky-interface/.output/
 
-# Env
+# Env and secrets
 .env
 .env.*
+*.env
+*.env.local
 !.env.example
 !.env.test
-.venv/
+/etc/rocky/
+
+# OS
 .DS_Store
 
-env/
+# Deployment templates are intentionally tracked.
+!deploy/
+deploy/systemd/*.service
+!deploy/systemd/*.service.example

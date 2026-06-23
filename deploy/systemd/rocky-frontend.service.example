@@ -1,0 +1,19 @@
+[Unit]
+Description=Rocky SvelteKit frontend
+After=network-online.target rocky-backend.service rocky-chat-api.service
+Wants=network-online.target rocky-backend.service rocky-chat-api.service
+
+[Service]
+Type=simple
+User={{ROCKY_USER}}
+Group={{ROCKY_GROUP}}
+WorkingDirectory={{ROCKY_APP_DIR}}/rocky-interface
+EnvironmentFile=/etc/rocky/frontend.env
+EnvironmentFile=/etc/rocky/backend.env
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node build/index.js
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
