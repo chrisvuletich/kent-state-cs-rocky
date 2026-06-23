@@ -152,3 +152,11 @@ Frontend browser tests depend on a running browser and Chromium/WebDriver setup:
 ```powershell
 python -m unittest discover -s run-test/frontend -p "test_*.py" -v
 ```
+## Credits
+
+This project is based on the original Rocky repository developed in Kent State University's Software Engineering course.
+
+Original repository:
+https://github.com/Spring-2026-Software-Engineering/Rocky
+
+This repository preserves the original commit history and contributors while continuing development for the Kent State Rocky AI platform.
