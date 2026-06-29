@@ -12,6 +12,7 @@ GRANITE_URL = os.getenv("ROCKY_GRANITE_URL", "http://127.0.0.1:5002/generate")
 DEFAULT_MODEL = os.getenv("ROCKY_CHAT_MODEL", os.getenv("OLLAMA_MODEL", "gemma4:latest"))
 CHAT_API_HOST = os.getenv("ROCKY_CHAT_API_HOST", "127.0.0.1")
 CHAT_API_PORT = int(os.getenv("ROCKY_CHAT_API_PORT", "5003"))
+GRANITE_TIMEOUT_SECONDS = int(os.getenv("ROCKY_GRANITE_TIMEOUT_SECONDS", "180"))
 
 
 @app.route("/health", methods=["GET"])
@@ -120,7 +121,7 @@ def request_ai(request_body):
         if payload is None:
             return {"error": "Missing message.", "error_type": "bad_request"}
 
-        resp = requests.post(GRANITE_URL, json=payload, timeout=60)
+        resp = requests.post(GRANITE_URL, json=payload, timeout=GRANITE_TIMEOUT_SECONDS)
         resp.raise_for_status()
         data = resp.json()
         if not str(data.get("output_text", "")).strip():
