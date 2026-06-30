@@ -18,6 +18,7 @@ rocky-interface/.output/
 !.env.example
 !.env.test
 /etc/rocky/
+granite-llm-server/input_example.txt
 
 # OS
 .DS_Store

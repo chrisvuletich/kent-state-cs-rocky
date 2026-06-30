@@ -55,8 +55,7 @@ def extract_generation_options(payload):
     if "top_p" in payload:
         options["top_p"] = payload["top_p"]
 
-    # For later. Tested but needs tewaking
-    #if "max_output_tokens" in payload:
-    #    options["num_predict"] = payload["max_output_tokens"]
+    if "max_output_tokens" in payload:
+        options["num_predict"] = payload["max_output_tokens"]
 
     return options
