@@ -110,6 +110,8 @@ def _build_granite_payload(request_body):
         payload["temperature"] = request_body["temperature"]
     if "top_p" in request_body:
         payload["top_p"] = request_body["top_p"]
+    if "max_output_tokens" in request_body:
+        payload["max_output_tokens"] = request_body["max_output_tokens"]
 
     return payload
 
