@@ -1,5 +1,6 @@
 <script>
     import "$lib/styles/routes/views/chat.css";
+    import SvelteMarkdown from "@humanspeak/svelte-markdown";
 
     let input = "";
     let messages = [];
@@ -14,10 +15,26 @@
             },
             {
                 role:"assistant",
-                content: `Hello! I'm Rocky AI, Kent State University's AI assistant.
+                content: `# 👋 Meet Rocky AI
 
-        I can help answer questions, explain concepts, assist with coursework, and provide information about Rocky and Kent State resources.
-        Please remember that conversations may be logged and reviewed, and you should avoid sharing sensitive information.`
+Welcome! I'm **Rocky AI**, the Kent State Computer Science assistant.
+
+My goal is to help students learn, explore new ideas, and make coursework a little easier. Whether you're learning to program, studying for an exam, or working on a project, I'm here to help explain concepts and answer questions.
+
+I'm designed to be a learning companion—not just a source of answers.
+
+> Ask me anything related to computer science, programming, or Rocky, and we'll work through it together.
+
+## Before you get started
+
+Please keep these things in mind:
+
+- Conversations **may be logged and reviewed** to improve the system.
+- **Do not share** passwords, API keys, or other sensitive personal information.
+- AI can make mistakes, so **verify important academic or university information** with official Kent State resources.
+
+> **Tip:** Try asking a programming question, requesting an explanation of a concept, or asking for help debugging your code.
+`
                 }
             ];
             setTimeout(scrollToBottom, 0);
@@ -32,13 +49,26 @@
             },
             {
                 role:"assistant",
-                content: `Rocky AI can:
+                content: `# 🚀 What can Rocky AI do?
 
-    • Explain computer science concepts
-    • Help understand assignments
-    • Answer questions about Rocky
-    • Provide general assistance
-    • Help brainstorm ideas and projects`
+Rocky AI is designed to assist **Kent State Computer Science students** with a variety of tasks.
+
+## I can help with
+
+- 💻 Explaining programming concepts
+- 🐞 Debugging code and understanding errors
+- 📖 Breaking down algorithms and data structures
+- 📝 Brainstorming projects and assignments
+- 🧠 Answering general computer science questions
+
+## Things to remember
+
+- I can explain concepts, but I won't always have the correct answer.
+- I work best when you provide **clear questions** and **relevant context**.
+- If you're asking about code, include the code snippet or error message whenever possible.
+
+> **Tip:** Instead of asking *"It doesn't work,"* try describing what you expected to happen and what actually happened.
+`
             }
         ];
         setTimeout(scrollToBottom, 0);
@@ -53,12 +83,31 @@
             },
             {
                 role:"assistant",
-                content: `Privacy & Safety
+                content: `# 🔒 Privacy & Safety
 
-    • Conversations may be logged and reviewed.
-    • Do not share passwords or sensitive information.
-    • Rocky AI may occasionally make mistakes.
-    • Verify important academic or administrative information with official university resources.`
+Before you start chatting, here are a few things to keep in mind.
+
+## Protect your information
+
+For your security, **don't share**:
+
+- 🔑 Passwords or API keys
+- 💳 Credit card or banking information
+- 🪪 Social Security numbers or other sensitive personal information
+- 📄 Confidential university or work documents
+
+## Using Rocky AI responsibly
+
+- Conversations **may be logged and reviewed** to help improve Rocky AI.
+- AI responses may occasionally be inaccurate or incomplete.
+- Always verify important academic, administrative, or university information with official Kent State resources.
+
+## A good rule of thumb
+
+If you wouldn't post it publicly or email it to a stranger, don't share it with an AI assistant.
+
+> **Your privacy matters.** When in doubt, leave personal or sensitive information out of your conversation.
+`
             }
         ];
         setTimeout(scrollToBottom, 0);
@@ -165,9 +214,13 @@
     {/if}
 
     {#each messages as msg}
-    <div class="message {msg.role}">
-        {msg.content}
-    </div>
+        <div class="message {msg.role}">
+            {#if msg.role === "assistant"}
+                <SvelteMarkdown source={msg.content} />
+            {:else}
+                {msg.content}
+            {/if}
+        </div>
     {/each}
 </div>
 

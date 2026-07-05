@@ -100,7 +100,6 @@
 }
 
 .message{
-    display:flex;
     width:100%;
 }
 
@@ -193,4 +192,35 @@
 
 .sendButton:active{
     transform:translateY(0);
+}
+
+/* MarkDown Styles */
+.assistant h1,
+.assistant h2,
+.assistant h3 {
+    margin: 1rem 0 0.5rem;
+}
+
+.assistant p {
+    margin: 0.75rem 0;
+}
+
+.assistant ul {
+    margin: 0.75rem 0;
+    padding-left: 2rem;
+}
+
+.assistant li {
+    margin: 0.4rem 0;
+}
+
+.assistant pre {
+    background: #f4f4f4;
+    padding: 1rem;
+    border-radius: 8px;
+    overflow-x: auto;
+}
+
+.assistant code {
+    font-family: monospace;
 }
