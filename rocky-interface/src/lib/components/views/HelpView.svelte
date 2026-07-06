@@ -233,18 +233,9 @@
 			</div>
 		</div>
 	</section>
-	{:else}
+	{:else if selectedDocumentation === 'python'}
 
 		<section class="section">
-			<div class="section-header">
-				<h2>Documentation Placeholder</h2>
-			</div>
-
-			<div class="section-content">
-				<p>
-					You are viewing:
-					<strong>{selectedDocumentation}</strong>
-				</p>
 
 				<button
 					class="support-btn support-btn-secondary"
@@ -252,13 +243,10 @@
 				>
 					← Back to Developer Resources
 				</button>
-			</div>
+				<div class="section-content">
+					<PythonExample />
+				</div>
 		</section>
 	{/if}
-	
-	{#if selectedDocumentation === 'python'}
-		<PythonExample />
-	{:else}
-		<p>Coming soon...</p>
-	{/if}
+
 </ViewShell>
