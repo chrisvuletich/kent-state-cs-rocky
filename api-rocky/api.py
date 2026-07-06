@@ -4,6 +4,17 @@ import os
 
 from flask import Flask, request, jsonify
 import requests
+import logging
+from mongita import MongitaClientDisk
+
+# Try PyMongo first (default to localhost). If unavailable, fall back to Mongita.
+try:
+    from pymongo import MongoClient
+    from pymongo.errors import PyMongoError
+except Exception:  # pragma: no cover - optional dependency
+    MongoClient = None
+    PyMongoError = Exception
+
 
 app = Flask(__name__)
 
@@ -13,6 +24,30 @@ DEFAULT_MODEL = os.getenv("ROCKY_CHAT_MODEL", os.getenv("OLLAMA_MODEL", "gemma4:
 CHAT_API_HOST = os.getenv("ROCKY_CHAT_API_HOST", "127.0.0.1")
 CHAT_API_PORT = int(os.getenv("ROCKY_CHAT_API_PORT", "5003"))
 GRANITE_TIMEOUT_SECONDS = int(os.getenv("ROCKY_GRANITE_TIMEOUT_SECONDS", "180"))
+
+
+col = None
+
+# Determine MongoDB URI (defaults to local MongoDB)
+mongodb_uri = os.getenv("ROCKY_MONGODB_URI", "mongodb://127.0.0.1:27017").strip()
+
+if MongoClient and mongodb_uri:
+    try:
+        mclient = MongoClient(mongodb_uri, serverSelectionTimeoutMS=2000)
+        mclient.admin.command("ping")
+        mdb = mclient["rockydb"]
+        col = mdb["apikeys"]
+        logging.info("Using MongoDB at %s for apikeys", mongodb_uri)
+    except PyMongoError as exc:
+        logging.warning("Could not connect to MongoDB (%s), falling back to Mongita: %s", mongodb_uri, exc)
+
+if col is None:
+    # Fallback: use Mongita on disk
+    client = MongitaClientDisk("mongitaDB")
+    db = client["rockydb"]
+    col = db["apikeys"]
+
+
 
 
 @app.route("/health", methods=["GET"])
@@ -62,11 +97,10 @@ def parse_api_request():
 
 
 def check_key(key):
-    #impliment mongo interaction
-    if key == CHAT_API_KEY:
-        return True
-    else:
-        return False
+    api_key = col.find_one({"api-key": key})
+    return api_key is not None
+
+
 
 def _build_granite_payload(request_body):
     if request_body is None:
@@ -117,7 +151,7 @@ def _build_granite_payload(request_body):
 
 
 def request_ai(request_body):
-    """Send a chat request to Granite and return the parsed response body."""
+    # Send a chat request to Granite and return the parsed response body.
     try:
         payload = _build_granite_payload(request_body)
         if payload is None:
