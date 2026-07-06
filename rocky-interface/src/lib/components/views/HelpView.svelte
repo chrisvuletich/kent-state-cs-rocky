@@ -2,6 +2,7 @@
 	import ViewShell from '$lib/components/ViewShell.svelte';
 	import { currentFrame } from '$lib/stores/frameStore';
 	import type { HelpDocument, HelpResource } from '$lib/types/help';
+	import PythonExample from '$lib/components/help/api/PythonExample.svelte';
 
 	import {
 		IconHelpCircle,
@@ -44,44 +45,69 @@
 		}
 	];
 
-	const apiDocs = [
+	type ApiDocCard = {
+		id: ApiDocumentation;
+		title: string;
+		description: string;
+		action: string;
+		icon: typeof IconHelpCircle;
+	};
+
+	const apiDocs: ApiDocCard[] = [
 		{
+			id: 'intro',
 			title: 'What is an API?',
 			description: 'Learn the fundamentals of APIs, requests, responses, and authentication.',
 			action: 'Read Guide',
 			icon: IconHelpCircle
 		},
 		{
+			id: 'apikey',
 			title: 'Getting Your API Key',
 			description: 'Generate and manage your Rocky API key.',
 			action: 'View Guide',
 			icon: IconKey
 		},
 		{
+			id: 'python',
 			title: 'Python Example',
 			description: 'Make your first Rocky API request using Python.',
 			action: 'View Example',
 			icon: IconBrandPython
 		},
 		{
+			id: 'javascript',
 			title: 'JavaScript Example',
 			description: 'Connect to the Rocky API using JavaScript.',
 			action: 'View Example',
 			icon: IconBrandJavascript
 		},
 		{
+			id: 'best-practices',
 			title: 'Best Practices',
 			description: 'Keep your API keys secure and use the API responsibly.',
 			action: 'Read Tips',
 			icon: IconShieldCheck
 		},
 		{
+			id: 'reference',
 			title: 'API Reference',
 			description: 'Browse endpoints, parameters, and response formats.',
 			action: 'View Reference',
 			icon: IconBook2
 		}
 	];
+
+	type ApiDocumentation =
+		| 'home'
+		| 'intro'
+		| 'apikey'
+		| 'python'
+		| 'javascript'
+		| 'best-practices'
+		| 'reference';
+
+	let selectedDocumentation: ApiDocumentation = 'home';
 
 	const helpFiles: HelpDocument[] = [
 		{ title: 'User Management Guide', category: 'Administrators', date: '2026-03-21', status: 'Updated', url: '#' },
@@ -100,6 +126,7 @@
 </script>
 
 <ViewShell title="Help Center">
+	{#if selectedDocumentation === 'home'}
 	<section class="section">
 		<div class="section-header">
 			<h2>Other Resources</h2>
@@ -129,16 +156,19 @@
 				</p>
 				<div class="api-card-grid">
 					{#each apiDocs as doc}
-						<div class="api-card">
+						<button type="button"
+								class="api-card"
+								on:click={() => (selectedDocumentation = doc.id)}
+						>
 							<div class="api-card-icon">
 								<svelte:component this={doc.icon} size={40} stroke={1.75} />
 							</div>
 							<h4>{doc.title}</h4>
 							<p>{doc.description}</p>
-							<a href="#">
+							<span class="api-card-link">
 								{doc.action} →
-							</a>
-						</div>
+							</span>
+						</button>
 					{/each}
 				</div>
 
@@ -203,4 +233,32 @@
 			</div>
 		</div>
 	</section>
+	{:else}
+
+		<section class="section">
+			<div class="section-header">
+				<h2>Documentation Placeholder</h2>
+			</div>
+
+			<div class="section-content">
+				<p>
+					You are viewing:
+					<strong>{selectedDocumentation}</strong>
+				</p>
+
+				<button
+					class="support-btn support-btn-secondary"
+					on:click={() => (selectedDocumentation = 'home')}
+				>
+					← Back to Developer Resources
+				</button>
+			</div>
+		</section>
+	{/if}
+	
+	{#if selectedDocumentation === 'python'}
+		<PythonExample />
+	{:else}
+		<p>Coming soon...</p>
+	{/if}
 </ViewShell>
