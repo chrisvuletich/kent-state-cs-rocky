@@ -3,6 +3,7 @@
 	import { currentFrame } from '$lib/stores/frameStore';
 	import type { HelpDocument, HelpResource } from '$lib/types/help';
 	import PythonExample from '$lib/components/help/api/PythonExample.svelte';
+	import WhatIsApi from '$lib/components/help/api/WhatIsApi.svelte';
 
 	import {
 		IconHelpCircle,
@@ -233,19 +234,37 @@
 			</div>
 		</div>
 	</section>
+
+	{:else if selectedDocumentation === 'intro'}
+
+		<section class="section">
+
+			<button
+				class="support-btn support-btn-secondary"
+				on:click={() => (selectedDocumentation = 'home')}
+			>
+				← Back to Developer Resources
+			</button>
+
+			<div class="section-content">
+				<WhatIsApi />
+			</div>
+
+		</section>
+
 	{:else if selectedDocumentation === 'python'}
 
 		<section class="section">
 
-				<button
-					class="support-btn support-btn-secondary"
-					on:click={() => (selectedDocumentation = 'home')}
-				>
-					← Back to Developer Resources
-				</button>
-				<div class="section-content">
-					<PythonExample />
-				</div>
+			<button
+				class="support-btn support-btn-secondary"
+				on:click={() => (selectedDocumentation = 'home')}
+			>
+				← Back to Developer Resources
+			</button>
+			<div class="section-content">
+				<PythonExample />
+			</div>
 		</section>
 	{/if}
 
