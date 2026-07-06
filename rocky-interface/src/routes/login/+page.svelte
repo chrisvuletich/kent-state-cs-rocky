@@ -185,6 +185,9 @@
           <p class="login-help-links">
             Forgot your <a href="/login/preview">Username</a> or <a href="/login/preview">Password</a>?
           </p>
+          <p class="login-help-links">
+            <a href="/login/about">About Rocky</a>
+          </p>
         </div>
 
         <div class="login-bottom">
