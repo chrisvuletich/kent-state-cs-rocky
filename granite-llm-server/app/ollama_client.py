@@ -24,7 +24,7 @@ def call_ollama_chat(model, messages, options=None):
 
     text = data["message"]["content"]
 
-    # Debug print for paraeter testing
+    # Debug print for parameter testing
     #print("OLLAMA PAYLOAD:", ollama_payload)
 
     return text
