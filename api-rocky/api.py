@@ -35,7 +35,7 @@ if MongoClient and mongodb_uri:
     try:
         mclient = MongoClient(mongodb_uri, serverSelectionTimeoutMS=2000)
         mclient.admin.command("ping")
-        mdb = mclient["rockydb"]
+        mdb = mclient["rocky_db"]
         col = mdb["apikeys"]
         logging.info("Using MongoDB at %s for apikeys", mongodb_uri)
     except PyMongoError as exc:
@@ -44,7 +44,7 @@ if MongoClient and mongodb_uri:
 if col is None:
     # Fallback: use Mongita on disk
     client = MongitaClientDisk("mongitaDB")
-    db = client["rockydb"]
+    db = client["rocky_db"]
     col = db["apikeys"]
 
 
