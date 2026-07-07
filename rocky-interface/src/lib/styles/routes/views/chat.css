@@ -224,3 +224,74 @@
 .assistant code {
     font-family: monospace;
 }
+
+.chat-layout {
+    display: grid;
+    grid-template-columns: 260px 1fr;
+    height: calc(100vh - 90px);
+    min-height: 0;
+}
+
+.conversation-panel {
+    border-right: 1px solid #d5dbe7;
+    background: #f8fafc;
+    padding: 1rem;
+    overflow-y: auto;
+}
+
+.chat-main {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+}
+
+.conversation-action {
+    width: 100%;
+    margin-bottom: 0.75rem;
+    padding: 0.75rem;
+    border-radius: 0.75rem;
+    border: 1px solid #cbd5e1;
+    background: white;
+    cursor: pointer;
+    font-weight: 700;
+}
+
+.conversation-action:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.conversation-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-top: 1rem;
+}
+
+.conversation-item {
+    text-align: left;
+    padding: 0.75rem;
+    border-radius: 0.75rem;
+    border: 1px solid transparent;
+    background: transparent;
+    cursor: pointer;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.conversation-item:hover {
+    background: #e8eef8;
+}
+
+.activeConversation {
+    background: #dbeafe;
+    border-color: #1d4ed8;
+    font-weight: 700;
+}
+
+.conversation-empty {
+    color: #64748b;
+    font-size: 0.9rem;
+}

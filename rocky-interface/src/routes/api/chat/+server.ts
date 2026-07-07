@@ -7,6 +7,7 @@ const CHAT_API_KEY = (env.ROCKY_CHAT_API_KEY ?? 'SOME_API_KEY').trim();
 export const POST: RequestHandler = async ({ request, fetch }) => {
 	const body = await request.json().catch(() => null);
 	const message = typeof body?.message === 'string' ? body.message.trim() : '';
+	const conversation_id = typeof body?.conversation_id === 'string' ? body.conversation_id.trim() : '';
 
 	if (!message) {
 		return json({ error: 'Missing message.' }, { status: 400 });
@@ -21,7 +22,8 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
 			},
 			body: JSON.stringify({
 				'api-key': CHAT_API_KEY,
-				message
+				message,
+				...(conversation_id ? { conversation_id } : {})
 			})
 		});
 
