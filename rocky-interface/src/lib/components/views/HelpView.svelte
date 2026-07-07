@@ -4,6 +4,7 @@
 	import type { HelpDocument, HelpResource } from '$lib/types/help';
 	import PythonExample from '$lib/components/help/api/PythonExample.svelte';
 	import WhatIsApi from '$lib/components/help/api/WhatIsApi.svelte';
+	import ApiKeyGuide from '$lib/components/help/api/ApiKeyGuide.svelte';
 
 	import {
 		IconHelpCircle,
@@ -248,6 +249,23 @@
 
 			<div class="section-content">
 				<WhatIsApi />
+			</div>
+
+		</section>
+	
+	{:else if selectedDocumentation === 'apikey'}
+
+		<section class="section">
+
+			<button
+				class="support-btn support-btn-secondary"
+				on:click={() => (selectedDocumentation = 'home')}
+			>
+				← Back to Developer Resources
+			</button>
+
+			<div class="section-content">
+				<ApiKeyGuide />
 			</div>
 
 		</section>
