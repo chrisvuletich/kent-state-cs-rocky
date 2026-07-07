@@ -2,6 +2,63 @@
 	import ViewShell from '$lib/components/ViewShell.svelte';
 	import { currentFrame } from '$lib/stores/frameStore';
 	import type { HelpDocument, HelpResource } from '$lib/types/help';
+	import PythonExample from '$lib/components/help/api/PythonExample.svelte';
+	import WhatIsApi from '$lib/components/help/api/WhatIsApi.svelte';
+	import ApiKeyGuide from '$lib/components/help/api/ApiKeyGuide.svelte';
+	import JavaScriptExample from '$lib/components/help/api/JavaScriptExample.svelte';
+	import BestPractices from '$lib/components/help/api/BestPractices.svelte';
+	import ApiReference from '$lib/components/help/api/ApiReference.svelte';
+
+	import {
+		IconHelpCircle,
+		IconKey,
+		IconBrandPython,
+		IconBrandJavascript,
+		IconShieldCheck,
+		IconBook2,
+		IconInfoCircle
+	} from '@tabler/icons-svelte';
+
+	const documentationComponents = {
+		intro: WhatIsApi,
+		apikey: ApiKeyGuide,
+		python: PythonExample,
+		javascript: JavaScriptExample,
+		'best-practices': BestPractices,
+		reference: ApiReference
+	} as const;
+
+	const documentationOrder: ApiDocumentation[] = [
+		'intro',
+		'apikey',
+		'python',
+		'javascript',
+		'best-practices',
+		'reference'
+	];
+
+	$: currentIndex = documentationOrder.indexOf(selectedDocumentation);
+
+	type DocumentationPage = Exclude<ApiDocumentation, 'home'>;
+
+	$: previousDocumentation =
+		(currentIndex > 0
+			? documentationOrder[currentIndex - 1]
+			: null) as DocumentationPage | null;
+
+	$: nextDocumentation =
+		(currentIndex < documentationOrder.length - 1
+			? documentationOrder[currentIndex + 1]
+			: null) as DocumentationPage | null;
+
+	const documentationTitles: Record<DocumentationPage, string> = {
+		intro: 'What is an API?',
+		apikey: 'Getting Your API Key',
+		python: 'Python Example',
+		javascript: 'JavaScript Example',
+		'best-practices': 'Best Practices',
+		reference: 'API Reference'
+	};
 
 	const resources: HelpResource[] = [
 		{
@@ -34,6 +91,75 @@
 		}
 	];
 
+	type ApiDocCard = {
+		id: ApiDocumentation;
+		title: string;
+		description: string;
+		action: string;
+		icon: typeof IconHelpCircle;
+	};
+
+	const apiDocs: ApiDocCard[] = [
+		{
+			id: 'intro',
+			title: 'What is an API?',
+			description: 'Learn the fundamentals of APIs, requests, responses, and authentication.',
+			action: 'Read Guide',
+			icon: IconHelpCircle
+		},
+		{
+			id: 'apikey',
+			title: 'Getting Your API Key',
+			description: 'Generate and manage your Rocky API key.',
+			action: 'View Guide',
+			icon: IconKey
+		},
+		{
+			id: 'python',
+			title: 'Python Example',
+			description: 'Make your first Rocky API request using Python.',
+			action: 'View Example',
+			icon: IconBrandPython
+		},
+		{
+			id: 'javascript',
+			title: 'JavaScript Example',
+			description: 'Connect to the Rocky API using JavaScript.',
+			action: 'View Example',
+			icon: IconBrandJavascript
+		},
+		{
+			id: 'best-practices',
+			title: 'Best Practices',
+			description: 'Keep your API keys secure and use the API responsibly.',
+			action: 'Read Tips',
+			icon: IconShieldCheck
+		},
+		{
+			id: 'reference',
+			title: 'API Reference',
+			description: 'Browse endpoints, parameters, and response formats.',
+			action: 'View Reference',
+			icon: IconBook2
+		}
+	];
+
+	type ApiDocumentation =
+		| 'home'
+		| 'intro'
+		| 'apikey'
+		| 'python'
+		| 'javascript'
+		| 'best-practices'
+		| 'reference';
+
+	let selectedDocumentation: ApiDocumentation = 'home';
+
+	$: currentDocumentation =
+		selectedDocumentation !== 'home'
+			? documentationComponents[selectedDocumentation]
+			: null;
+
 	const helpFiles: HelpDocument[] = [
 		{ title: 'User Management Guide', category: 'Administrators', date: '2026-03-21', status: 'Updated', url: '#' },
 		{ title: 'Course Creation Workflow', category: 'Instructors', date: '2026-02-15', status: 'Current', url: '#' },
@@ -48,9 +174,19 @@
 			$currentFrame = 'dashboard';
 		}
 	}
+
+	function openDocumentation(page: ApiDocumentation) {
+		selectedDocumentation = page;
+
+		document.querySelector('.app-content')?.scrollTo({
+			top: 0,
+			behavior: 'smooth'
+		});
+	}
 </script>
 
 <ViewShell title="Help Center">
+	{#if selectedDocumentation === 'home'}
 	<section class="section">
 		<div class="section-header">
 			<h2>Other Resources</h2>
@@ -68,13 +204,55 @@
 					</a>
 				{/each}
 			</div>
-
-			<div class="help-callout">
-				<h3 class="help-callout-title">Little lost? Try here first!</h3>
-				<p class="help-callout-text">Find answers to common questions in our official documentation.</p>
-				<button class="support-btn support-btn-primary" type="button">Search the Rocky Guides</button>
-			</div>
 		</div>
+	</section>
+
+	<section class="section help-section">
+
+			<div class="api-docs">
+				<h3>Developer Resources</h3>
+				<p>
+					Learn how to integrate Rocky into your applications and use the API.
+				</p>
+				<div class="api-card-grid">
+					{#each apiDocs as doc}
+						<button type="button"
+								class="api-card"
+								on:click={() => openDocumentation(doc.id)}
+						>
+							<div class="api-card-icon">
+								<svelte:component this={doc.icon} size={40} stroke={1.75} />
+							</div>
+							<h4>{doc.title}</h4>
+							<p>{doc.description}</p>
+							<span class="api-card-link">
+								{doc.action} →
+							</span>
+						</button>
+					{/each}
+				</div>
+
+				<div class="api-callout">
+					<div class="api-callout-icon">
+						<IconInfoCircle size={30} stroke={2} />
+					</div>
+					<div class="api-callout-content">
+						<h3>New to APIs?</h3>
+						<p>
+							Start with <strong>What is an API?</strong> to learn the basics,
+							then continue to <strong>Getting Your API Key</strong> before
+							trying the <strong>Python Example</strong>.
+						</p>
+					</div>
+					<button
+						class="support-btn support-btn-primary"
+						on:click={() => openDocumentation('intro')}
+					>
+						Start Here
+					</button>
+				</div>
+
+			</div>
 	</section>
 
 	<section class="section help-section">
@@ -118,4 +296,45 @@
 			</div>
 		</div>
 	</section>
+
+	{:else}
+		<section class="section">
+		<div class="documentation-header">
+			<button
+				class="support-btn support-btn-secondary"
+				on:click={() => (selectedDocumentation = 'home')}
+			>
+				← Back to Developer Resources
+			</button>
+		</div>
+			<div class="section-content">
+				<svelte:component this={currentDocumentation} />
+			</div>
+			<div class="documentation-navigation">
+				{#if previousDocumentation}
+					<button
+						class="documentation-nav-card"
+						on:click={() => openDocumentation(previousDocumentation)}
+					>
+						<span class="documentation-nav-label">← Previous</span>
+						<strong>{documentationTitles[previousDocumentation]}</strong>
+					</button>
+				{:else}
+					<div></div>
+				{/if}
+
+				{#if nextDocumentation}
+					<button
+						class="documentation-nav-card documentation-nav-next"
+						on:click={() => openDocumentation(nextDocumentation)}
+					>
+						<span class="documentation-nav-label">Continue →</span>
+						<strong>{documentationTitles[nextDocumentation]}</strong>
+					</button>
+				{/if}
+
+			</div>
+		</section>
+	{/if}
+
 </ViewShell>
