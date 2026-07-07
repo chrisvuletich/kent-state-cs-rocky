@@ -686,6 +686,29 @@ def regenerate_course_api_key(
         "created": key_doc["created"],
     }
 
+def create_user_api_key(
+    api_keys_collection,
+    user_id: str,
+) -> dict[str, Any]:
+    generated_key, generated_hash = generate_api_key_pair()
+
+    key_doc = {
+        "owner_type": "person",
+        "owner_id": normalize_str(user_id).lower(),
+        "group_created_by": None,
+        "key_name": "chat-key",
+        "course_id": None,
+        "hash": generated_hash,
+        "is_active": True,
+        "expire": None,
+        "created": datetime.now(timezone.utc).isoformat(),
+    }
+    
+    api_keys_collection.insert_one(key_doc)
+
+    return {
+        "api_key": generated_key,
+    }
 
 def delete_course_api_keys(course: dict[str, Any], api_keys_collection) -> int:
     course_code = normalize_str(course.get("code"))

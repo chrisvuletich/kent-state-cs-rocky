@@ -80,6 +80,8 @@ def microsoft_login(deps: dict[str, Any]):
     logger = deps["logger"]
     reconcile_course_members_for_user = deps["reconcile_course_members_for_user"]
     courses = deps["courses"]
+    api_keys = deps["api_keys"]
+    create_user_api_key = deps["create_user_api_key"]
 
     if not settings.enable_microsoft_oauth:
         return jsonify({"error": "Not found"}), 404
@@ -108,6 +110,10 @@ def microsoft_login(deps: dict[str, Any]):
             inserted_id = users.insert_one(to_insert).inserted_id
             users.update_one({"_id": inserted_id}, {"$set": {"id": str(inserted_id)}})
             user_record = users.find_one({"_id": inserted_id})
+            create_user_api_key(
+                api_keys,
+                str(inserted_id),
+            )
             logger.info("[oauth] login success: created Kent user %s", email)
         else:
             users.update_one(
@@ -146,6 +152,10 @@ def microsoft_login(deps: dict[str, Any]):
         inserted_id = users.insert_one(to_insert).inserted_id
         users.update_one({"_id": inserted_id}, {"$set": {"id": str(inserted_id)}})
         user_record = users.find_one({"_id": inserted_id})
+        create_user_api_key(
+            api_keys,
+            str(inserted_id),
+        )
         logger.info("[oauth] login success: created whitelisted user %s", email)
     else:
         whitelist_is_active = _is_user_active(whitelist_record)
