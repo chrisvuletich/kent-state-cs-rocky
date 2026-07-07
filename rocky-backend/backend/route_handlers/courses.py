@@ -1152,7 +1152,12 @@ def regenerate_course_api_key_route(deps: dict[str, Any], course_id: str):
     }
 
     try:
-        key_doc = regenerate_course_api_key(course, api_keys, requester_id or email, ownership)
+        key_doc = regenerate_course_api_key(
+            course,
+            api_keys,
+            requester_id or email,
+            ownership,
+        )
     except ValueError as exc:
         return _bad_request("Unable to generate API key.")
 
@@ -1193,6 +1198,7 @@ def delete_course_api_key_route(deps: dict[str, Any], course_id: str):
     _build_api_history_entry = deps["_build_api_history_entry"]
     _bad_request = deps["_bad_request"]
     _serialize_value = deps["_serialize_value"]
+    _serialize_api_key_summary = deps["_serialize_api_key_summary"]
     normalize_str = deps["normalize_str"]
 
     identity = require_requester_identity()
@@ -1321,7 +1327,15 @@ def delete_course_api_key_route(deps: dict[str, Any], course_id: str):
             deps,
         )
         api_history.insert_one(history_doc)
-        return jsonify(_serialize_value({"message": "API key hash removed", "deleted": 1, "key": updated_key}))
+        return jsonify(
+            _serialize_value(
+                {
+                    "message": "API key hash removed",
+                    "deleted": 1,
+                    "key": _serialize_api_key_summary(updated_key),
+                }
+            )
+        )
 
     if not can_manage_api_keys(is_admin):
         return jsonify({"error": "Admin access is required."}), 403

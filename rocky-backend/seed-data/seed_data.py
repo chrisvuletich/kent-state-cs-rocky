@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+from backend.api_key_generator import generate_api_key_id
 from backend.validation import normalize_str, validate_api_key_payload, validate_course_payload, validate_user_payload
 
 
@@ -147,7 +148,7 @@ def seed_database(collections, payload: dict[str, Any]) -> dict[str, int]:
         if error:
             summary["api_keys_rejected"] += 1
             continue
-        cleaned["api_key_id"] = summary["api_keys_inserted"] + 1
+        cleaned["key_id"] = normalize_str(cleaned.get("key_id")) or generate_api_key_id()
         slot_index = cleaned.get("slot_index") if isinstance(cleaned.get("slot_index"), int) else 1
         if slot_index < 1:
             slot_index = 1

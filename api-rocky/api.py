@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import hashlib
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -20,7 +21,10 @@ except Exception:  # pragma: no cover - optional dependency
 
 app = Flask(__name__)
 
+CHAT_API_KEY_CONFIGURED = "ROCKY_CHAT_API_KEY" in os.environ and bool(os.getenv("ROCKY_CHAT_API_KEY", "").strip())
 CHAT_API_KEY = os.getenv("ROCKY_CHAT_API_KEY", "SOME_API_KEY")
+CHAT_SERVICE_OWNER_ID = os.getenv("ROCKY_CHAT_SERVICE_OWNER_ID", "rocky-chat-service@kent.edu").strip() or "rocky-chat-service@kent.edu"
+CHAT_SERVICE_KEY_NAME = "rocky-chat-service"
 GRANITE_URL = os.getenv("ROCKY_GRANITE_URL", "http://127.0.0.1:5002/generate")
 DEFAULT_MODEL = os.getenv("ROCKY_CHAT_MODEL", os.getenv("OLLAMA_MODEL", "gemma4:latest"))
 CHAT_API_HOST = os.getenv("ROCKY_CHAT_API_HOST", "127.0.0.1")
@@ -28,33 +32,132 @@ CHAT_API_PORT = int(os.getenv("ROCKY_CHAT_API_PORT", "5003"))
 GRANITE_TIMEOUT_SECONDS = int(os.getenv("ROCKY_GRANITE_TIMEOUT_SECONDS", "180"))
 
 
-col = None
+api_keys_col = None
 conversations_col = None
 messages_col = None
 
+
+def normalize_api_key_value(key):
+    return key.strip() if isinstance(key, str) else ""
+
+
+def hash_api_key_value(key):
+    normalized_key = normalize_api_key_value(key)
+    if not normalized_key:
+        return ""
+    return hashlib.sha256(normalized_key.encode("utf-8")).hexdigest()
+
+
+def generate_public_key_id():
+    return f"akid_{uuid4().hex}"
+
+
+def ensure_chat_service_api_key():
+    if api_keys_col is None or not CHAT_API_KEY_CONFIGURED:
+        return
+
+    key_hash = hash_api_key_value(CHAT_API_KEY)
+    if not key_hash:
+        return
+
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        existing = api_keys_col.find_one({"hash": key_hash})
+        if existing is None:
+            existing = api_keys_col.find_one(
+                {
+                    "owner_type": "service",
+                    "owner_id": CHAT_SERVICE_OWNER_ID,
+                    "key_scope": "service",
+                    "key_name": CHAT_SERVICE_KEY_NAME,
+                }
+            )
+
+        key_id = ""
+        if isinstance(existing, dict) and isinstance(existing.get("key_id"), str):
+            key_id = existing.get("key_id", "").strip()
+
+        service_doc = {
+            "key_id": key_id or generate_public_key_id(),
+            "owner_type": "service",
+            "owner_id": CHAT_SERVICE_OWNER_ID,
+            "key_scope": "service",
+            "key_name": CHAT_SERVICE_KEY_NAME,
+            "slot_index": 0,
+            "hash": key_hash,
+            "is_active": True,
+            "expire": None,
+            "created": existing.get("created") if isinstance(existing, dict) and existing.get("created") else now,
+            "updated_at": now,
+        }
+
+        if isinstance(existing, dict) and existing.get("_id") is not None:
+            service_doc["_id"] = existing["_id"]
+            api_keys_col.replace_one({"_id": existing["_id"]}, service_doc)
+        else:
+            api_keys_col.insert_one(service_doc)
+    except Exception as exc:
+        logging.warning("Could not ensure chat service API key record: %s", exc)
+
+
+def create_index_safely(collection, keys, **kwargs):
+    if collection is None:
+        return
+    try:
+        collection.create_index(keys, **kwargs)
+    except Exception as exc:
+        logging.warning("Could not create chat API index %s: %s", keys, exc)
+
+
+def ensure_chat_indexes():
+    create_index_safely(
+        api_keys_col,
+        [("hash", 1)],
+        unique=True,
+        partialFilterExpression={"hash": {"$exists": True, "$gt": ""}},
+    )
+    create_index_safely(
+        conversations_col,
+        [("conversation_id", 1), ("user_id", 1)],
+        unique=True,
+    )
+    create_index_safely(
+        conversations_col,
+        [("user_id", 1), ("updated_at", -1)],
+    )
+    create_index_safely(
+        messages_col,
+        [("conversation_id", 1), ("user_id", 1), ("created_at", 1)],
+    )
+
+
 # Determine MongoDB URI (defaults to local MongoDB)
 mongodb_uri = os.getenv("ROCKY_MONGODB_URI", "mongodb://127.0.0.1:27017").strip()
+db_name = os.getenv("ROCKY_DB_NAME", "rocky_db").strip() or "rocky_db"
 
 if MongoClient and mongodb_uri:
     try:
         mclient = MongoClient(mongodb_uri, serverSelectionTimeoutMS=2000)
         mclient.admin.command("ping")
-        mdb = mclient["rocky_db"]
-        col = mdb["apikeys"]
+        mdb = mclient[db_name]
+        api_keys_col = mdb["api_keys"]
         conversations_col = mdb["conversations"]
         messages_col = mdb["messages"]
-        logging.info("Using MongoDB at %s for apikeys", mongodb_uri)
+        logging.info("Using MongoDB at %s/%s for API keys", mongodb_uri, db_name)
     except PyMongoError as exc:
         logging.warning("Could not connect to MongoDB (%s), falling back to Mongita: %s", mongodb_uri, exc)
 
-if col is None:
+if api_keys_col is None:
     # Fallback: use Mongita on disk
     client = MongitaClientDisk("mongitaDB")
-    db = client["rocky_db"]
-    col = db["apikeys"]
+    db = client[db_name]
+    api_keys_col = db["api_keys"]
     conversations_col = db["conversations"]
     messages_col = db["messages"]
 
+
+ensure_chat_indexes()
+ensure_chat_service_api_key()
 
 
 
@@ -80,7 +183,11 @@ def rocky_api():
     request_body = apirequest.get("requestbody")
 
     if should_store_history(request_body):
-        user_id = get_owner_id(key_doc)
+        chat_user_context = get_chat_user_context(key_doc)
+        if not chat_user_context:
+            return jsonify({"error": "Missing chat user context."}), 400
+
+        user_id = chat_user_context["user_id"]
         user_message = extract_user_message_text(request_body)
 
         if not user_message:
@@ -93,17 +200,19 @@ def rocky_api():
         conversation_id = get_or_create_conversation(
             user_id=user_id,
             conversation_id=requested_conversation_id,
-            first_message=user_message
+            first_message=user_message,
+            user_context=chat_user_context
         )
 
         save_message(
             conversation_id=conversation_id,
             user_id=user_id,
             role="user",
-            content=user_message
+            content=user_message,
+            user_context=chat_user_context
         )
 
-        recent_messages = load_recent_messages(conversation_id)
+        recent_messages = load_recent_messages(conversation_id, user_id)
         granite_input = messages_to_granite_input(recent_messages)
         history_request_body = build_history_request_body(request_body, granite_input)
 
@@ -120,7 +229,8 @@ def rocky_api():
             user_id=user_id,
             role="assistant",
             content=assistant_reply,
-            model=response.get("model")
+            model=response.get("model"),
+            user_context=chat_user_context
         )
 
         return jsonify(
@@ -158,7 +268,11 @@ def export_conversation(conversation_id):
     if not key_doc:
         return jsonify({"error": "Invalid API key"}), 401
 
-    user_id = get_owner_id(key_doc)
+    chat_user_context = get_chat_user_context(key_doc)
+    if not chat_user_context:
+        return jsonify({"error": "Missing chat user context."}), 400
+
+    user_id = chat_user_context["user_id"]
 
     conversation = conversations_col.find_one({
         "conversation_id": conversation_id,
@@ -218,7 +332,11 @@ def get_conversation(conversation_id):
     if not key_doc:
         return jsonify({"error": "Invalid API key"}), 401
 
-    user_id = get_owner_id(key_doc)
+    chat_user_context = get_chat_user_context(key_doc)
+    if not chat_user_context:
+        return jsonify({"error": "Missing chat user context."}), 400
+
+    user_id = chat_user_context["user_id"]
 
     conversation = conversations_col.find_one({
         "conversation_id": conversation_id,
@@ -253,7 +371,11 @@ def list_conversations():
     if not key_doc:
         return jsonify({"error": "Invalid API key"}), 401
 
-    user_id = get_owner_id(key_doc)
+    chat_user_context = get_chat_user_context(key_doc)
+    if not chat_user_context:
+        return jsonify({"error": "Missing chat user context."}), 400
+
+    user_id = chat_user_context["user_id"]
 
     conversations = list(conversations_col.find({
         "user_id": user_id
@@ -289,11 +411,98 @@ def parse_api_request():
 
 
 def check_key(key):
-    api_key = col.find_one({"api-key": key})
-    return api_key is not None
+    return get_key_doc(key) is not None
 
 def utc_now():
     return datetime.now(timezone.utc).isoformat()
+
+def hash_api_key(key):
+    return hash_api_key_value(key)
+
+def parse_expiration(value):
+    if value in {None, ""}:
+        return None
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    else:
+        return None
+
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+def key_doc_is_active(key_doc):
+    if not isinstance(key_doc, dict):
+        return False
+    if key_doc.get("is_active") is False:
+        return False
+    if key_doc.get("deleted_at") or key_doc.get("revoked_at"):
+        return False
+
+    expires_at = parse_expiration(key_doc.get("expire") or key_doc.get("expires_at"))
+    if expires_at is not None and expires_at <= datetime.now(timezone.utc):
+        return False
+
+    return True
+
+
+def is_service_key_doc(key_doc):
+    if not isinstance(key_doc, dict):
+        return False
+    return (
+        str(key_doc.get("owner_type") or "").strip().lower() == "service"
+        or str(key_doc.get("key_scope") or "").strip().lower() == "service"
+    )
+
+
+def normalize_identity(value):
+    return str(value).strip().lower() if value is not None else ""
+
+
+def get_forwarded_user_context():
+    user_id = normalize_identity(request.headers.get("X-Rocky-User-Id"))
+    user_email = normalize_identity(request.headers.get("X-Rocky-User-Email"))
+    user_name = str(request.headers.get("X-Rocky-User-Name") or "").strip()
+
+    return {
+        "user_id": user_id or user_email,
+        "user_email": user_email or None,
+        "user_name": user_name or None,
+    }
+
+
+def get_chat_user_context(key_doc):
+    if is_service_key_doc(key_doc):
+        context = get_forwarded_user_context()
+        if not context["user_id"]:
+            return None
+        return context
+
+    user_id = get_owner_id(key_doc)
+    if not user_id:
+        return None
+
+    user_email = normalize_identity(key_doc.get("email")) if isinstance(key_doc, dict) else ""
+
+    return {
+        "user_id": user_id,
+        "user_email": user_email or None,
+        "user_name": None,
+    }
+
+
+def find_valid_key_doc(collection, query):
+    if collection is None:
+        return None
+    key_doc = collection.find_one(query)
+    if key_doc_is_active(key_doc):
+        return key_doc
+    return None
 
 def get_key_doc(key):
     """
@@ -309,7 +518,13 @@ def get_key_doc(key):
             "owner_id": "dev-user"
         }
 
-    return col.find_one({"api-key": key})
+    normalized_key = key.strip() if isinstance(key, str) else ""
+    if not normalized_key:
+        return None
+
+    key_hash = hash_api_key(normalized_key)
+
+    return find_valid_key_doc(api_keys_col, {"hash": key_hash})
 
 def get_owner_id(key_doc):
     """Gets the user ID to see who owns the conversation"""
@@ -347,7 +562,7 @@ def extract_user_message_text(request_body):
 
     return str(request_body.get("message", "")).strip()
 
-def get_or_create_conversation(user_id, conversation_id, first_message):
+def get_or_create_conversation(user_id, conversation_id, first_message, user_context=None):
     """
     Reuses an existing conversation if conversation_id is provided.
     Otherwise creates a new conversation document.
@@ -365,9 +580,13 @@ def get_or_create_conversation(user_id, conversation_id, first_message):
 
     title = first_message[:60].strip() or "New Chat"
 
+    context = user_context if isinstance(user_context, dict) else {}
+
     conversations_col.insert_one({
         "conversation_id": new_conversation_id,
         "user_id": user_id,
+        "user_email": context.get("user_email"),
+        "user_name": context.get("user_name"),
         "title": title,
         "created_at": utc_now(),
         "updated_at": utc_now()
@@ -375,16 +594,19 @@ def get_or_create_conversation(user_id, conversation_id, first_message):
 
     return new_conversation_id
 
-def save_message(conversation_id, user_id, role, content, model=None):
+def save_message(conversation_id, user_id, role, content, model=None, user_context=None):
     """
     Saves one chat message to MongoDB/Mongita.
 
     Each user or assistant turn becomes one document in the messages collection.
     """
+    context = user_context if isinstance(user_context, dict) else {}
+
     messages_col.insert_one({
         "message_id": str(uuid4()),
         "conversation_id": conversation_id,
         "user_id": user_id,
+        "user_email": context.get("user_email"),
         "role": role,
         "content": content,
         "model": model,
@@ -403,14 +625,15 @@ def save_message(conversation_id, user_id, role, content, model=None):
         }
     )
 
-def load_recent_messages(conversation_id, limit=20):
+def load_recent_messages(conversation_id, user_id, limit=20):
     """
     Loads the most recent messages for a conversation.
 
     Sorting is done in Python so it works with both MongoDB and Mongita.
     """
     messages = list(messages_col.find({
-        "conversation_id": conversation_id
+        "conversation_id": conversation_id,
+        "user_id": user_id
     }))
 
     messages.sort(key=lambda item: item.get("created_at", ""))

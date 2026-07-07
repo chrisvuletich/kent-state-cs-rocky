@@ -3,6 +3,7 @@ export type ApiUser = Partial<{
 	last_name: string;
 	email: string;
 	id: string;
+	api_key_owner_id: string;
 	is_admin: boolean;
 	is_active: boolean;
 }>;
@@ -13,6 +14,7 @@ export type User = {
 	lastName: string;
 	displayName: string;
 	email: string;
+	apiKeyOwnerId: string;
 	isAdmin: boolean;
 	isActive: boolean;
 };
@@ -51,6 +53,7 @@ export function normalizeUser(raw: ApiUser): User {
 	const lastName = raw.last_name?.trim() || '';
 	const displayName = `${firstName} ${lastName}`.trim() || 'N/A';
 	const id = raw.id?.trim() || (email !== 'N/A' ? email.toLowerCase() : 'unknown');
+	const apiKeyOwnerId = raw.api_key_owner_id?.trim().toLowerCase() || id.toLowerCase();
 
 	return {
 		id,
@@ -58,6 +61,7 @@ export function normalizeUser(raw: ApiUser): User {
 		lastName,
 		displayName,
 		email,
+		apiKeyOwnerId,
 		isAdmin: Boolean(raw.is_admin),
 		isActive: raw.is_active === undefined ? true : Boolean(raw.is_active)
 	};

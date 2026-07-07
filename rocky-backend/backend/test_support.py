@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import logging
+import os
 import sys
 import types
 import unittest
@@ -10,6 +11,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 BACKEND_PATH = ROOT / "rocky-backend"
 SEED_MODULE_PATH = BACKEND_PATH / "seed_from_backend.py"
+
+os.environ.setdefault("ROCKY_HIDDEN_API_KEY_SECRET", "rocky-test-hidden-api-key-secret")
 
 seed_spec = importlib.util.spec_from_file_location("seed_from_backend", SEED_MODULE_PATH)
 if seed_spec is None or seed_spec.loader is None:
@@ -41,6 +44,11 @@ class BackendTestCase(unittest.TestCase):
 
     def setUp(self):
         seed_backend.seed_from_backend()
+        self.seeded_user_ids = {
+            (user.get("email") or "").strip().lower(): (user.get("id") or "").strip()
+            for user in main.users.find()
+            if (user.get("email") or "").strip() and (user.get("id") or "").strip()
+        }
         self.admin_headers = {
             "X-Rocky-User-Email": "admin.local@kent.edu",
             "X-Rocky-User-Is-Admin": "true",

@@ -228,14 +228,12 @@ def _serialize_api_key_summary(entry: dict[str, Any]) -> dict[str, Any]:
         else:
             slot_index = 0
 
-    api_key_id = entry.get("api_key_id") if isinstance(entry.get("api_key_id"), int) else 0
-
     return {
+        "key_id": normalize_str(entry.get("key_id")),
         "owner_type": normalize_str(entry.get("owner_type")).lower() or "person",
         "owner_id": normalize_str(entry.get("owner_id")).lower(),
         "key_name": normalize_str(entry.get("key_name")) or "key-1",
         "slot_index": slot_index,
-        "api_key_id": api_key_id,
         "created": entry.get("created"),
         "course_id": entry.get("course_id"),
         "has_hash": bool(normalize_str(entry.get("hash"))),
@@ -491,6 +489,7 @@ def _resolve_requester_user_id(email: str) -> str:
 def _serialize_user(user_record: dict[str, Any]) -> dict[str, Any]:
     first_name = normalize_str(user_record.get("first_name"))
     last_name = normalize_str(user_record.get("last_name"))
+    api_key_owner_id = normalize_str(user_record.get("_id") or user_record.get("id")).lower()
 
     return _serialize_value(
         {
@@ -498,6 +497,7 @@ def _serialize_user(user_record: dict[str, Any]) -> dict[str, Any]:
             "last_name": last_name,
             "email": normalize_str(user_record.get("email")).lower(),
             "id": normalize_str(user_record.get("id") or user_record.get("_id")),
+            "api_key_owner_id": api_key_owner_id,
             "is_admin": bool(user_record.get("is_admin")),
             "is_active": _is_user_active(user_record),
             "created_at": user_record.get("created_at"),

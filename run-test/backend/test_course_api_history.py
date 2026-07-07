@@ -98,6 +98,9 @@ class CourseApiHistoryTests(BackendTestCase):
             headers=self.instructor_headers,
         )
         self.assertEqual(delete_response.status_code, 200)
+        delete_payload = delete_response.get_json()
+        self.assertNotIn("hash", (delete_payload or {}).get("key", {}))
+        self.assertEqual((delete_payload or {}).get("key", {}).get("has_hash"), False)
 
         matching_entries = [
             entry

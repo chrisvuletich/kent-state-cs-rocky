@@ -1,12 +1,8 @@
-import { env } from '$env/dynamic/private';
 import { json, type RequestHandler } from '@sveltejs/kit';
+import { CHAT_API_BASE_URL, chatApiPayload, chatIdentityHeaders, requireChatUser } from '$lib/server/chatProxy';
 
-const CHAT_API_URL = (env.ROCKY_CHAT_API_URL ?? 'http://127.0.0.1:5003/rocky-api').trim();
-const CHAT_API_KEY = (env.ROCKY_CHAT_API_KEY ?? 'SOME_API_KEY').trim();
-
-const CHAT_API_BASE_URL = CHAT_API_URL.replace(/\/rocky-api\/?$/, '');
-
-export const POST: RequestHandler = async ({ params, fetch }) => {
+export const POST: RequestHandler = async ({ params, fetch, locals }) => {
+	const user = requireChatUser(locals);
 	const conversation_id = params.conversation_id;
 
 	if (!conversation_id) {
@@ -18,11 +14,10 @@ export const POST: RequestHandler = async ({ params, fetch }) => {
 			method: 'POST',
 			headers: {
 				'Content-Type': 'application/json',
-				Accept: 'application/json'
+				Accept: 'application/json',
+				...chatIdentityHeaders(user)
 			},
-			body: JSON.stringify({
-				'api-key': CHAT_API_KEY
-			})
+			body: JSON.stringify(chatApiPayload(user))
 		});
 
 		const payload = await response.json().catch(() => ({

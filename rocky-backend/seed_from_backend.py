@@ -21,7 +21,7 @@ if str(BACKEND_DIR) not in sys.path:
 if str(SEED_DATA_DIR) not in sys.path:
 	sys.path.insert(0, str(SEED_DATA_DIR))
 
-from backend.api_key_generator import generate_api_key_pair
+from backend.api_key_generator import generate_api_key_id, generate_api_key_pair
 from backend.storage import build_in_memory_collections
 import main
 
@@ -131,8 +131,6 @@ def seed_from_backend() -> dict[str, int]:
     courses_inserted = 0
     api_keys_inserted = 0
     api_history_inserted = 0
-    next_api_key_id = 1
-
     for raw in raw_users:
         email = (raw.get("email") or "").strip().lower()
         if not email:
@@ -315,12 +313,12 @@ def seed_from_backend() -> dict[str, int]:
                     seeded_group_created_by = instructor_id.lower()
 
             key_doc = {
+                "key_id": generate_api_key_id(),
                 "owner_type": seeded_owner_type,
                 "owner_id": seeded_owner_id,
                 "group_created_by": seeded_group_created_by,
                 "key_name": "key-1",
                 "slot_index": 1,
-                "api_key_id": next_api_key_id,
                 "course_id": course_doc["id"],
                 "hash": generated_hash,
                 "is_active": True,
@@ -329,7 +327,6 @@ def seed_from_backend() -> dict[str, int]:
             }
             main.api_keys.insert_one(key_doc)
             api_keys_inserted += 1
-            next_api_key_id += 1
 
     for raw in raw_api_history:
         history_doc = {

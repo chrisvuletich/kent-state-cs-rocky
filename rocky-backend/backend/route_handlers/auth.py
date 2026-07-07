@@ -4,6 +4,91 @@ from datetime import datetime, timezone
 from typing import Any
 
 from flask import jsonify, request
+from pymongo.errors import DuplicateKeyError
+
+from backend.api_key_generator import generate_api_key_id, generate_hidden_api_key_pair
+
+
+DEFAULT_USER_API_KEY_NAME = "default"
+
+
+def _document_id_str(document: dict[str, Any]) -> str:
+    raw_id = document.get("_id")
+    if raw_id is not None:
+        return str(raw_id).strip().lower()
+    fallback_id = document.get("id")
+    return fallback_id.strip().lower() if isinstance(fallback_id, str) else ""
+
+
+def _find_default_user_api_key(api_keys, owner_id: str):
+    for entry in api_keys.find():
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("course_id") is not None or entry.get("c_id") is not None:
+            continue
+        key_scope = (entry.get("key_scope") or "").strip().lower()
+        if key_scope and key_scope != "user-default":
+            continue
+        if (entry.get("owner_type") or "person").strip().lower() != "person":
+            continue
+        if (entry.get("owner_id") or "").strip().lower() != owner_id:
+            continue
+        if (entry.get("key_name") or "").strip().lower() != DEFAULT_USER_API_KEY_NAME:
+            continue
+        return entry
+    return None
+
+
+def ensure_default_api_key_for_user(deps: dict[str, Any], user_record: dict[str, Any] | None):
+    if not isinstance(user_record, dict):
+        return None
+
+    owner_id = _document_id_str(user_record)
+    if not owner_id:
+        return None
+
+    api_keys = deps["api_keys"]
+    existing = _find_default_user_api_key(api_keys, owner_id)
+    _, expected_hash = generate_hidden_api_key_pair(owner_id)
+    now = datetime.now(timezone.utc).isoformat()
+
+    if isinstance(existing, dict) and existing.get("hash") and existing.get("is_active", True) is not False and not existing.get("deleted_at"):
+        existing_key_id = existing.get("key_id") if isinstance(existing.get("key_id"), str) else ""
+        if not existing_key_id.strip() or existing.get("hash") != expected_hash:
+            updated_existing = dict(existing)
+            updated_existing["key_id"] = existing_key_id.strip() or generate_api_key_id()
+            updated_existing["hash"] = expected_hash
+            updated_existing["updated_at"] = now
+            api_keys.replace_one({"_id": existing.get("_id")}, updated_existing)
+            return updated_existing
+        return existing
+
+    existing_key_id = existing.get("key_id") if isinstance(existing, dict) and isinstance(existing.get("key_id"), str) else ""
+
+    key_doc = {
+        "key_id": existing_key_id.strip() or generate_api_key_id(),
+        "owner_type": "person",
+        "owner_id": owner_id,
+        "key_scope": "user-default",
+        "key_name": DEFAULT_USER_API_KEY_NAME,
+        "slot_index": 0,
+        "hash": expected_hash,
+        "is_active": True,
+        "expire": None,
+        "created": existing.get("created") if isinstance(existing, dict) and existing.get("created") else now,
+        "updated_at": now,
+    }
+
+    if isinstance(existing, dict):
+        key_doc["_id"] = existing.get("_id")
+        api_keys.replace_one({"_id": existing.get("_id")}, key_doc)
+        return key_doc
+
+    try:
+        api_keys.insert_one(key_doc)
+    except DuplicateKeyError:
+        return _find_default_user_api_key(api_keys, owner_id)
+    return key_doc
 
 
 def get_preview_users(deps: dict[str, Any]):
@@ -62,6 +147,7 @@ def get_session_user(deps: dict[str, Any]):
     if updated_courses:
         user_record = _resolve_user_record(None, email) or user_record
 
+    ensure_default_api_key_for_user(deps, user_record)
     return jsonify(_serialize_user(user_record))
 
 
@@ -124,6 +210,7 @@ def microsoft_login(deps: dict[str, Any]):
             logger.info("[oauth] login success: existing Kent user %s", email)
 
         reconcile_course_members_for_user(courses, user_record)
+        ensure_default_api_key_for_user(deps, user_record)
         return jsonify({"ok": True, "user": _serialize_user(user_record)})
 
     whitelist_record = whitelist_users.find_one({"email": email})
@@ -164,6 +251,7 @@ def microsoft_login(deps: dict[str, Any]):
         logger.info("[oauth] login success: existing whitelisted user %s", email)
 
     reconcile_course_members_for_user(courses, user_record)
+    ensure_default_api_key_for_user(deps, user_record)
     return jsonify({"ok": True, "user": _serialize_user(user_record)})
 
 
