@@ -19,6 +19,47 @@
 		IconInfoCircle
 	} from '@tabler/icons-svelte';
 
+	const documentationComponents = {
+		intro: WhatIsApi,
+		apikey: ApiKeyGuide,
+		python: PythonExample,
+		javascript: JavaScriptExample,
+		'best-practices': BestPractices,
+		reference: ApiReference
+	} as const;
+
+	const documentationOrder: ApiDocumentation[] = [
+		'intro',
+		'apikey',
+		'python',
+		'javascript',
+		'best-practices',
+		'reference'
+	];
+
+	$: currentIndex = documentationOrder.indexOf(selectedDocumentation);
+
+	type DocumentationPage = Exclude<ApiDocumentation, 'home'>;
+
+	$: previousDocumentation =
+		(currentIndex > 0
+			? documentationOrder[currentIndex - 1]
+			: null) as DocumentationPage | null;
+
+	$: nextDocumentation =
+		(currentIndex < documentationOrder.length - 1
+			? documentationOrder[currentIndex + 1]
+			: null) as DocumentationPage | null;
+
+	const documentationTitles: Record<DocumentationPage, string> = {
+		intro: 'What is an API?',
+		apikey: 'Getting Your API Key',
+		python: 'Python Example',
+		javascript: 'JavaScript Example',
+		'best-practices': 'Best Practices',
+		reference: 'API Reference'
+	};
+
 	const resources: HelpResource[] = [
 		{
 			label: 'Kent State FlashLine',
@@ -113,6 +154,11 @@
 		| 'reference';
 
 	let selectedDocumentation: ApiDocumentation = 'home';
+
+	$: currentDocumentation =
+		selectedDocumentation !== 'home'
+			? documentationComponents[selectedDocumentation]
+			: null;
 
 	const helpFiles: HelpDocument[] = [
 		{ title: 'User Management Guide', category: 'Administrators', date: '2026-03-21', status: 'Updated', url: '#' },
@@ -251,104 +297,43 @@
 		</div>
 	</section>
 
-	{:else if selectedDocumentation === 'intro'}
-
+	{:else}
 		<section class="section">
-
+		<div class="documentation-header">
 			<button
 				class="support-btn support-btn-secondary"
 				on:click={() => (selectedDocumentation = 'home')}
 			>
 				← Back to Developer Resources
 			</button>
-
+		</div>
 			<div class="section-content">
-				<WhatIsApi />
+				<svelte:component this={currentDocumentation} />
 			</div>
+			<div class="documentation-navigation">
+				{#if previousDocumentation}
+					<button
+						class="documentation-nav-card"
+						on:click={() => openDocumentation(previousDocumentation)}
+					>
+						<span class="documentation-nav-label">← Previous</span>
+						<strong>{documentationTitles[previousDocumentation]}</strong>
+					</button>
+				{:else}
+					<div></div>
+				{/if}
 
-		</section>
-	
-	{:else if selectedDocumentation === 'apikey'}
+				{#if nextDocumentation}
+					<button
+						class="documentation-nav-card documentation-nav-next"
+						on:click={() => openDocumentation(nextDocumentation)}
+					>
+						<span class="documentation-nav-label">Continue →</span>
+						<strong>{documentationTitles[nextDocumentation]}</strong>
+					</button>
+				{/if}
 
-		<section class="section">
-
-			<button
-				class="support-btn support-btn-secondary"
-				on:click={() => (selectedDocumentation = 'home')}
-			>
-				← Back to Developer Resources
-			</button>
-
-			<div class="section-content">
-				<ApiKeyGuide />
 			</div>
-
-		</section>
-
-	{:else if selectedDocumentation === 'python'}
-
-		<section class="section">
-
-			<button
-				class="support-btn support-btn-secondary"
-				on:click={() => (selectedDocumentation = 'home')}
-			>
-				← Back to Developer Resources
-			</button>
-			<div class="section-content">
-				<PythonExample />
-			</div>
-		</section>
-
-	{:else if selectedDocumentation === 'javascript'}
-
-		<section class="section">
-
-			<button
-				class="support-btn support-btn-secondary"
-				on:click={() => (selectedDocumentation = 'home')}
-			>
-				← Back to Developer Resources
-			</button>
-
-			<div class="section-content">
-				<JavaScriptExample />
-			</div>
-
-		</section>
-	
-	{:else if selectedDocumentation === 'best-practices'}
-
-		<section class="section">
-
-			<button
-				class="support-btn support-btn-secondary"
-				on:click={() => (selectedDocumentation = 'home')}
-			>
-				← Back to Developer Resources
-			</button>
-
-			<div class="section-content">
-				<BestPractices />
-			</div>
-
-		</section>
-
-	{:else if selectedDocumentation === 'reference'}
-
-		<section class="section">
-
-			<button
-				class="support-btn support-btn-secondary"
-				on:click={() => (selectedDocumentation = 'home')}
-			>
-				← Back to Developer Resources
-			</button>
-
-			<div class="section-content">
-				<ApiReference />
-			</div>
-
 		</section>
 	{/if}
 
