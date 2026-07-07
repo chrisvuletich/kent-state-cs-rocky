@@ -128,6 +128,15 @@
 			$currentFrame = 'dashboard';
 		}
 	}
+
+	function openDocumentation(page: ApiDocumentation) {
+		selectedDocumentation = page;
+
+		document.querySelector('.app-content')?.scrollTo({
+			top: 0,
+			behavior: 'smooth'
+		});
+	}
 </script>
 
 <ViewShell title="Help Center">
@@ -163,7 +172,7 @@
 					{#each apiDocs as doc}
 						<button type="button"
 								class="api-card"
-								on:click={() => (selectedDocumentation = doc.id)}
+								on:click={() => openDocumentation(doc.id)}
 						>
 							<div class="api-card-icon">
 								<svelte:component this={doc.icon} size={40} stroke={1.75} />
@@ -189,9 +198,12 @@
 							trying the <strong>Python Example</strong>.
 						</p>
 					</div>
-					<a href="#" class="support-btn support-btn-primary">
+					<button
+						class="support-btn support-btn-primary"
+						on:click={() => openDocumentation('intro')}
+					>
 						Start Here
-					</a>
+					</button>
 				</div>
 
 			</div>
