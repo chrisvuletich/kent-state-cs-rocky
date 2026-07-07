@@ -4,7 +4,7 @@ import os
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response
 import requests
 import logging
 from mongita import MongitaClientDisk
@@ -145,6 +145,66 @@ def rocky_api():
             "metadata": response.get("metadata", {}),
         }
     ), 200
+
+@app.route("/conversations/<conversation_id>/export", methods=["POST"])
+def export_conversation(conversation_id):
+    payload = request.get_json(silent=True)
+
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Bad request: expected JSON payload"}), 400
+
+    key_doc = get_key_doc(payload.get("api-key"))
+
+    if not key_doc:
+        return jsonify({"error": "Invalid API key"}), 401
+
+    user_id = get_owner_id(key_doc)
+
+    conversation = conversations_col.find_one({
+        "conversation_id": conversation_id,
+        "user_id": user_id
+    })
+
+    if not conversation:
+        return jsonify({"error": "Conversation not found"}), 404
+
+    messages = load_conversation_messages(
+        conversation_id=conversation_id,
+        user_id=user_id
+    )
+
+    export_format = str(payload.get("format", "json")).lower().strip()
+
+    if export_format in {"markdown", "md"}:
+        markdown_text = format_conversation_markdown(conversation, messages)
+
+        return Response(
+            markdown_text,
+            mimetype="text/markdown",
+            headers={
+                "Content-Disposition": f'attachment; filename="rocky-conversation-{conversation_id}.md"'
+            }
+        )
+
+    if export_format == "json":
+        clean_messages = [
+            clean_message_for_export(message)
+            for message in messages
+        ]
+
+        return jsonify({
+            "conversation_id": conversation.get("conversation_id"),
+            "title": conversation.get("title"),
+            "user_id": conversation.get("user_id"),
+            "created_at": conversation.get("created_at"),
+            "updated_at": conversation.get("updated_at"),
+            "message_count": len(clean_messages),
+            "messages": clean_messages
+        }), 200
+
+    return jsonify({
+        "error": "Unsupported export format. Use json or markdown."
+    }), 400
 
 
 def parse_api_request():
@@ -291,6 +351,72 @@ def load_recent_messages(conversation_id, limit=20):
     messages.sort(key=lambda item: item.get("created_at", ""))
 
     return messages[-limit:]
+
+def load_conversation_messages(conversation_id, user_id):
+    """
+    Loads every message for one conversation owned by this user.
+    Used for export, not model context.
+    """
+    messages = list(messages_col.find({
+        "conversation_id": conversation_id,
+        "user_id": user_id
+    }))
+
+    messages.sort(key=lambda item: item.get("created_at", ""))
+
+    return messages
+
+
+def clean_message_for_export(message):
+    """
+    Removes Mongo/internal fields so jsonify does not choke on ObjectId.
+    """
+    return {
+        "message_id": message.get("message_id"),
+        "role": message.get("role"),
+        "content": message.get("content"),
+        "model": message.get("model"),
+        "created_at": message.get("created_at")
+    }
+
+
+def format_conversation_markdown(conversation, messages):
+    """
+    Converts one conversation into a readable Markdown transcript.
+    """
+    title = conversation.get("title", "Rocky Conversation")
+    conversation_id = conversation.get("conversation_id", "")
+    created_at = conversation.get("created_at", "")
+    updated_at = conversation.get("updated_at", "")
+
+    lines = [
+        f"# {title}",
+        "",
+        f"- Conversation ID: `{conversation_id}`",
+        f"- Created at: {created_at}",
+        f"- Updated at: {updated_at}",
+        "",
+        "---",
+        ""
+    ]
+
+    for message in messages:
+        role = str(message.get("role", "unknown")).title()
+        created = message.get("created_at", "")
+        content = str(message.get("content", "")).strip()
+
+        lines.extend([
+            f"## {role}",
+            "",
+            f"*{created}*",
+            "",
+            content,
+            "",
+            "---",
+            ""
+        ])
+
+    return "\n".join(lines)
 
 def messages_to_granite_input(messages):
     """
