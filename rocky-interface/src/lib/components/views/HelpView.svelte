@@ -6,6 +6,8 @@
 	import WhatIsApi from '$lib/components/help/api/WhatIsApi.svelte';
 	import ApiKeyGuide from '$lib/components/help/api/ApiKeyGuide.svelte';
 	import JavaScriptExample from '$lib/components/help/api/JavaScriptExample.svelte';
+	import BestPractices from '$lib/components/help/api/BestPractices.svelte';
+	import ApiReference from '$lib/components/help/api/ApiReference.svelte';
 
 	import {
 		IconHelpCircle,
@@ -299,6 +301,40 @@
 
 			<div class="section-content">
 				<JavaScriptExample />
+			</div>
+
+		</section>
+	
+	{:else if selectedDocumentation === 'best-practices'}
+
+		<section class="section">
+
+			<button
+				class="support-btn support-btn-secondary"
+				on:click={() => (selectedDocumentation = 'home')}
+			>
+				← Back to Developer Resources
+			</button>
+
+			<div class="section-content">
+				<BestPractices />
+			</div>
+
+		</section>
+
+	{:else if selectedDocumentation === 'reference'}
+
+		<section class="section">
+
+			<button
+				class="support-btn support-btn-secondary"
+				on:click={() => (selectedDocumentation = 'home')}
+			>
+				← Back to Developer Resources
+			</button>
+
+			<div class="section-content">
+				<ApiReference />
 			</div>
 
 		</section>
