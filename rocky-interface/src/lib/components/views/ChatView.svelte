@@ -4,9 +4,11 @@
 
     let input = "";
     let messages = [];
+    let conversationId = "";
     let chatContainer;
 
     function showIntroduction(){
+        conversationId = "";
 
         messages = [
             {
@@ -41,6 +43,7 @@ Please keep these things in mind:
     }
 
     function showCapabilities(){
+        conversationId = "";
 
         messages = [
             {
@@ -75,6 +78,7 @@ Rocky AI is designed to assist **Kent State Computer Science students** with a v
     }
 
     function showPrivacy(){
+        conversationId = "";
 
         messages = [
             {
@@ -144,11 +148,17 @@ If you wouldn't post it publicly or email it to a stranger, don't share it with 
                     "Content-Type":"application/json"
                 },
                 body: JSON.stringify({
-                    message: userMessage
+                    message: userMessage,
+                    ...(conversationId ? { conversation_id: conversationId } : {})
                 })
             });
 
             const data = await response.json();
+
+            if (response.ok && typeof data?.conversation_id === "string") {
+                conversationId = data.conversation_id;
+            }
+
             const reply = response.ok && typeof data?.reply === "string" && data.reply.trim() !== ""
                 ? data.reply
                 : (typeof data?.error === "string" && data.error.trim() !== ""
