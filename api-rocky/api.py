@@ -206,6 +206,71 @@ def export_conversation(conversation_id):
         "error": "Unsupported export format. Use json or markdown."
     }), 400
 
+@app.route("/conversations/<conversation_id>", methods=["POST"])
+def get_conversation(conversation_id):
+    payload = request.get_json(silent=True)
+
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Bad request: expected JSON payload"}), 400
+
+    key_doc = get_key_doc(payload.get("api-key"))
+
+    if not key_doc:
+        return jsonify({"error": "Invalid API key"}), 401
+
+    user_id = get_owner_id(key_doc)
+
+    conversation = conversations_col.find_one({
+        "conversation_id": conversation_id,
+        "user_id": user_id
+    })
+
+    if not conversation:
+        return jsonify({"error": "Conversation not found"}), 404
+
+    messages = load_conversation_messages(
+        conversation_id=conversation_id,
+        user_id=user_id
+    )
+
+    return jsonify({
+        "conversation": clean_conversation_for_list(conversation),
+        "messages": [
+            clean_message_for_export(message)
+            for message in messages
+        ]
+    }), 200
+
+@app.route("/conversations/list", methods=["POST"])
+def list_conversations():
+    payload = request.get_json(silent=True)
+
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Bad request: expected JSON payload"}), 400
+
+    key_doc = get_key_doc(payload.get("api-key"))
+
+    if not key_doc:
+        return jsonify({"error": "Invalid API key"}), 401
+
+    user_id = get_owner_id(key_doc)
+
+    conversations = list(conversations_col.find({
+        "user_id": user_id
+    }))
+
+    conversations.sort(
+        key=lambda item: item.get("updated_at", ""),
+        reverse=True
+    )
+
+    return jsonify({
+        "conversations": [
+            clean_conversation_for_list(conversation)
+            for conversation in conversations
+        ]
+    }), 200
+
 
 def parse_api_request():
     # Parse JSON payload from request into a dict with keys apikey & requestbody
@@ -365,6 +430,14 @@ def load_conversation_messages(conversation_id, user_id):
     messages.sort(key=lambda item: item.get("created_at", ""))
 
     return messages
+
+def clean_conversation_for_list(conversation):
+    return {
+        "conversation_id": conversation.get("conversation_id"),
+        "title": conversation.get("title"),
+        "created_at": conversation.get("created_at"),
+        "updated_at": conversation.get("updated_at")
+    }
 
 
 def clean_message_for_export(message):

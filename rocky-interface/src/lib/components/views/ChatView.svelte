@@ -1,10 +1,13 @@
 <script>
     import "$lib/styles/routes/views/chat.css";
     import SvelteMarkdown from "@humanspeak/svelte-markdown";
+    import { onMount } from "svelte";
 
     let input = "";
     let messages = [];
     let conversationId = "";
+    let conversations = [];
+    let loadingConversations = false;
     let chatContainer;
 
     function showIntroduction(){
@@ -172,6 +175,8 @@ If you wouldn't post it publicly or email it to a stranger, don't share it with 
                     content: reply
                 }
             ];
+
+            await loadConversations();
         }
         catch(error){
             console.error(error);
@@ -187,65 +192,213 @@ If you wouldn't post it publicly or email it to a stranger, don't share it with 
         }
         setTimeout(scrollToBottom, 0);
     }
+
+    async function loadConversations() {
+        loadingConversations = true;
+
+        try {
+            const response = await fetch("/api/chat/conversations", {
+                method: "POST"
+            });
+
+            const data = await response.json();
+
+            if (response.ok && Array.isArray(data?.conversations)) {
+                conversations = data.conversations;
+            }
+        }
+        catch(error) {
+            console.error(error);
+        }
+        finally {
+            loadingConversations = false;
+        }
+    }
+
+
+    async function loadConversation(selectedConversationId) {
+        try {
+            const response = await fetch(`/api/chat/conversations/${selectedConversationId}`, {
+                method: "POST"
+            });
+
+            const data = await response.json();
+
+            if (!response.ok) {
+                alert(data?.error ?? "Unable to load conversation.");
+                return;
+            }
+
+            conversationId = selectedConversationId;
+
+            messages = Array.isArray(data?.messages)
+                ? data.messages.map((message) => ({
+                    role: message.role,
+                    content: message.content
+                }))
+                : [];
+
+            setTimeout(scrollToBottom, 0);
+        }
+        catch(error) {
+            console.error(error);
+            alert("Unable to load conversation.");
+        }
+    }
+
+
+    function newConversation() {
+        conversationId = "";
+        messages = [];
+        input = "";
+    }
+
+    async function exportConversation() {
+        if (!conversationId) {
+            alert("Start or select a conversation before exporting.");
+            return;
+        }
+
+        try {
+            const response = await fetch("/api/chat/export", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    conversation_id: conversationId,
+                    format: "markdown"
+                })
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => null);
+                alert(errorData?.error ?? "Export failed.");
+                return;
+            }
+
+            const blob = await response.blob();
+            const url = URL.createObjectURL(blob);
+
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = `rocky-conversation-${conversationId}.md`;
+
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+
+            URL.revokeObjectURL(url);
+        }
+        catch(error) {
+            console.error(error);
+            alert("Unable to export conversation.");
+        }
+    }
+
+
+    function getConversationLabel(conversation) {
+        return conversation.title || "Untitled Chat";
+    }
+
+    onMount(() => {
+        loadConversations();
+    });
+
 </script>
 
-<div class="chat-header">
-    <h1 class="chat-title">Rocky AI</h1>
-    <p class="chat-subtitle">Kent State Computer Science Assistant</p>
-</div>
+<div class="chat-layout">
+    <aside class="conversation-panel">
+        <button class="conversation-action" onclick={newConversation}>
+            + New Chat
+        </button>
 
-<div class="chat" bind:this={chatContainer}>
-    {#if messages.length === 0}
-    <div class="welcome">
-        <h2>Welcome to Rocky AI</h2>
-        <p>
-            Ask questions about courses, assignments,
-            computer science topics, or anything.
-        </p>
+        <button
+            class="conversation-action"
+            onclick={exportConversation}
+            disabled={!conversationId}
+        >
+            Export Current
+        </button>
 
-        <div class="disclaimer">
-        Rocky AI conversations may be logged and reviewed to improve the system and ensure appropriate use. Do not share sensitive personal information.
-        </div>
-
-        <div class="examples">
-            <button onclick={() => {showIntroduction();}}>
-                Introduce Rocky
-            </button>
-
-            <button onclick={() => {showCapabilities();}}>
-                Capabilities
-            </button>
-
-            <button onclick={() => {showPrivacy();}}>
-                Privacy & Safety
-            </button>
-        </div>
-    </div>
-    {/if}
-
-    {#each messages as msg}
-        <div class="message {msg.role}">
-            {#if msg.role === "assistant"}
-                <SvelteMarkdown source={msg.content} />
+        <div class="conversation-list">
+            {#if loadingConversations}
+                <p class="conversation-empty">Loading...</p>
+            {:else if conversations.length === 0}
+                <p class="conversation-empty">No conversations yet.</p>
             {:else}
-                {msg.content}
+                {#each conversations as conversation}
+                    <button
+                        class="conversation-item"
+                        class:activeConversation={conversation.conversation_id === conversationId}
+                        onclick={() => loadConversation(conversation.conversation_id)}
+                    >
+                        {getConversationLabel(conversation)}
+                    </button>
+                {/each}
             {/if}
         </div>
-    {/each}
-</div>
+    </aside>
 
-<div class="bottom">
+    <main class="chat-main">
+        <div class="chat-header">
+            <h1 class="chat-title">Rocky AI</h1>
+            <p class="chat-subtitle">Kent State Computer Science Assistant</p>
+        </div>
 
-  <input
-  class="messageInput"
-  bind:value={input}
-  placeholder="Type a message..."
-  onkeydown={(e)=>{
-    if(e.key === "Enter"){
-        sendMessage()
-    }
-  }}
-  />
+        <div class="chat" bind:this={chatContainer}>
+            {#if messages.length === 0}
+            <div class="welcome">
+                <h2>Welcome to Rocky AI</h2>
+                <p>
+                    Ask questions about courses, assignments,
+                    computer science topics, or anything.
+                </p>
 
-  <button class="sendButton" onclick={sendMessage}>↑</button>
+                <div class="disclaimer">
+                    Rocky AI conversations may be logged and reviewed to improve the system and ensure appropriate use. Do not share sensitive personal information.
+                </div>
+
+                <div class="examples">
+                    <button onclick={() => {showIntroduction();}}>
+                        Introduce Rocky
+                    </button>
+
+                    <button onclick={() => {showCapabilities();}}>
+                        Capabilities
+                    </button>
+
+                    <button onclick={() => {showPrivacy();}}>
+                        Privacy & Safety
+                    </button>
+                </div>
+            </div>
+            {/if}
+
+            {#each messages as msg}
+                <div class="message {msg.role}">
+                    {#if msg.role === "assistant"}
+                        <SvelteMarkdown source={msg.content} />
+                    {:else}
+                        {msg.content}
+                    {/if}
+                </div>
+            {/each}
+        </div>
+
+        <div class="bottom">
+            <input
+                class="messageInput"
+                bind:value={input}
+                placeholder="Type a message..."
+                onkeydown={(e)=>{
+                    if(e.key === "Enter"){
+                        sendMessage()
+                    }
+                }}
+            />
+
+            <button class="sendButton" onclick={sendMessage}>↑</button>
+        </div>
+    </main>
 </div>
