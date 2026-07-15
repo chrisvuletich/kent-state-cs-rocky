@@ -260,3 +260,124 @@ class TestGenerationOptions(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "top_p"):
             extract_generation_options(payload)
 
+
+    # max_output_tokens tests
+    def test_rejects_max_output_tokens_when_float(self):
+        payload = {
+            "max_output_tokens": 500.0
+        }
+
+        with self.assertRaisesRegex(ValueError, "max_output_tokens"):
+            extract_generation_options(payload)
+
+    def test_rejects_max_output_tokens_when_string(self):
+        payload = {
+            "max_output_tokens": "500"
+        }
+
+        with self.assertRaisesRegex(ValueError, "max_output_tokens"):
+            extract_generation_options(payload)
+
+    def test_rejects_max_output_tokens_when_none(self):
+        payload = {
+            "max_output_tokens": None
+        }
+
+        with self.assertRaisesRegex(ValueError, "max_output_tokens"):
+            extract_generation_options(payload)
+    
+    #temperature tests
+    def test_rejects_temperature_when_string(self):
+        payload = {
+            "temperature": "0.7"
+        }
+
+        with self.assertRaisesRegex(ValueError, "temperature"):
+            extract_generation_options(payload)
+
+    def test_rejects_temperature_when_none(self):
+        payload = {
+            "temperature": None
+        }
+
+        with self.assertRaisesRegex(ValueError, "temperature"):
+            extract_generation_options(payload)
+
+    def test_rejects_temperature_when_nan(self):
+        payload = {
+            "temperature": float("nan")
+        }
+
+        with self.assertRaisesRegex(ValueError, "temperature"):
+            extract_generation_options(payload)
+    
+    def test_rejects_temperature_when_positive_infinity(self):
+        payload = {
+            "temperature": float("inf")
+        }
+
+        with self.assertRaisesRegex(ValueError, "temperature"):
+            extract_generation_options(payload)
+
+    def test_rejects_temperature_when_negative_infinity(self):
+        payload = {
+           "temperature": float("-inf")
+        }
+
+        with self.assertRaisesRegex(ValueError, "temperature"):
+            extract_generation_options(payload)
+
+    def test_returns_only_temperature_when_only_temperature_is_provided(self):
+        payload = {
+            "temperature": 0.7
+        }
+
+        result = extract_generation_options(payload)
+
+        expected = {
+            "temperature": 0.7
+        }
+
+        self.assertEqual(result, expected)
+
+    #top_p tests
+    def test_rejects_top_p_when_string(self):
+        payload = {
+           "top_p": "0.9"
+        }
+
+        with self.assertRaisesRegex(ValueError, "top_p"):
+            extract_generation_options(payload)
+
+    def test_rejects_top_p_when_none(self):
+        payload = {
+           "top_p": None
+        }
+
+        with self.assertRaisesRegex(ValueError, "top_p"):
+            extract_generation_options(payload)
+    
+    def test_rejects_top_p_when_nan(self):
+        payload = {
+           "top_p": float("nan")
+        }
+
+        with self.assertRaisesRegex(ValueError, "top_p"):
+            extract_generation_options(payload)
+    
+    def test_rejects_top_p_when_positive_infinity(self):
+        payload = {
+           "top_p": float("inf")
+        }
+
+        with self.assertRaisesRegex(ValueError, "top_p"):
+            extract_generation_options(payload)
+    
+    def test_rejects_top_p_when_negative_infinity(self):
+        payload = {
+           "top_p": float("-inf")
+        }
+
+        with self.assertRaisesRegex(ValueError, "top_p"):
+            extract_generation_options(payload)
+
