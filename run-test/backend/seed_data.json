@@ -67,10 +67,9 @@
     {
       "owner_type": "person",
         "owner_id": "valid.student@kent.edu",
-        "u_id": "valid.student@kent.edu",
+      "u_id": "valid.student@kent.edu",
       "key_name": "key-1",
       "slot_index": 1,
-      "api_key_id": 1,
       "course_id": 1,
       "hash": "1f3ce8cd2766afe4f9df19eeb6c6f4f591a7d5474f70a7ee6d74db7b8e4cc0d9",
       "expire": null
@@ -81,7 +80,6 @@
       "u_id": "",
       "key_name": "key-2",
       "slot_index": 2,
-      "api_key_id": 2,
       "course_id": 1,
       "hash": "1f3ce8cd2766afe4f9df19eeb6c6f4f591a7d5474f70a7ee6d74db7b8e4cc0d9",
       "expire": null
@@ -89,10 +87,9 @@
     {
       "owner_type": "person",
         "owner_id": "valid.admin@kent.edu",
-        "u_id": "valid.admin@kent.edu",
+      "u_id": "valid.admin@kent.edu",
       "key_name": "key-3",
       "slot_index": 3,
-      "api_key_id": 3,
       "course_id": 1,
       "hash": "",
       "expire": "not-an-iso-date"

@@ -341,6 +341,7 @@ def validate_api_key_payload(payload: Any):
     key_hash = normalize_str(payload.get("hash"))
     expire = payload.get("expire")
     key_name = normalize_str(payload.get("key_name") or "key-1")[:64].strip() or "key-1"
+    key_id = normalize_str(payload.get("key_id"))
     slot_index_raw = payload.get("slot_index")
     try:
         slot_index = int(slot_index_raw)
@@ -355,14 +356,6 @@ def validate_api_key_payload(payload: Any):
                 slot_index = 1
         else:
             slot_index = 1
-
-    api_key_id_raw = payload.get("api_key_id")
-    try:
-        api_key_id = int(api_key_id_raw)
-    except (TypeError, ValueError):
-        api_key_id = 0
-    if api_key_id < 0:
-        api_key_id = 0
 
     raw_is_active = payload.get("is_active") if "is_active" in payload else payload.get("isActive")
     if raw_is_active is None:
@@ -391,13 +384,13 @@ def validate_api_key_payload(payload: Any):
             return None, "expire must be a valid ISO datetime string."
 
     return {
+        "key_id": key_id or None,
         "owner_type": owner_type,
         "owner_id": owner_id,
         "u_id": owner_id if owner_type == "person" else None,
         "group_created_by": normalize_str(payload.get("group_created_by")).lower() or None,
         "key_name": key_name,
         "slot_index": slot_index,
-        "api_key_id": api_key_id,
         "course_id": course_id,
         "c_id": normalize_str(c_id) if isinstance(c_id, str) else None,
         "hash": key_hash,

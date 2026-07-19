@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+from backend.api_key_generator import generate_hidden_api_key_pair
+
 try:
     from backend.test_support import BackendTestCase, main
 except ModuleNotFoundError:
@@ -12,6 +14,20 @@ class MicrosoftOAuthTests(BackendTestCase):
     def setUp(self):
         super().setUp()
         object.__setattr__(main.settings, "enable_microsoft_oauth", True)
+
+    def _default_key_for_user(self, user):
+        return main.api_keys.find_one(
+            {
+                "owner_type": "person",
+                "owner_id": str(user.get("_id")).lower(),
+                "key_scope": "user-default",
+                "key_name": "default",
+            }
+        )
+
+    def _expected_default_key_hash(self, user):
+        _, expected_hash = generate_hidden_api_key_pair(str(user.get("_id")).lower())
+        return expected_hash
 
     def test_whitelist_add_assigns_database_id(self):
         self._log("Adding whitelist entry. Expecting a database-generated id and persisted entry.")
@@ -76,6 +92,18 @@ class MicrosoftOAuthTests(BackendTestCase):
         self.assertIsNotNone(saved)
         self.assertTrue(saved.get("id"))
         self.assertEqual(saved.get("is_admin"), False)
+        default_key = self._default_key_for_user(saved)
+        self.assertIsNotNone(default_key)
+        self.assertEqual(default_key.get("owner_id"), str(saved.get("_id")).lower())
+        self.assertNotEqual(default_key.get("owner_id"), saved.get("email"))
+        self.assertTrue((default_key.get("key_id") or "").startswith("akid_"))
+        self.assertNotIn("api_key_id", default_key)
+        self.assertEqual(default_key.get("key_name"), "default")
+        self.assertEqual(default_key.get("key_scope"), "user-default")
+        self.assertEqual(default_key.get("slot_index"), 0)
+        self.assertEqual(default_key.get("hash"), self._expected_default_key_hash(saved))
+        self.assertTrue(isinstance(default_key.get("hash"), str) and len(default_key.get("hash")) == 64)
+        self.assertNotIn("api_key", default_key)
 
     def test_whitelist_patch_updates_active_flag_and_syncs_existing_user(self):
         self._log("Disabling then re-enabling whitelist user. Expecting whitelist and user docs to sync is_active.")
@@ -157,6 +185,7 @@ class MicrosoftOAuthTests(BackendTestCase):
         saved = main.users.find_one({"email": "casey.dormant@example.com"})
         self.assertIsNotNone(saved)
         self.assertEqual(saved.get("is_active"), False)
+        self.assertIsNotNone(self._default_key_for_user(saved))
 
     def test_microsoft_login_auto_creates_kent_user(self):
         self._log("Posting OAuth login for Kent email. Expecting user creation without course assignment.")
@@ -180,6 +209,44 @@ class MicrosoftOAuthTests(BackendTestCase):
         self.assertEqual(saved.get("is_admin"), False)
         self.assertTrue(saved.get("id"))
         self.assertEqual(payload["user"]["id"], saved.get("id"))
+        default_key = self._default_key_for_user(saved)
+        self.assertIsNotNone(default_key)
+        self.assertEqual(default_key.get("owner_id"), str(saved.get("_id")).lower())
+        self.assertNotEqual(default_key.get("owner_id"), saved.get("email"))
+        self.assertEqual(default_key.get("hash"), self._expected_default_key_hash(saved))
+
+    def test_microsoft_login_does_not_duplicate_existing_default_key(self):
+        self._log("Logging in twice should keep a single default API key for that user.")
+
+        payload = {
+            "firstName": "Jordan",
+            "lastName": "Repeat",
+            "email": "jordan.repeat@kent.edu",
+            "id": "123456789",
+        }
+        first_response = self.client.post("/auth/microsoft/login", json=payload)
+        self.assertEqual(first_response.status_code, 200)
+        saved = main.users.find_one({"email": "jordan.repeat@kent.edu"})
+        self.assertIsNotNone(saved)
+        default_key = self._default_key_for_user(saved)
+        self.assertIsNotNone(default_key)
+        original_hash = default_key.get("hash")
+
+        second_response = self.client.post("/auth/microsoft/login", json=payload)
+        self.assertEqual(second_response.status_code, 200)
+        keys = list(
+            main.api_keys.find(
+                {
+                    "owner_type": "person",
+                    "owner_id": str(saved.get("_id")).lower(),
+                    "key_name": "default",
+                }
+            )
+        )
+        self.assertEqual(len(keys), 1)
+        self.assertEqual(keys[0].get("hash"), original_hash)
+        self.assertEqual(keys[0].get("hash"), self._expected_default_key_hash(saved))
+        self.assertTrue((keys[0].get("key_id") or "").startswith("akid_"))
 
     def test_whitelist_requires_admin_headers(self):
         self._log("Requesting whitelist list as non-admin. Expecting HTTP 403.")
@@ -199,6 +266,12 @@ class MicrosoftOAuthTests(BackendTestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.get_json()
         self.assertEqual(payload.get("email"), "admin.local@kent.edu")
+        saved = main.users.find_one({"email": "admin.local@kent.edu"})
+        self.assertIsNotNone(saved)
+        default_key = self._default_key_for_user(saved)
+        self.assertIsNotNone(default_key)
+        self.assertEqual(default_key.get("owner_id"), str(saved.get("_id")).lower())
+        self.assertTrue((default_key.get("key_id") or "").startswith("akid_"))
 
     def test_session_user_reconciles_pending_course_member(self):
         self._log("Creating pending course member by email, then resolving session user to trigger id/name reconciliation.")

@@ -6,8 +6,9 @@ from typing import Any
 
 from bson import ObjectId
 from bson.errors import InvalidId
+from pymongo.errors import DuplicateKeyError
 
-from backend.api_key_generator import generate_api_key_pair
+from backend.api_key_generator import generate_api_key_id, generate_api_key_pair
 from backend.validation import is_valid_email, normalize_str, parse_semester
 
 GROUP_ID_RE = re.compile(r"[^a-z0-9]+")
@@ -652,36 +653,43 @@ def regenerate_course_api_key(
             }
         )
 
-    max_api_key_id = 0
-    for entry in api_keys_collection.find():
-        if not isinstance(entry, dict):
-            continue
-        existing_id = entry.get("api_key_id")
-        if isinstance(existing_id, int) and existing_id > max_api_key_id:
-            max_api_key_id = existing_id
-
-    next_api_key_id = max_api_key_id + 1
-    api_key_id = existing.get("api_key_id") if isinstance(existing, dict) else None
-    if not isinstance(api_key_id, int) or api_key_id < 1:
-        api_key_id = next_api_key_id
+    existing_key_id = existing.get("key_id") if isinstance(existing, dict) else None
+    key_id = normalize_str(existing_key_id) or generate_api_key_id()
 
     key_doc["slot_index"] = slot_index
-    key_doc["api_key_id"] = api_key_id
+    key_doc["key_id"] = key_id
 
     if existing is None:
-        api_keys_collection.insert_one(key_doc)
+        try:
+            api_keys_collection.insert_one(key_doc)
+        except DuplicateKeyError:
+            existing = api_keys_collection.find_one(lookup_filter)
+            if existing is None:
+                existing = api_keys_collection.find_one(
+                    {
+                        **{k: v for k, v in lookup_filter.items() if k != "slot_index"},
+                        "key_name": key_name,
+                    }
+                )
+            if existing is None:
+                raise
+            existing_key_id = normalize_str(existing.get("key_id"))
+            if existing_key_id:
+                key_doc["key_id"] = existing_key_id
+            key_doc["_id"] = existing.get("_id")
+            api_keys_collection.replace_one({"_id": existing.get("_id")}, key_doc)
     else:
         key_doc["_id"] = existing.get("_id")
         api_keys_collection.replace_one({"_id": existing.get("_id")}, key_doc)
 
     return {
         "api_key": generated_key,
+        "key_id": key_doc["key_id"],
         "owner_type": key_doc["owner_type"],
         "owner_id": key_doc["owner_id"],
         "group_created_by": key_doc["group_created_by"],
         "key_name": key_doc["key_name"],
         "slot_index": key_doc.get("slot_index"),
-        "api_key_id": key_doc.get("api_key_id"),
         "course_id": key_doc["course_id"],
         "created": key_doc["created"],
     }

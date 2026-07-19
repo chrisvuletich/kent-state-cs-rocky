@@ -396,12 +396,11 @@
 			if (aSlot !== bSlot) {
 				return aSlot - bSlot;
 			}
-			const aId = a.apiKeyId > 0 ? a.apiKeyId : Number.MAX_SAFE_INTEGER;
-			const bId = b.apiKeyId > 0 ? b.apiKeyId : Number.MAX_SAFE_INTEGER;
-			if (aId !== bId) {
-				return aId - bId;
+			const createdOrder = a.created.localeCompare(b.created);
+			if (createdOrder !== 0) {
+				return createdOrder;
 			}
-			return a.created.localeCompare(b.created);
+			return a.keyId.localeCompare(b.keyId);
 		});
 
 		for (const key of orderedKeys) {
@@ -938,6 +937,7 @@
 	function normalizeApiKeySummaries(rawKeys: CourseApiKeySummaryResponse[]): CourseApiKeySummary[] {
 		return rawKeys
 			.map((entry) => ({
+				keyId: entry.key_id?.trim() || '',
 				ownerType: (entry.owner_type === 'group' ? 'group' : 'person') as 'person' | 'group',
 				ownerId: entry.owner_id?.trim() || '',
 				keyName: entry.key_name?.trim() || 'key-1',
@@ -945,7 +945,6 @@
 					typeof entry.slot_index === 'number' && Number.isInteger(entry.slot_index) && entry.slot_index > 0
 						? entry.slot_index
 						: parseSlotIndexFromKeyName(entry.key_name),
-				apiKeyId: typeof entry.api_key_id === 'number' && Number.isInteger(entry.api_key_id) && entry.api_key_id > 0 ? entry.api_key_id : 0,
 				created: entry.created?.trim() || '',
 				courseId: typeof entry.course_id === 'number' ? entry.course_id : selectedCourse?.id || 0,
 				hasHash: entry.has_hash !== false,
@@ -964,6 +963,7 @@
 		}
 
 		const nextSummary: CourseApiKeySummary = {
+			keyId: response.key_id?.trim() || '',
 			ownerType,
 			ownerId,
 			keyName,
@@ -971,8 +971,6 @@
 				typeof response.slot_index === 'number' && Number.isInteger(response.slot_index) && response.slot_index > 0
 					? response.slot_index
 					: parseSlotIndexFromKeyName(response.key_name),
-			apiKeyId:
-				typeof response.api_key_id === 'number' && Number.isInteger(response.api_key_id) && response.api_key_id > 0 ? response.api_key_id : 0,
 			created: response.created?.trim() || '',
 			courseId: typeof response.course_id === 'number' ? response.course_id : selectedCourse?.id || 0,
 			hasHash: true,

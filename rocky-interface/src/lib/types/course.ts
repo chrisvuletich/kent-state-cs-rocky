@@ -93,11 +93,11 @@ export type CourseGroup = {
 };
 
 export type CourseApiKeySummary = {
+	keyId: string;
 	ownerType: 'person' | 'group';
 	ownerId: string;
 	keyName: string;
 	slotIndex: number;
-	apiKeyId: number;
 	created: string;
 	courseId: number;
 	hasHash: boolean;

@@ -54,6 +54,37 @@ class CourseActionsUnitTests(unittest.TestCase):
         self.assertEqual(second["owner_id"], "ksuid000000001")
         self.assertNotEqual(first["api_key"], second["api_key"])
 
+    def test_regenerate_course_api_key_assigns_unique_public_key_ids(self):
+        collection = FakeCollection()
+        course = {"id": 1, "code": "SE 3010"}
+
+        first = regenerate_course_api_key(
+            course,
+            collection,
+            "ksuid000000001",
+            {"slot_index": 1},
+        )
+        second = regenerate_course_api_key(
+            course,
+            collection,
+            "ksuid000000002",
+            {"slot_index": 1},
+        )
+
+        self.assertTrue(first["key_id"].startswith("akid_"))
+        self.assertTrue(second["key_id"].startswith("akid_"))
+        self.assertNotEqual(first["key_id"], second["key_id"])
+
+    def test_regenerate_course_api_key_preserves_public_key_id_for_same_slot(self):
+        collection = FakeCollection()
+        course = {"id": 1, "code": "SE 3010"}
+
+        first = regenerate_course_api_key(course, collection, "ksuid000000001", {"slot_index": 1})
+        second = regenerate_course_api_key(course, collection, "ksuid000000001", {"slot_index": 1})
+
+        self.assertEqual(first["key_id"], second["key_id"])
+        self.assertNotEqual(first["api_key"], second["api_key"])
+
     def test_add_course_members_allows_email_before_user_exists(self):
         users = FakeCollection()
         course = {"members": []}

@@ -128,22 +128,22 @@ export type CourseApiHistoryEntry = {
 
 export type RegenerateCourseApiKeyResponse = Partial<{
 	api_key: string;
+	key_id: string;
 	owner_type: 'person' | 'group';
 	owner_id: string;
 	group_created_by: string | null;
 	key_name: string;
 	slot_index: number;
-	api_key_id: number;
 	course_id: number;
 	created: string;
 }>;
 
 export type CourseApiKeySummaryResponse = Partial<{
+	key_id: string;
 	owner_type: 'person' | 'group';
 	owner_id: string;
 	key_name: string;
 	slot_index: number;
-	api_key_id: number;
 	created: string;
 	course_id: number;
 	has_hash: boolean;
@@ -337,7 +337,7 @@ export type DeleteCourseApiKeyResponse = Partial<{
 		owner_id: string;
 		key_name: string;
 		slot_index: number;
-		api_key_id: number;
+		key_id: string;
 		created: string;
 		course_id: number;
 		has_hash: boolean;
