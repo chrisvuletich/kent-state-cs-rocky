@@ -56,18 +56,6 @@
         </p>
     </div>
 
-    <div class="stats">
-        <div class="stat-card">
-            <span class="stat-number">1</span>
-            <span class="stat-label">Available Tool</span>
-        </div>
-
-        <div class="stat-card">
-            <span class="stat-number">3</span>
-            <span class="stat-label">Planned Tools</span>
-        </div>
-    </div>
-
     <div class="cards">
         {#each cards as card}
             <button
