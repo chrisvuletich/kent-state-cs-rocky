@@ -116,7 +116,7 @@ def wait_for_http(url: str, timeout_seconds: int = 15) -> bool:
     deadline = time.time() + timeout_seconds
     while time.time() < deadline:
         try:
-            with urlopen(url, timeout=2):
+            with urlopen(url, timeout=10):
                 return True
         except HTTPError:
             return True
