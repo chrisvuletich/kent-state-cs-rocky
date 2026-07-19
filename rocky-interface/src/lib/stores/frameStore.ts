@@ -4,6 +4,7 @@ import DashboardView from '$lib/components/views/DashboardView.svelte';
 import UsersView from '$lib/components/views/UsersView.svelte';
 import CoursesView from '$lib/components/views/CoursesView.svelte';
 import AnalyticsView from '$lib/components/views/AnalyticsView.svelte';
+import AdminPanel from '$lib/components/views/AdminPanel.svelte';
 import AccountView from '$lib/components/views/AccountView.svelte';
 import ChatView from '$lib/components/views/ChatView.svelte';
 import HelpView from '$lib/components/views/HelpView.svelte';
@@ -21,6 +22,7 @@ export const frameMap: Record<FrameName, FrameComponent> = {
     users: UsersView,
     courses: CoursesView,
     analytics: AnalyticsView,
+    admin: AdminPanel,
     account: AccountView,
     chat: ChatView,
     help: HelpView
