@@ -798,6 +798,13 @@ def _build_granite_payload(request_body):
         ],
     }
 
+    
+    if "frequency_penalty" in request_body:
+        payload["frequency_penalty"] = request_body["frequency_penalty"]
+    if "max_output_tokens" in request_body:
+        payload["max_output_tokens"] = request_body["max_output_tokens"]
+    if "presence_penalty" in request_body:
+        payload["presence_penalty"] = request_body["presence_penalty"]
     if "temperature" in request_body:
         payload["temperature"] = request_body["temperature"]
     if "top_p" in request_body:
