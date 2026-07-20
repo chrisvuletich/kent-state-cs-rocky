@@ -1,9 +1,9 @@
 from flask import Flask, request, jsonify
 
-from ollama_client import call_ollama_chat
-from request_parser import extract_model
-from request_parser import extract_messages
-from request_parser import extract_generation_options
+from app.ollama_client import call_ollama_chat
+from app.request_parser import extract_model
+from app.request_parser import extract_messages
+from app.request_parser import extract_generation_options
 import os
 
 
