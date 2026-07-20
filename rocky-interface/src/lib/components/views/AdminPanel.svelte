@@ -1,5 +1,9 @@
 <script lang="ts">
   import "$lib/styles/components/modules/admin-panel.css";
+  import { onMount } from "svelte";
+  import { fetchUsersForViews } from "$lib/api/users";
+  import { fetchCourses } from "$lib/api/content";
+  import { fetchCourseApiHistory, fetchCourseApiKeys } from "$lib/api/courses";
 
   import {
     IconUsers,
@@ -12,21 +16,60 @@
     IconListDetails
   } from "@tabler/icons-svelte";
 
-  const stats = [
-    { title: "Total Users", value: "27", icon: IconUsers },
-    { title: "Total Courses", value: "6", icon: IconBooks },
-    { title: "API Keys Issued", value: "42", icon: IconKey },
-    { title: "Requests Today", value: "1,248", icon: IconActivityHeartbeat },
+  let stats = [
+    { title: "Total Users", value: "—", icon: IconUsers },
+    { title: "Total Courses", value: "—", icon: IconBooks },
+    { title: "API Keys Issued", value: "—", icon: IconKey },
+    { title: "Requests Today", value: "—", icon: IconActivityHeartbeat },
     { title: "System Health", value: "Healthy", icon: IconShieldCheck }
   ];
 
-  const activity = [
-    { action: "John Smith logged in", time: "2 minutes ago" },
-    { action: "CS49000 created", time: "15 minutes ago" },
-    { action: "API key generated", time: "24 minutes ago" },
-    { action: "Instructor added to course", time: "42 minutes ago" },
-    { action: "Admin updated permissions", time: "1 hour ago" }
-  ];
+  function formatActivityTime(timestamp: string): string {
+    const date = new Date(timestamp);
+    return Number.isNaN(date.getTime()) ? timestamp : date.toLocaleString();
+  }
+
+  onMount(async () => {
+    try {
+      const [users, courses] = await Promise.all([fetchUsersForViews(), fetchCourses()]);
+      const courseApiKeys = await Promise.all(courses.map((course) => fetchCourseApiKeys(course.id)));
+      stats[0] = { ...stats[0], value: String(users.length) };
+      stats[1] = { ...stats[1], value: String(courses.length) };
+      stats[2] = { ...stats[2], value: String(courseApiKeys.reduce((total, keys) => total + keys.length, 0)) };
+      const courseActivity = await Promise.all(courses.map((course) => fetchCourseApiHistory(course.id)));
+      const activityEntries = courseActivity.flat();
+      const today = new Date().toDateString();
+      stats[3] = { ...stats[3], value: String(activityEntries.filter((event) => event.eventType === "request" && new Date(event.created).toDateString() === today).length) };
+      activity = activityEntries
+        .sort((first, second) => Date.parse(second.created) - Date.parse(first.created))
+        .slice(0, 5)
+        .map((event) => ({
+          action: `${event.userId} ${event.eventType.replace(/-/g, " ")} in ${event.courseCode}`,
+          time: formatActivityTime(event.created)
+        }));
+      audit = activityEntries.slice(0, 5).map((event) => ({
+        time: formatActivityTime(event.created),
+        user: event.userId,
+        action: event.eventType.replace(/-/g, " "),
+        course: event.courseCode
+      }));
+      const requestCounts = activityEntries.reduce((counts, event) => {
+        if (event.eventType === "request") {
+          counts.set(event.courseCode, (counts.get(event.courseCode) || 0) + 1);
+        }
+        return counts;
+      }, new Map<string, number>());
+      const highestRequestCount = Math.max(...requestCounts.values(), 1);
+      topCourses = [...requestCounts.entries()]
+        .sort(([, firstRequests], [, secondRequests]) => secondRequests - firstRequests)
+        .slice(0, 5)
+        .map(([name, requests]) => ({ name, requests, width: `${(requests / highestRequestCount) * 100}%` }));
+    } catch (err) {
+      console.error("[admin panel] failed to load dashboard totals", err);
+    }
+  });
+
+  let activity: { action: string; time: string }[] = [];
 
   const services = [
     { name: "Backend API", status: "Healthy" },
@@ -35,17 +78,9 @@
     { name: "Granite", status: "Healthy" }
   ];
 
-  const courses = [
-    { name: "CS49000", requests: 320, width: "100%" },
-    { name: "CS33901", requests: 240, width: "75%" },
-    { name: "CS23021", requests: 150, width: "45%" }
-  ];
+  let topCourses: { name: string; requests: number; width: string }[] = [];
 
-  const audit = [
-    { time: "10:35", user: "John Smith", action: "Login", course: "-" },
-    { time: "10:32", user: "Admin", action: "Created Course", course: "CS49000" },
-    { time: "10:18", user: "Jane Doe", action: "Generated API Key", course: "CS33901" }
-  ];
+  let audit: { time: string; user: string; action: string; course: string }[] = [];
 </script>
 
 <div class="admin-panel">
@@ -103,7 +138,7 @@
         <h2>Top Active Courses</h2>
       </div>
 
-      {#each courses as course}
+      {#each topCourses as course}
         <div class="course-row">
           <div class="course-top">
             <span>{course.name}</span>
