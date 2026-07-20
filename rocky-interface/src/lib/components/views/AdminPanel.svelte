@@ -1,82 +1,150 @@
 <script lang="ts">
-    import "$lib/styles/components/modules/admin-panel.css";
+  import "$lib/styles/components/modules/admin-panel.css";
 
-    interface AdminCard {
-        title: string;
-        description: string;
-        status: string;
-        enabled: boolean;
-    }
+  import {
+    IconUsers,
+    IconBooks,
+    IconKey,
+    IconActivityHeartbeat,
+    IconShieldCheck,
+    IconClock,
+    IconChartBar,
+    IconListDetails
+  } from "@tabler/icons-svelte";
 
-    const cards: AdminCard[] = [
-        {
-            title: "User Management",
-            description: "View and manage Rocky users, permissions, and account status.",
-            status: "Available",
-            enabled: true
-        },
-        {
-            title: "System Logs",
-            description: "Review login activity, API usage, and system events.",
-            status: "Coming Soon",
-            enabled: false
-        },
-        {
-            title: "API Keys",
-            description: "Manage user API keys and monitor usage.",
-            status: "Coming Soon",
-            enabled: false
-        },
-        {
-            title: "Settings",
-            description: "Configure Rocky administration settings.",
-            status: "Coming Soon",
-            enabled: false
-        }
-    ];
+  const stats = [
+    { title: "Total Users", value: "27", icon: IconUsers },
+    { title: "Total Courses", value: "6", icon: IconBooks },
+    { title: "API Keys Issued", value: "42", icon: IconKey },
+    { title: "Requests Today", value: "1,248", icon: IconActivityHeartbeat },
+    { title: "System Health", value: "Healthy", icon: IconShieldCheck }
+  ];
 
-    function openCard(card: AdminCard) {
-        if (!card.enabled) return;
+  const activity = [
+    { action: "John Smith logged in", time: "2 minutes ago" },
+    { action: "CS49000 created", time: "15 minutes ago" },
+    { action: "API key generated", time: "24 minutes ago" },
+    { action: "Instructor added to course", time: "42 minutes ago" },
+    { action: "Admin updated permissions", time: "1 hour ago" }
+  ];
 
-        switch (card.title) {
-            case "User Management":
-                // TODO: Switch to UsersView
-                console.log("Open Users");
-                break;
-        }
-    }
+  const services = [
+    { name: "Backend API", status: "Healthy" },
+    { name: "Database", status: "Healthy" },
+    { name: "Chat API", status: "Healthy" },
+    { name: "Granite", status: "Healthy" }
+  ];
+
+  const courses = [
+    { name: "CS49000", requests: 320, width: "100%" },
+    { name: "CS33901", requests: 240, width: "75%" },
+    { name: "CS23021", requests: 150, width: "45%" }
+  ];
+
+  const audit = [
+    { time: "10:35", user: "John Smith", action: "Login", course: "-" },
+    { time: "10:32", user: "Admin", action: "Created Course", course: "CS49000" },
+    { time: "10:18", user: "Jane Doe", action: "Generated API Key", course: "CS33901" }
+  ];
 </script>
 
 <div class="admin-panel">
-    <div class="header">
-        <h1>Admin Panel</h1>
-        <p>
-            Administrative tools for managing Rocky and monitoring system
-            activity.
-        </p>
+  <div class="header">
+    <div>
+      <h1>Admin Dashboard</h1>
+      <p>Monitor users, courses, API usage, and overall Rocky system activity.</p>
+    </div>
+  </div>
+
+  <section class="stats-grid">
+    {#each stats as stat}
+      <div class="panel-card stat-card">
+        <svelte:component this={stat.icon} size={28}/>
+        <div class="stat-value">{stat.value}</div>
+        <div class="stat-title">{stat.title}</div>
+      </div>
+    {/each}
+  </section>
+
+  <section class="dashboard-grid">
+    <div class="panel-card">
+      <div class="card-header">
+        <IconClock size={20}/>
+        <h2>Recent Activity</h2>
+      </div>
+
+      {#each activity as item}
+        <div class="activity-row">
+          <div>
+            <strong>{item.action}</strong>
+            <p>{item.time}</p>
+          </div>
+        </div>
+      {/each}
     </div>
 
-    <div class="cards">
-        {#each cards as card}
-            <button
-                class:disabled={!card.enabled}
-                class="tool-card"
-                on:click={() => openCard(card)}
-            >
-                <div class="card-top">
-                    <h2>{card.title}</h2>
+    <div class="panel-card">
+      <div class="card-header">
+        <IconShieldCheck size={20}/>
+        <h2>System Status</h2>
+      </div>
 
-                    <span
-                        class:available={card.enabled}
-                        class:coming={!card.enabled}
-                        class="status"
-                    >
-                        {card.status}
-                    </span>
-                </div>
+      {#each services as service}
+        <div class="status-row">
+          <span>{service.name}</span>
+          <span class="healthy">{service.status}</span>
+        </div>
+      {/each}
+    </div>
 
-                <p>{card.description}</p>
-            </button>
+    <div class="panel-card">
+      <div class="card-header">
+        <IconChartBar size={20}/>
+        <h2>Top Active Courses</h2>
+      </div>
+
+      {#each courses as course}
+        <div class="course-row">
+          <div class="course-top">
+            <span>{course.name}</span>
+            <span>{course.requests} requests</span>
+          </div>
+
+          <div class="progress">
+            <div class="fill" style={`width:${course.width}`}></div>
+          </div>
+        </div>
+      {/each}
+    </div>
+  </section>
+
+  <section class="panel-card audit-section">
+    <div class="card-header">
+      <IconListDetails size={20}/>
+      <h2>Recent Audit Logs</h2>
+      <button>View All Logs</button>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>User</th>
+          <th>Action</th>
+          <th>Course</th>
+        </tr>
+      </thead>
+
+      <tbody>
+        {#each audit as row}
+          <tr>
+            <td>{row.time}</td>
+            <td>{row.user}</td>
+            <td>{row.action}</td>
+            <td>{row.course}</td>
+          </tr>
         {/each}
-    </div>
+      </tbody>
+    </table>
+  </section>
 </div>

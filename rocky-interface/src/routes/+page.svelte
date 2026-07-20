@@ -37,7 +37,7 @@
 				<ActiveView />
 			</div>
 		</div>
-		{#if resolvedFrame !== 'chat' && resolvedFrame !== 'help'}
+		{#if resolvedFrame !== 'chat' && resolvedFrame !== 'help' && resolvedFrame !== 'admin'}
 		<WidgetPanel />
 		{/if}
 	</div>
