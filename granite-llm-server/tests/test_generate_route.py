@@ -15,19 +15,22 @@ class TestGenerateRoute(unittest.TestCase):
         self.client = flask_app.test_client()
 
     @patch("app.ollama_client.requests.post")
-    def test_generate_sends_exact_payload_to_ollama(self, mock_post):
-        # Arrange: create a fake successful Ollama HTTP response.
+    def test_generate_sends_exact_payload_to_ollama_with_reasoning(
+        self,
+        mock_post
+    ):
         mock_response = Mock()
         mock_response.raise_for_status.return_value = None
         mock_response.json.return_value = {
             "message": {
-                "content": "Fake Ollama response"
+                "content": "Fake Ollama response",
+                "thinking": "Fake private reasoning"
             }
         }
         mock_post.return_value = mock_response
 
         granite_payload = {
-            "model": "qwen3:0.6b",
+            "model": "gemma4:latest",
             "input": [
                 {
                     "role": "user",
@@ -43,11 +46,15 @@ class TestGenerateRoute(unittest.TestCase):
             "temperature": 0.7,
             "top_p": 0.9,
             "frequency_penalty": 0.5,
-            "presence_penalty": 0.8
+            "presence_penalty": 0.8,
+            "reasoning": {
+                "effort": "medium",
+                "summary": "detailed"
+            }
         }
 
         expected_ollama_payload = {
-            "model": "qwen3:0.6b",
+            "model": "gemma4:latest",
             "messages": [
                 {
                     "role": "user",
@@ -61,33 +68,51 @@ class TestGenerateRoute(unittest.TestCase):
                 "top_p": 0.9,
                 "frequency_penalty": 0.5,
                 "presence_penalty": 0.8
-            }
+            },
+            "think": "medium"
         }
 
-        # Act: send the request through the real Flask route.
-        response = self.client.post("/generate", json=granite_payload)
+        response = self.client.post(
+            "/generate",
+            json=granite_payload
+        )
 
-        # Assert: Granite returned a successful response.
         self.assertEqual(response.status_code, 200)
 
         response_data = response.get_json()
 
-        self.assertEqual(response_data["model"], "qwen3:0.6b")
+        self.assertEqual(
+            response_data["model"],
+            "gemma4:latest"
+        )
         self.assertEqual(
             response_data["output_text"],
             "Fake Ollama response"
         )
+
+        metadata = response_data["metadata"]
+
+        self.assertEqual(metadata["source"], "ollama")
+        self.assertTrue(metadata["reasoning_requested"])
+        self.assertTrue(metadata["reasoning_applied"])
         self.assertEqual(
-            response_data["metadata"]["source"],
-            "ollama"
+            metadata["reasoning_effort"],
+            "medium"
+        )
+        self.assertEqual(
+            metadata["reasoning_summary_requested"],
+            "detailed"
         )
 
-        # Assert: the external Ollama request happened exactly once.
+        # Raw model thinking must not be returned to the API client.
+        self.assertNotIn(
+            "Fake private reasoning",
+            response.get_data(as_text=True)
+        )
+
         mock_post.assert_called_once()
 
-        # requests.post(url, json=ollama_payload, timeout=...)
         _, keyword_arguments = mock_post.call_args
-
         actual_ollama_payload = keyword_arguments["json"]
 
         self.assertEqual(
@@ -95,13 +120,93 @@ class TestGenerateRoute(unittest.TestCase):
             expected_ollama_payload
         )
 
+        # "think" belongs at the top level, not in options.
+        self.assertNotIn(
+            "think",
+            actual_ollama_payload["options"]
+        )
+
+        # Rocky's summary setting is not an Ollama request field.
+        self.assertNotIn(
+            "summary",
+            actual_ollama_payload
+        )
+
     @patch("app.ollama_client.requests.post")
-    def test_generate_returns_400_and_does_not_call_ollama_when_validation_fails(
+    def test_generate_omits_options_and_think_when_not_provided(
+        self,
+        mock_post
+    ):
+        mock_response = Mock()
+        mock_response.raise_for_status.return_value = None
+        mock_response.json.return_value = {
+            "message": {
+                "content": "Fake Ollama response"
+            }
+        }
+        mock_post.return_value = mock_response
+
+        granite_payload = {
+            "model": "gemma4:latest",
+            "input": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": "Hello"
+                        }
+                    ]
+                }
+            ]
+        }
+
+        expected_ollama_payload = {
+            "model": "gemma4:latest",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "Hello"
+                }
+            ],
+            "stream": False
+        }
+
+        response = self.client.post(
+            "/generate",
+            json=granite_payload
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        response_data = response.get_json()
+
+        self.assertFalse(
+            response_data["metadata"]["reasoning_requested"]
+        )
+        self.assertFalse(
+            response_data["metadata"]["reasoning_applied"]
+        )
+
+        mock_post.assert_called_once()
+
+        _, keyword_arguments = mock_post.call_args
+        actual_ollama_payload = keyword_arguments["json"]
+
+        self.assertEqual(
+            actual_ollama_payload,
+            expected_ollama_payload
+        )
+        self.assertNotIn("options", actual_ollama_payload)
+        self.assertNotIn("think", actual_ollama_payload)
+
+    @patch("app.ollama_client.requests.post")
+    def test_generate_returns_400_and_does_not_call_ollama_when_option_validation_fails(
         self,
         mock_post
     ):
         invalid_payload = {
-            "model": "qwen3:0.6b",
+            "model": "gemma4:latest",
             "input": [
                 {
                     "role": "user",
@@ -116,7 +221,10 @@ class TestGenerateRoute(unittest.TestCase):
             "max_output_tokens": 0
         }
 
-        response = self.client.post("/generate", json=invalid_payload)
+        response = self.client.post(
+            "/generate",
+            json=invalid_payload
+        )
 
         self.assertEqual(response.status_code, 400)
 
@@ -134,21 +242,12 @@ class TestGenerateRoute(unittest.TestCase):
         mock_post.assert_not_called()
 
     @patch("app.ollama_client.requests.post")
-    def test_generate_omits_options_when_parameters_are_not_provided(
+    def test_generate_returns_400_and_does_not_call_ollama_for_invalid_reasoning(
         self,
         mock_post
     ):
-        mock_response = Mock()
-        mock_response.raise_for_status.return_value = None
-        mock_response.json.return_value = {
-            "message": {
-                "content": "Fake Ollama response"
-            }
-        }
-        mock_post.return_value = mock_response
-
-        granite_payload = {
-            "model": "qwen3:0.6b",
+        invalid_payload = {
+            "model": "gemma4:latest",
             "input": [
                 {
                     "role": "user",
@@ -159,7 +258,64 @@ class TestGenerateRoute(unittest.TestCase):
                         }
                     ]
                 }
-            ]
+            ],
+            "reasoning": {
+                "effort": "extreme",
+                "summary": "detailed"
+            }
+        }
+
+        response = self.client.post(
+            "/generate",
+            json=invalid_payload
+        )
+
+        self.assertEqual(response.status_code, 400)
+
+        response_data = response.get_json()
+
+        self.assertEqual(
+            response_data["error"]["type"],
+            "bad_request"
+        )
+        self.assertIn(
+            "reasoning.effort",
+            response_data["error"]["message"]
+        )
+
+        mock_post.assert_not_called()
+
+    @patch("app.ollama_client.requests.post")
+    def test_generate_returns_502_when_reasoning_requested_but_not_returned(
+        self,
+        mock_post
+    ):
+        mock_response = Mock()
+        mock_response.raise_for_status.return_value = None
+        mock_response.json.return_value = {
+            "message": {
+                "content": "Answer without a thinking field"
+            }
+        }
+        mock_post.return_value = mock_response
+
+        granite_payload = {
+            "model": "gemma4:latest",
+            "input": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": "Solve this problem."
+                        }
+                    ]
+                }
+            ],
+            "reasoning": {
+                "effort": "medium",
+                "summary": "detailed"
+            }
         }
 
         response = self.client.post(
@@ -167,33 +323,22 @@ class TestGenerateRoute(unittest.TestCase):
             json=granite_payload
         )
 
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 502)
 
-        mock_post.assert_called_once()
-
-        _, keyword_arguments = mock_post.call_args
-        actual_ollama_payload = keyword_arguments["json"]
-
-        expected_ollama_payload = {
-            "model": "qwen3:0.6b",
-            "messages": [
-                {
-                    "role": "user",
-                    "content": "Hello"
-                }
-            ],
-            "stream": False
-        }
+        response_data = response.get_json()
 
         self.assertEqual(
-            actual_ollama_payload,
-            expected_ollama_payload
+            response_data["error"]["type"],
+            "model_error"
+        )
+        self.assertIn(
+            "returned no reasoning output",
+            response_data["error"]["message"]
         )
 
-        self.assertNotIn(
-            "options",
-            actual_ollama_payload
-        )
+        # The request reached Ollama, but Ollama did not fulfill
+        # the reasoning portion of the contract.
+        mock_post.assert_called_once()
 
 
 if __name__ == "__main__":

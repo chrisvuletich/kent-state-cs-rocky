@@ -1,5 +1,5 @@
 import unittest
-from app.request_parser import extract_generation_options, MAX_OUTPUT_TOKENS
+from app.request_parser import extract_generation_options, extract_reasoning, MAX_OUTPUT_TOKENS
 
 # To run tests use below command while in granite-llm-server dir
 # python -m unittest discover -s tests -p "test_*.py" -v
@@ -512,3 +512,180 @@ class TestGenerationOptions(unittest.TestCase):
                         "presence_penalty": value
                     })
 
+class TestReasoning(unittest.TestCase):
+
+    def test_returns_none_when_reasoning_is_omitted(self):
+        payload = {}
+
+        result = extract_reasoning(payload)
+
+        self.assertIsNone(result)
+
+    def test_returns_valid_reasoning_configuration(self):
+        payload = {
+            "reasoning": {
+                "effort": "medium",
+                "summary": "detailed"
+            }
+        }
+
+        result = extract_reasoning(payload)
+
+        expected = {
+            "effort": "medium",
+            "summary": "detailed"
+        }
+
+        self.assertEqual(result, expected)
+
+    def test_accepts_all_supported_reasoning_efforts(self):
+        supported_efforts = [
+            "low",
+            "medium",
+            "high",
+            "max"
+        ]
+
+        for effort in supported_efforts:
+            with self.subTest(effort=effort):
+                payload = {
+                    "reasoning": {
+                        "effort": effort,
+                        "summary": "detailed"
+                    }
+                }
+
+                result = extract_reasoning(payload)
+
+                expected = {
+                    "effort": effort,
+                    "summary": "detailed"
+                }
+
+                self.assertEqual(result, expected)
+
+    def test_rejects_reasoning_when_not_dictionary(self):
+        invalid_reasoning_values = [
+            None,
+            True,
+            False,
+            "medium",
+            5,
+            []
+        ]
+
+        for value in invalid_reasoning_values:
+            with self.subTest(value=value):
+                payload = {
+                    "reasoning": value
+                }
+
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "reasoning"
+                ):
+                    extract_reasoning(payload)
+
+    def test_rejects_reasoning_when_effort_is_missing(self):
+        payload = {
+            "reasoning": {
+                "summary": "detailed"
+            }
+        }
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "reasoning.effort"
+        ):
+            extract_reasoning(payload)
+
+    def test_rejects_effort_when_not_string(self):
+        invalid_effort_values = [
+            None,
+            True,
+            False,
+            5,
+            [],
+            {}
+        ]
+
+        for value in invalid_effort_values:
+            with self.subTest(value=value):
+                payload = {
+                    "reasoning": {
+                        "effort": value,
+                        "summary": "detailed"
+                    }
+                }
+
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "reasoning.effort"
+                ):
+                    extract_reasoning(payload)
+
+    def test_rejects_unsupported_effort(self):
+        payload = {
+            "reasoning": {
+                "effort": "extreme",
+                "summary": "detailed"
+            }
+        }
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "reasoning.effort"
+        ):
+            extract_reasoning(payload)
+
+    def test_rejects_reasoning_when_summary_is_missing(self):
+        payload = {
+            "reasoning": {
+                "effort": "medium"
+            }
+        }
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "reasoning.summary"
+        ):
+            extract_reasoning(payload)
+
+    def test_rejects_summary_when_not_string(self):
+        invalid_summary_values = [
+            None,
+            True,
+            False,
+            5,
+            [],
+            {}
+        ]
+
+        for value in invalid_summary_values:
+            with self.subTest(value=value):
+                payload = {
+                    "reasoning": {
+                        "effort": "medium",
+                        "summary": value
+                    }
+                }
+
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "reasoning.summary"
+                ):
+                    extract_reasoning(payload)
+
+    def test_rejects_unsupported_summary(self):
+        payload = {
+            "reasoning": {
+                "effort": "medium",
+                "summary": "brief"
+            }
+        }
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "reasoning.summary"
+        ):
+            extract_reasoning(payload)

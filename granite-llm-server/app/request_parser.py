@@ -3,7 +3,14 @@ import math
 
 # Default model for when no model is provided by the request/env
 DEFAULT_MODEL_NAME = "gemma4:latest"
-MAX_OUTPUT_TOKENS = 3500
+MAX_OUTPUT_TOKENS = 2048
+
+ALLOWED_REASONING_EFFORTS = {
+    "low",
+    "medium",
+    "high",
+    "max",
+}
 
 # Reads the configured Ollama model from the environment so local dev and Granite can use different models without changing cod
 def get_default_model():
@@ -118,3 +125,40 @@ def extract_generation_options(payload):
             raise ValueError("presence_penalty must be of type int or float.")
         
     return options
+
+
+def extract_reasoning(payload):
+    if "reasoning" not in payload:
+        return None
+    
+    reasoning = payload["reasoning"]
+
+    if not isinstance(reasoning, dict):
+        raise ValueError("reasoning must be of type dict.")
+    
+    if "effort" not in reasoning:
+        raise ValueError("reasoning.effort is required.")
+    
+    effort = reasoning["effort"]
+
+    if not isinstance(effort, str):
+        raise ValueError("reasoning.effort must be of type str")
+    
+    if effort not in ALLOWED_REASONING_EFFORTS:
+        raise ValueError("reasoning.effort must be 'low', 'medium', 'high', or 'max'.")
+    
+    if "summary" not in reasoning:
+        raise ValueError("reasoning.summary is required.")
+    
+    summary = reasoning["summary"]
+
+    if not isinstance(summary, str):
+        raise ValueError("reasoning.summary must be of type str.")
+    
+    if summary != "detailed":
+        raise ValueError("reasoning.summary must be 'detailed'.")
+    
+    return {
+        "effort": effort,
+        "summary": summary,
+    }
