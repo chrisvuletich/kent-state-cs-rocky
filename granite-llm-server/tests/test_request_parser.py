@@ -381,3 +381,134 @@ class TestGenerationOptions(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "top_p"):
             extract_generation_options(payload)
 
+        # frequency_penalty tests
+    def test_returns_both_penalty_options_when_valid(self):
+        payload = {
+            "frequency_penalty": 0.5,
+            "presence_penalty": 1.25
+        }
+
+        result = extract_generation_options(payload)
+
+        expected = {
+            "frequency_penalty": 0.5,
+            "presence_penalty": 1.25
+        }
+
+        self.assertEqual(result, expected)
+
+    def test_returns_only_frequency_penalty_when_only_frequency_is_provided(self):
+        payload = {
+            "frequency_penalty": 0.5
+        }
+
+        result = extract_generation_options(payload)
+
+        expected = {
+            "frequency_penalty": 0.5
+        }
+
+        self.assertEqual(result, expected)
+
+    def test_accepts_frequency_penalty_boundaries(self):
+        for value in (-2, 2):
+            with self.subTest(value=value):
+                result = extract_generation_options({
+                    "frequency_penalty": value
+                })
+
+                self.assertEqual(
+                    result,
+                    {"frequency_penalty": value}
+                )
+
+    def test_rejects_frequency_penalty_outside_range(self):
+        for value in (-2.01, 2.01):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "frequency_penalty"
+                ):
+                    extract_generation_options({
+                        "frequency_penalty": value
+                    })
+
+    def test_rejects_invalid_frequency_penalty_values(self):
+        invalid_values = [
+            True,
+            False,
+            "0.5",
+            None,
+            float("nan"),
+            float("inf"),
+            float("-inf")
+        ]
+
+        for value in invalid_values:
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "frequency_penalty"
+                ):
+                    extract_generation_options({
+                        "frequency_penalty": value
+                    })
+
+    # presence_penalty tests
+    def test_returns_only_presence_penalty_when_only_presence_is_provided(self):
+        payload = {
+            "presence_penalty": 0.75
+        }
+
+        result = extract_generation_options(payload)
+
+        expected = {
+            "presence_penalty": 0.75
+        }
+
+        self.assertEqual(result, expected)
+
+    def test_accepts_presence_penalty_boundaries(self):
+        for value in (-2, 2):
+            with self.subTest(value=value):
+                result = extract_generation_options({
+                    "presence_penalty": value
+                })
+
+                self.assertEqual(
+                    result,
+                    {"presence_penalty": value}
+                )
+
+    def test_rejects_presence_penalty_outside_range(self):
+        for value in (-2.01, 2.01):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "presence_penalty"
+                ):
+                    extract_generation_options({
+                        "presence_penalty": value
+                    })
+
+    def test_rejects_invalid_presence_penalty_values(self):
+        invalid_values = [
+            True,
+            False,
+            "0.5",
+            None,
+            float("nan"),
+            float("inf"),
+            float("-inf")
+        ]
+
+        for value in invalid_values:
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "presence_penalty"
+                ):
+                    extract_generation_options({
+                        "presence_penalty": value
+                    })
+

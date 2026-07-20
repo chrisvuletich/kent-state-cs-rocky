@@ -41,7 +41,9 @@ class TestGenerateRoute(unittest.TestCase):
             ],
             "max_output_tokens": 500,
             "temperature": 0.7,
-            "top_p": 0.9
+            "top_p": 0.9,
+            "frequency_penalty": 0.5,
+            "presence_penalty": 0.8
         }
 
         expected_ollama_payload = {
@@ -56,7 +58,9 @@ class TestGenerateRoute(unittest.TestCase):
             "options": {
                 "num_predict": 500,
                 "temperature": 0.7,
-                "top_p": 0.9
+                "top_p": 0.9,
+                "frequency_penalty": 0.5,
+                "presence_penalty": 0.8
             }
         }
 
@@ -128,6 +132,68 @@ class TestGenerateRoute(unittest.TestCase):
         )
 
         mock_post.assert_not_called()
+
+    @patch("app.ollama_client.requests.post")
+    def test_generate_omits_options_when_parameters_are_not_provided(
+        self,
+        mock_post
+    ):
+        mock_response = Mock()
+        mock_response.raise_for_status.return_value = None
+        mock_response.json.return_value = {
+            "message": {
+                "content": "Fake Ollama response"
+            }
+        }
+        mock_post.return_value = mock_response
+
+        granite_payload = {
+            "model": "qwen3:0.6b",
+            "input": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": "Hello"
+                        }
+                    ]
+                }
+            ]
+        }
+
+        response = self.client.post(
+            "/generate",
+            json=granite_payload
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        mock_post.assert_called_once()
+
+        _, keyword_arguments = mock_post.call_args
+        actual_ollama_payload = keyword_arguments["json"]
+
+        expected_ollama_payload = {
+            "model": "qwen3:0.6b",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "Hello"
+                }
+            ],
+            "stream": False
+        }
+
+        self.assertEqual(
+            actual_ollama_payload,
+            expected_ollama_payload
+        )
+
+        self.assertNotIn(
+            "options",
+            actual_ollama_payload
+        )
 
 
 if __name__ == "__main__":
