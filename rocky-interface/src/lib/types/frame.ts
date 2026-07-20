@@ -1,10 +1,11 @@
-export type FrameName = 'dashboard' | 'users' | 'courses' | 'analytics' | 'account' | 'chat' | 'help';
+export type FrameName = 'dashboard' | 'users' | 'courses' | 'analytics' | 'admin' | 'account' | 'chat' | 'help';
 
 const frameLabels: Record<FrameName, string> = {
 	dashboard: 'Dashboard',
 	users: 'Users',
 	courses: 'Courses',
 	analytics: 'Analytics',
+	admin : 'Admin Panel',
 	account: 'Account',
 	chat: 'Chat',
 	help: 'Help'
@@ -14,7 +15,7 @@ export const primaryFrames: FrameName[] = ['dashboard', 'users', 'courses', 'ana
 
 // const adminFrames: FrameName[] = ['dashboard', 'users', 'courses', 'analytics', 'account', 'help'];
 // const clientFrames: FrameName[] = ['dashboard', 'courses', 'analytics', 'account', 'help'];
-const adminFrames: FrameName[] = ['dashboard', 'users', 'courses', 'account', 'chat', 'help'];
+const adminFrames: FrameName[] = ['dashboard', 'users', 'courses', 'admin', 'account', 'chat', 'help'];
 const clientFrames: FrameName[] = ['dashboard', 'courses', 'account','chat', 'help'];
 
 export function framesForRole(isAdmin: boolean): FrameName[] {
