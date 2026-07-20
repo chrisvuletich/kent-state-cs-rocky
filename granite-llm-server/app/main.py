@@ -1,9 +1,7 @@
 from flask import Flask, request, jsonify
 
-from ollama_client import call_ollama_chat
-from request_parser import extract_model
-from request_parser import extract_messages
-from request_parser import extract_generation_options
+from app.ollama_client import call_ollama_chat
+from app.request_parser import extract_model, extract_messages, extract_reasoning, extract_generation_options
 import os
 
 
@@ -34,6 +32,7 @@ def generate():
         model = extract_model(payload)
         messages = extract_messages(payload)
         options = extract_generation_options(payload)
+        reasoning = extract_reasoning(payload)
     except ValueError as error:
         return jsonify({
             "error": {
@@ -42,8 +41,10 @@ def generate():
             }
         }), 400
 
+    think = reasoning["effort"] if reasoning is not None else None
+
     try:
-        output_text = call_ollama_chat(model, messages, options)
+        ollama_result = call_ollama_chat(model, messages, options, think)
     except Exception as error:
         return jsonify({
             "error": {
@@ -51,14 +52,39 @@ def generate():
                 "message": str(error)
             }
         }), 502
+    
+    if reasoning is not None and not ollama_result["thinking_present"]:
+        return jsonify({
+            "error": {
+                "type": "model_error",
+                "message": (
+                    "Reasoning was requested, but the model "
+                    "returned no reasoning output."
+                )
+            }
+        }), 502
+    
+    metadata = {
+        "source": "ollama",
+        "reasoning_requested": reasoning is not None,
+        "reasoning_applied": (
+            reasoning is not None
+            and ollama_result["thinking_present"]
+        )
+    }
 
+    if reasoning is not None:
+        metadata["reasoning_effort"] = reasoning["effort"]
+        metadata["reasoning_summary_requested"] = reasoning["summary"]
+
+    
     return jsonify({
         "model": model,
-        "output_text": output_text,
-        "metadata": {
-            "source": "ollama"
-        }
+        "output_text": ollama_result["content"],
+        "metadata": metadata
     }), 200
+
+    
     
 
 
