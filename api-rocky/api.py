@@ -4,6 +4,7 @@ import os
 import hashlib
 from datetime import datetime, timezone
 from uuid import uuid4
+import time
 
 from flask import Flask, request, jsonify, Response
 import requests
@@ -131,31 +132,106 @@ def ensure_chat_indexes():
     )
 
 
-# Determine MongoDB URI (defaults to local MongoDB)
-mongodb_uri = os.getenv("ROCKY_MONGODB_URI", "mongodb://127.0.0.1:27017").strip()
-db_name = os.getenv("ROCKY_DB_NAME", "rocky_db").strip() or "rocky_db"
+# Database configuration
+DB_BACKEND = os.getenv("ROCKY_DB_BACKEND", "mongodb").strip().lower()
+MONGODB_URI = os.getenv(
+    "ROCKY_MONGODB_URI",
+    "mongodb://127.0.0.1:27017"
+).strip()
+DB_NAME = os.getenv("ROCKY_DB_NAME", "rocky_db").strip() or "rocky_db"
 
-if MongoClient and mongodb_uri:
-    try:
-        mclient = MongoClient(mongodb_uri, serverSelectionTimeoutMS=2000)
-        mclient.admin.command("ping")
-        mdb = mclient[db_name]
-        api_keys_col = mdb["api_keys"]
-        conversations_col = mdb["conversations"]
-        messages_col = mdb["messages"]
-        logging.info("Using MongoDB at %s/%s for API keys", mongodb_uri, db_name)
-    except PyMongoError as exc:
-        logging.warning("Could not connect to MongoDB (%s), falling back to Mongita: %s", mongodb_uri, exc)
-
-if api_keys_col is None:
-    # Fallback: use Mongita on disk
-    client = MongitaClientDisk("mongitaDB")
-    db = client[db_name]
-    api_keys_col = db["api_keys"]
-    conversations_col = db["conversations"]
-    messages_col = db["messages"]
+MONGODB_CONNECT_ATTEMPTS = int(
+    os.getenv("ROCKY_MONGODB_CONNECT_ATTEMPTS", "10")
+)
+MONGODB_RETRY_SECONDS = float(
+    os.getenv("ROCKY_MONGODB_RETRY_SECONDS", "2")
+)
 
 
+def initialize_database():
+    global api_keys_col
+    global conversations_col
+    global messages_col
+
+    if DB_BACKEND == "mongodb":
+        if MongoClient is None:
+            raise RuntimeError(
+                "ROCKY_DB_BACKEND is set to mongodb, but PyMongo is unavailable."
+            )
+
+        last_error = None
+
+        for attempt in range(1, MONGODB_CONNECT_ATTEMPTS + 1):
+            try:
+                logging.info(
+                    "Connecting to MongoDB at %s/%s "
+                    "(attempt %s of %s)",
+                    MONGODB_URI,
+                    DB_NAME,
+                    attempt,
+                    MONGODB_CONNECT_ATTEMPTS,
+                )
+
+                mongo_client = MongoClient(
+                    MONGODB_URI,
+                    serverSelectionTimeoutMS=2000,
+                )
+                mongo_client.admin.command("ping")
+
+                database = mongo_client[DB_NAME]
+
+                api_keys_col = database["api_keys"]
+                conversations_col = database["conversations"]
+                messages_col = database["messages"]
+
+                logging.info(
+                    "Using MongoDB at %s/%s",
+                    MONGODB_URI,
+                    DB_NAME,
+                )
+                return
+
+            except PyMongoError as exc:
+                last_error = exc
+
+                logging.warning(
+                    "MongoDB connection attempt %s of %s failed: %s",
+                    attempt,
+                    MONGODB_CONNECT_ATTEMPTS,
+                    exc,
+                )
+
+                if attempt < MONGODB_CONNECT_ATTEMPTS:
+                    time.sleep(MONGODB_RETRY_SECONDS)
+
+        raise RuntimeError(
+            "MongoDB was unavailable after "
+            f"{MONGODB_CONNECT_ATTEMPTS} attempts. "
+            "Refusing to fall back to Mongita while "
+            "ROCKY_DB_BACKEND=mongodb."
+        ) from last_error
+
+    if DB_BACKEND == "mongita":
+        logging.warning(
+            "Using Mongita database at api-rocky/mongitaDB. "
+            "This backend should only be used for local development."
+        )
+
+        client = MongitaClientDisk("mongitaDB")
+        database = client[DB_NAME]
+
+        api_keys_col = database["api_keys"]
+        conversations_col = database["conversations"]
+        messages_col = database["messages"]
+        return
+
+    raise RuntimeError(
+        f"Unsupported ROCKY_DB_BACKEND value: {DB_BACKEND!r}. "
+        "Expected 'mongodb' or 'mongita'."
+    )
+
+
+initialize_database()
 ensure_chat_indexes()
 ensure_chat_service_api_key()
 
