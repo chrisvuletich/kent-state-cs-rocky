@@ -42,7 +42,7 @@
 		</p>
 
 		<pre><code>{`const response = await fetch(
-    "http://127.0.0.1:5003/rocky-api",
+    "https://rocky.cs.kent.edu/rocky-api",
     {
         method: "POST",
         headers: {

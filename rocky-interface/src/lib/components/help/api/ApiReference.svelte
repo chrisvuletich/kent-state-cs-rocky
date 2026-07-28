@@ -8,10 +8,10 @@
 	<section class="api-doc-section">
 		<h2>Endpoint and authentication</h2>
 		<table class="data-table">
-			<thead><tr><th>Method</th><th>Default local endpoint</th><th>Authentication</th></tr></thead>
-			<tbody><tr><td>POST</td><td><code>http://127.0.0.1:5003/rocky-api</code></td><td>JSON <code>api-key</code> field</td></tr></tbody>
+			<thead><tr><th>Method</th><th>Endpoint</th><th>Authentication</th></tr></thead>
+			<tbody><tr><td>POST</td><td><code>https://rocky.cs.kent.edu/rocky-api</code></td><td>JSON <code>api-key</code> field</td></tr></tbody>
 		</table>
-		<p>The deployed Chat API host is environment-specific. Rocky does not define a fixed public API domain in code.</p>
+		<p>Use Rocky’s public Chat API endpoint for requests.</p>
 	</section>
 
 	<section class="api-doc-section">

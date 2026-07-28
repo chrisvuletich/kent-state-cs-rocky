@@ -14,14 +14,14 @@
 		<h2>Send a request</h2>
 		<pre><code>{`export ROCKY_API_KEY='replace-with-your-course-api-key'
 
-curl --request POST http://127.0.0.1:5003/rocky-api \\
+curl --request POST https://rocky.cs.kent.edu/rocky-api \\
   --header 'Content-Type: application/json' \\
   --data "{
     \\"api-key\\": \\"$ROCKY_API_KEY\\",
     \\"message\\": \\"Explain recursion in one paragraph.\\",
     \\"store\\": false
   }"`}</code></pre>
-		<p><code>http://127.0.0.1:5003/rocky-api</code> is Rocky’s default local Chat API endpoint. Use your deployed Chat API host outside local development.</p>
+		<p><code>https://rocky.cs.kent.edu/rocky-api</code> is Rocky’s public Chat API endpoint.</p>
 	</section>
 
 	<section class="api-doc-section">
