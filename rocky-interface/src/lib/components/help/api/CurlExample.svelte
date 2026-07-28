@@ -14,14 +14,14 @@
 		<h2>Send a request</h2>
 		<pre><code>{`export ROCKY_API_KEY='replace-with-your-course-api-key'
 
-curl --request POST https://rocky.cs.kent.edu/rocky-api \\
+curl --request POST https://rocky.cs.kent.edu/v1/responses \\
   --header 'Content-Type: application/json' \\
   --data "{
     \\"api-key\\": \\"$ROCKY_API_KEY\\",
     \\"message\\": \\"Explain recursion in one paragraph.\\",
     \\"store\\": false
   }"`}</code></pre>
-		<p><code>https://rocky.cs.kent.edu/rocky-api</code> is Rocky’s public Chat API endpoint.</p>
+		<p><code>https://rocky.cs.kent.edu/v1/responses</code> is Rocky’s public Chat API endpoint.</p>
 	</section>
 
 	<section class="api-doc-section">

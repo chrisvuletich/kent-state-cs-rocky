@@ -42,7 +42,7 @@
 		</p>
 
 		<pre><code>{`const response = await fetch(
-    "https://rocky.cs.kent.edu/rocky-api",
+    "https://rocky.cs.kent.edu/v1/responses",
     {
         method: "POST",
         headers: {

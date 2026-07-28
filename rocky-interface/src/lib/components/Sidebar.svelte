@@ -18,6 +18,7 @@
 		analytics: '/analytics-icon.svg',
 		admin: '/admin-icon.svg',
 		audit: '/analytics-icon.svg',
+		'api-keys': '/api-key-icon.svg',
 		account: '/account-icon.svg',
 		chat: '/chat-icon.svg',
 		help: '/help-icon.svg'

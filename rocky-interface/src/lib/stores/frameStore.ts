@@ -7,6 +7,7 @@ import CoursesView from '$lib/components/views/CoursesView.svelte';
 import AnalyticsView from '$lib/components/views/AnalyticsView.svelte';
 import AdminPanel from '$lib/components/views/AdminPanel.svelte';
 import AuditLogsView from '$lib/components/views/AuditLogsView.svelte';
+import ApiKeysView from '$lib/components/views/ApiKeysView.svelte';
 import AccountView from '$lib/components/views/AccountView.svelte';
 // ChatView is a legacy JavaScript component; Svelte supplies it at runtime.
 // @ts-expect-error no declaration is available for this legacy component
@@ -28,6 +29,7 @@ export const frameMap: Record<FrameName, FrameComponent> = {
     analytics: AnalyticsView,
     admin: AdminPanel,
     audit: AuditLogsView,
+    'api-keys': ApiKeysView,
     account: AccountView,
     chat: ChatView,
     help: HelpView
