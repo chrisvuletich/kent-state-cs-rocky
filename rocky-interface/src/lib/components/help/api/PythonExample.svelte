@@ -34,10 +34,9 @@
 		<h2>Authentication</h2>
 
 		<p>
-			Every request to the Rocky API requires an API key.
-			Include your API key in the
-			<code>Authorization</code>
-			header using the Bearer format.
+			Every request to the Rocky API requires an API key. Include it as the
+			<code>api-key</code> field in the JSON request body, not as an
+			<code>Authorization</code> header.
 		</p>
 
 		<p>
@@ -50,31 +49,26 @@
 		<h2>Example Request</h2>
 
 		<p>
-			The example below sends a simple chat request to the Rocky API.
-			Replace <code>YOUR_API_KEY</code> with your own API key before
+			The example below sends a simple chat request to the Rocky API. Store
+			your key in the <code>ROCKY_API_KEY</code> environment variable before
 			running the script.
 		</p>
 
-	<pre><code>{`import requests
+	<pre><code>{`import os
+import requests
 
-url = "https://api.rocky.edu/v1/chat"
-
-headers = {
-    "Authorization": "Bearer YOUR_API_KEY",
-    "Content-Type": "application/json"
-}
+url = "http://127.0.0.1:5003/rocky-api"
 
 payload = {
-    "message": "Hello Rocky!"
+    "api-key": os.environ["ROCKY_API_KEY"],
+    "message": "Hello Rocky!",
+    "store": False
 }
 
-response = requests.post(
-    url,
-    headers=headers,
-    json=payload
-)
+response = requests.post(url, json=payload, timeout=30)
+response.raise_for_status()
 
-print(response.json())
+print(response.json()["reply"])
 `}</code></pre>
 	</section>
 
@@ -87,7 +81,9 @@ print(response.json())
 		</p>
 
 		<pre><code>{`{
-    "reply": "Hello! How can I help you today?"
+    "reply": "Hello! How can I help you today?",
+    "model": "configured-model-name",
+    "metadata": { "source": "ollama" }
 }`}</code></pre>
 	</section>
 

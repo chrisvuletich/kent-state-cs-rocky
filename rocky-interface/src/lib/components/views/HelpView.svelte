@@ -8,6 +8,7 @@
 	import JavaScriptExample from '$lib/components/help/api/JavaScriptExample.svelte';
 	import BestPractices from '$lib/components/help/api/BestPractices.svelte';
 	import ApiReference from '$lib/components/help/api/ApiReference.svelte';
+	import CurlExample from '$lib/components/help/api/CurlExample.svelte';
 	import CourseRosterGuide from '$lib/components/help/documentation/CourseRosterGuide.svelte';
 
 	import {
@@ -25,6 +26,7 @@
 		apikey: ApiKeyGuide,
 		python: PythonExample,
 		javascript: JavaScriptExample,
+		curl: CurlExample,
 		'best-practices': BestPractices,
 		reference: ApiReference
 	} as const;
@@ -33,6 +35,7 @@
 		'intro',
 		'apikey',
 		'python',
+		'curl',
 		'javascript',
 		'best-practices',
 		'reference'
@@ -53,9 +56,10 @@
 			: null) as DocumentationPage | null;
 
 	const documentationTitles: Record<DocumentationPage, string> = {
-		intro: 'What is an API?',
-		apikey: 'Getting Your API Key',
+		intro: 'Getting Started',
+		apikey: 'API Keys',
 		python: 'Python Example',
+		curl: 'curl Example',
 		javascript: 'JavaScript Example',
 		'best-practices': 'Best Practices',
 		reference: 'API Reference'
@@ -103,14 +107,14 @@
 	const apiDocs: ApiDocCard[] = [
 		{
 			id: 'intro',
-			title: 'What is an API?',
+			title: 'Getting Started',
 			description: 'Learn the fundamentals of APIs, requests, responses, and authentication.',
 			action: 'Read Guide',
 			icon: IconHelpCircle
 		},
 		{
 			id: 'apikey',
-			title: 'Getting Your API Key',
+			title: 'API Keys',
 			description: 'Generate and manage your Rocky API key.',
 			action: 'View Guide',
 			icon: IconKey
@@ -121,6 +125,13 @@
 			description: 'Make your first Rocky API request using Python.',
 			action: 'View Example',
 			icon: IconBrandPython
+		},
+		{
+			id: 'curl',
+			title: 'curl Example',
+			description: 'Send a copyable Rocky API request from a terminal.',
+			action: 'View Example',
+			icon: IconBrandJavascript
 		},
 		{
 			id: 'javascript',
@@ -150,6 +161,7 @@
 		| 'intro'
 		| 'apikey'
 		| 'python'
+		| 'curl'
 		| 'javascript'
 		| 'best-practices'
 		| 'reference';
