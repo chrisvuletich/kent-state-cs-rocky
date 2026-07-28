@@ -43,6 +43,46 @@ def get_users(deps: dict[str, Any]):
     return jsonify(result)
 
 
+def bulk_update_users(deps: dict[str, Any]):
+    """Apply an activation state to a deliberately selected set of accounts."""
+    require_admin = deps["require_admin"]
+    _resolve_user_record = deps["_resolve_user_record"]
+    users = deps["users"]
+    whitelist_users = deps["whitelist_users"]
+    _bad_request = deps["_bad_request"]
+
+    ok, err = require_admin()
+    if not ok:
+        return jsonify({"error": "Admin access is required."}), 403
+
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return _bad_request("Request body must be a JSON object.")
+    user_ids = data.get("user_ids")
+    is_active = data.get("is_active")
+    if not isinstance(user_ids, list) or not user_ids or not all(isinstance(value, str) and value.strip() for value in user_ids):
+        return _bad_request("user_ids must be a non-empty list of user IDs.")
+    if not isinstance(is_active, bool):
+        return _bad_request("is_active must be a boolean.")
+
+    resolved_users = []
+    missing: list[str] = []
+    for user_id in dict.fromkeys(value.strip() for value in user_ids):
+        user = _resolve_user_record(user_id, None)
+        if user:
+            resolved_users.append(user)
+        else:
+            missing.append(user_id)
+    updated: list[str] = []
+    for user in resolved_users:
+        resolved_id = user["id"]
+        users.update_one({"id": resolved_id}, {"$set": {"is_active": is_active}})
+        whitelist_users.update_one({"id": resolved_id}, {"$set": {"is_active": is_active}})
+        updated.append(resolved_id)
+
+    return jsonify({"updated_ids": updated, "missing_ids": missing, "is_active": is_active})
+
+
 def get_user(deps: dict[str, Any], user_id: str):
     require_admin = deps["require_admin"]
     _resolve_user_record = deps["_resolve_user_record"]
@@ -77,14 +117,15 @@ def update_user(deps: dict[str, Any], user_id: str):
     if not isinstance(data, dict) or not data:
         return _bad_request("Request body must be a non-empty JSON object.")
 
-    if set(data.keys()) != {"is_active"}:
-        return _bad_request("Only is_active may be updated through this endpoint.")
-    if not isinstance(data.get("is_active"), bool):
-        return _bad_request("is_active must be a boolean.")
+    allowed_fields = {"is_active", "is_admin"}
+    if not set(data).issubset(allowed_fields):
+        return _bad_request("Only is_active and is_admin may be updated through this endpoint.")
+    if any(not isinstance(data.get(key), bool) for key in data):
+        return _bad_request("is_active and is_admin must be booleans.")
 
-    is_active = bool(data.get("is_active"))
-    users.update_one({"id": user["id"]}, {"$set": {"is_active": is_active}})
-    whitelist_users.update_one({"id": user["id"]}, {"$set": {"is_active": is_active}})
+    changes = {key: bool(value) for key, value in data.items()}
+    users.update_one({"id": user["id"]}, {"$set": changes})
+    whitelist_users.update_one({"id": user["id"]}, {"$set": changes})
     return jsonify({"message": "User updated"})
 
 

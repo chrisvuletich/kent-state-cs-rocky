@@ -4,6 +4,7 @@
   import { fetchUsersForViews } from "$lib/api/users";
   import { fetchCourses } from "$lib/api/content";
   import { fetchCourseApiHistory, fetchCourseApiKeys } from "$lib/api/courses";
+  import { currentFrame } from "$lib/stores/frameStore";
 
   import {
     IconUsers,
@@ -40,16 +41,21 @@
       const activityEntries = courseActivity.flat();
       const today = new Date().toDateString();
       stats[3] = { ...stats[3], value: String(activityEntries.filter((event) => event.eventType === "request" && new Date(event.created).toDateString() === today).length) };
+      const peopleByIdentifier = new Map(users.flatMap((user) => [[user.id.toLowerCase(), user], [user.email.toLowerCase(), user]]));
+      const displayUser = (identifier: string) => {
+        const user = peopleByIdentifier.get(identifier.toLowerCase());
+        return user ? `${user.displayName} (${user.email})` : identifier;
+      };
       activity = activityEntries
         .sort((first, second) => Date.parse(second.created) - Date.parse(first.created))
         .slice(0, 5)
         .map((event) => ({
-          action: `${event.userId} ${event.eventType.replace(/-/g, " ")} in ${event.courseCode}`,
+          action: `${displayUser(event.userId)} ${event.eventType.replace(/-/g, " ")} in ${event.courseCode}`,
           time: formatActivityTime(event.created)
         }));
       audit = activityEntries.slice(0, 5).map((event) => ({
         time: formatActivityTime(event.created),
-        user: event.userId,
+        user: displayUser(event.userId),
         action: event.eventType.replace(/-/g, " "),
         course: event.courseCode
       }));
@@ -157,7 +163,7 @@
     <div class="card-header">
       <IconListDetails size={20}/>
       <h2>Recent Audit Logs</h2>
-      <button>View All Logs</button>
+      <button type="button" onclick={() => currentFrame.set('audit')}>View All Logs</button>
     </div>
 
     <table>

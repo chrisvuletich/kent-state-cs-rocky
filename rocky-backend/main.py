@@ -47,6 +47,7 @@ from backend.validation import (
     validate_user_payload,
 )
 from backend.route_handlers import auth as auth_handlers
+from backend.route_handlers import audit as audit_handlers
 from backend.route_handlers import content as content_handlers
 from backend.route_handlers import courses as course_handlers
 from backend.route_handlers import settings as settings_handlers
@@ -784,6 +785,16 @@ def create_user():
 @app.route("/users", methods=["GET"])
 def get_users():
     return user_handlers.get_users(_route_deps())
+
+
+@app.route("/users/bulk-status", methods=["PATCH"])
+def bulk_update_users():
+    return user_handlers.bulk_update_users(_route_deps())
+
+
+@app.route("/audit-logs", methods=["GET"])
+def get_audit_logs():
+    return audit_handlers.get_audit_logs(_route_deps())
 
 
 @app.route("/users/<user_id>", methods=["GET"])
