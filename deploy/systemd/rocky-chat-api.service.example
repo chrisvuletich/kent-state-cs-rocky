@@ -1,7 +1,7 @@
 [Unit]
 Description=Rocky chat API
-After=network-online.target rocky-granite.service
-Wants=network-online.target rocky-granite.service
+After=network-online.target mongod.service rocky-granite.service
+Wants=network-online.target mongod.service rocky-granite.service
 
 [Service]
 Type=simple
