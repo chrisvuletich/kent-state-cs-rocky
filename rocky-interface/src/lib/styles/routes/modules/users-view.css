@@ -17,6 +17,32 @@
 	font-weight: var(--font-weight-semibold);
 }
 
+.management-intro { margin: 0 0 16px; color: var(--color-text-muted, #667085); }
+
+.user-filters, .bulk-toolbar, .bulk-confirmation {
+	display: flex;
+	gap: 10px;
+	align-items: center;
+	flex-wrap: wrap;
+	margin-bottom: 14px;
+}
+
+.user-filters input, .user-filters select {
+	min-height: 38px;
+	border: 1px solid var(--color-border, #d0d5dd);
+	border-radius: 6px;
+	padding: 0 10px;
+	background: white;
+}
+
+.user-filters input { min-width: min(100%, 290px); flex: 1; }
+.bulk-toolbar { padding: 10px 12px; background: #eef5ff; border: 1px solid #b9d4fb; border-radius: 8px; }
+.bulk-confirmation { padding: 12px; border: 1px solid #c88a00; background: #fff8e1; border-radius: 8px; }
+.bulk-confirmation span { flex: 1; }
+.role-badge, .status-badge { display: inline-block; border-radius: 999px; padding: 3px 9px; font-size: .82rem; background: #edf1f5; color: #475467; }
+.role-admin { background: #e8edff; color: #3048a5; font-weight: 600; }
+.status-active { background: #e8f7ed; color: #18743b; font-weight: 600; }
+
 
 
 .whitelist-heading {
@@ -56,35 +82,19 @@
 	font-size: 0.9rem;
 	line-height: 1.1;
 }
+.role-select { min-height: 30px; border: 1px solid var(--color-border, #d0d5dd); border-radius: 5px; background: white; padding: 0 5px; }
 
 .users-table {
 	table-layout: fixed;
 	width: 100%;
 }
 
-.users-col-name {
-	width: 20%;
-}
-
-.users-col-email {
-	width: 24%;
-}
-
-.users-col-id {
-	width: 30%;
-}
-
-.users-col-admin {
-	width: 11%;
-}
-
-.users-col-active {
-	width: 11%;
-}
-
-.users-col-actions {
-	width: 14%;
-}
+.users-table th:nth-child(1), .users-table td:nth-child(1) { width: 42px; padding-left: var(--space-sm); padding-right: var(--space-sm); }
+.users-table th:nth-child(2), .users-table td:nth-child(2) { width: 18%; }
+.users-table th:nth-child(3), .users-table td:nth-child(3) { width: 24%; }
+.users-table th:nth-child(4), .users-table td:nth-child(4) { width: 92px; }
+.users-table th:nth-child(5), .users-table td:nth-child(5) { width: 92px; }
+.users-table th:nth-child(6), .users-table td:nth-child(6) { width: 230px; }
 
 .users-table td,
 .users-table th {
@@ -92,6 +102,8 @@
 	padding: var(--space-md) var(--space-md);
 }
 
+.users-table th:nth-child(1),
+.users-table td:nth-child(1),
 .users-table th:nth-child(4),
 .users-table td:nth-child(4),
 .users-table th:nth-child(5),
@@ -114,16 +126,9 @@
     }
 
     .users-table {
-        min-width: 740px;
+        min-width: 820px;
         table-layout: fixed;
     }
-
-    .users-col-name    { width: 130px; }
-    .users-col-email   { width: 200px; }
-    .users-col-id      { width: 210px; }
-    .users-col-admin   { width: 60px; }
-    .users-col-active  { width: 60px; }
-    .users-col-actions { width: 110px; }
 
     .users-table td,
     .users-table th {

@@ -4,6 +4,7 @@
   import { fetchUsersForViews } from "$lib/api/users";
   import { fetchCourses } from "$lib/api/content";
   import { fetchCourseApiHistory, fetchCourseApiKeys } from "$lib/api/courses";
+  import { currentFrame } from "$lib/stores/frameStore";
 
   import {
     IconUsers,
@@ -11,17 +12,16 @@
     IconKey,
     IconActivityHeartbeat,
     IconShieldCheck,
-    IconClock,
     IconChartBar,
     IconListDetails
   } from "@tabler/icons-svelte";
 
   let stats = [
     { title: "Total Users", value: "—", icon: IconUsers },
+    { title: "Active Users", value: "—", icon: IconUsers },
     { title: "Total Courses", value: "—", icon: IconBooks },
     { title: "API Keys Issued", value: "—", icon: IconKey },
-    { title: "Requests Today", value: "—", icon: IconActivityHeartbeat },
-    { title: "System Health", value: "Healthy", icon: IconShieldCheck }
+    { title: "Requests Today", value: "—", icon: IconActivityHeartbeat }
   ];
 
   function formatActivityTime(timestamp: string): string {
@@ -34,22 +34,21 @@
       const [users, courses] = await Promise.all([fetchUsersForViews(), fetchCourses()]);
       const courseApiKeys = await Promise.all(courses.map((course) => fetchCourseApiKeys(course.id)));
       stats[0] = { ...stats[0], value: String(users.length) };
-      stats[1] = { ...stats[1], value: String(courses.length) };
-      stats[2] = { ...stats[2], value: String(courseApiKeys.reduce((total, keys) => total + keys.length, 0)) };
+      stats[1] = { ...stats[1], value: String(users.filter((user) => user.isActive).length) };
+      stats[2] = { ...stats[2], value: String(courses.length) };
+      stats[3] = { ...stats[3], value: String(courseApiKeys.reduce((total, keys) => total + keys.length, 0)) };
       const courseActivity = await Promise.all(courses.map((course) => fetchCourseApiHistory(course.id)));
       const activityEntries = courseActivity.flat();
       const today = new Date().toDateString();
-      stats[3] = { ...stats[3], value: String(activityEntries.filter((event) => event.eventType === "request" && new Date(event.created).toDateString() === today).length) };
-      activity = activityEntries
-        .sort((first, second) => Date.parse(second.created) - Date.parse(first.created))
-        .slice(0, 5)
-        .map((event) => ({
-          action: `${event.userId} ${event.eventType.replace(/-/g, " ")} in ${event.courseCode}`,
-          time: formatActivityTime(event.created)
-        }));
+      stats[4] = { ...stats[4], value: String(activityEntries.filter((event) => event.eventType === "request" && new Date(event.created).toDateString() === today).length) };
+      const peopleByIdentifier = new Map(users.flatMap((user) => [[user.id.toLowerCase(), user], [user.email.toLowerCase(), user]]));
+      const displayUser = (identifier: string) => {
+        const user = peopleByIdentifier.get(identifier.toLowerCase());
+        return user ? `${user.displayName} (${user.email})` : identifier;
+      };
       audit = activityEntries.slice(0, 5).map((event) => ({
         time: formatActivityTime(event.created),
-        user: event.userId,
+        user: displayUser(event.userId),
         action: event.eventType.replace(/-/g, " "),
         course: event.courseCode
       }));
@@ -68,8 +67,6 @@
       console.error("[admin panel] failed to load dashboard totals", err);
     }
   });
-
-  let activity: { action: string; time: string }[] = [];
 
   const services = [
     { name: "Backend API", status: "Healthy" },
@@ -101,85 +98,71 @@
     {/each}
   </section>
 
-  <section class="dashboard-grid">
-    <div class="panel-card">
+  <section class="admin-content-grid">
+    <section class="panel-card audit-section">
       <div class="card-header">
-        <IconClock size={20}/>
-        <h2>Recent Activity</h2>
+        <IconListDetails size={20}/>
+        <h2>Recent Audit Logs</h2>
+        <button type="button" onclick={() => currentFrame.set('audit')}>View All Logs</button>
       </div>
 
-      {#each activity as item}
-        <div class="activity-row">
-          <div>
-            <strong>{item.action}</strong>
-            <p>{item.time}</p>
-          </div>
-        </div>
-      {/each}
-    </div>
-
-    <div class="panel-card">
-      <div class="card-header">
-        <IconShieldCheck size={20}/>
-        <h2>System Status</h2>
-      </div>
-
-      {#each services as service}
-        <div class="status-row">
-          <span>{service.name}</span>
-          <span class="healthy">{service.status}</span>
-        </div>
-      {/each}
-    </div>
-
-    <div class="panel-card">
-      <div class="card-header">
-        <IconChartBar size={20}/>
-        <h2>Top Active Courses</h2>
-      </div>
-
-      {#each topCourses as course}
-        <div class="course-row">
-          <div class="course-top">
-            <span>{course.name}</span>
-            <span>{course.requests} requests</span>
-          </div>
-
-          <div class="progress">
-            <div class="fill" style={`width:${course.width}`}></div>
-          </div>
-        </div>
-      {/each}
-    </div>
-  </section>
-
-  <section class="panel-card audit-section">
-    <div class="card-header">
-      <IconListDetails size={20}/>
-      <h2>Recent Audit Logs</h2>
-      <button>View All Logs</button>
-    </div>
-
-    <table>
-      <thead>
-        <tr>
-          <th>Time</th>
-          <th>User</th>
-          <th>Action</th>
-          <th>Course</th>
-        </tr>
-      </thead>
-
-      <tbody>
-        {#each audit as row}
+      <table>
+        <thead>
           <tr>
-            <td>{row.time}</td>
-            <td>{row.user}</td>
-            <td>{row.action}</td>
-            <td>{row.course}</td>
+            <th>Time</th>
+            <th>User</th>
+            <th>Action</th>
+            <th>Course</th>
           </tr>
+        </thead>
+
+        <tbody>
+          {#each audit as row}
+            <tr>
+              <td>{row.time}</td>
+              <td>{row.user}</td>
+              <td>{row.action}</td>
+              <td>{row.course}</td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    </section>
+
+    <aside class="admin-side-stack">
+      <section class="panel-card">
+        <div class="card-header">
+          <IconShieldCheck size={20}/>
+          <h2>System Status</h2>
+        </div>
+
+        {#each services as service}
+          <div class="status-row">
+            <span>{service.name}</span>
+            <span class="healthy">{service.status}</span>
+          </div>
         {/each}
-      </tbody>
-    </table>
+      </section>
+
+      <section class="panel-card">
+        <div class="card-header">
+          <IconChartBar size={20}/>
+          <h2>Top Active Courses</h2>
+        </div>
+
+        {#each topCourses as course}
+          <div class="course-row">
+            <div class="course-top">
+              <span>{course.name}</span>
+              <span>{course.requests} requests</span>
+            </div>
+
+            <div class="progress">
+              <div class="fill" style={`width:${course.width}`}></div>
+            </div>
+          </div>
+        {/each}
+      </section>
+    </aside>
   </section>
 </div>

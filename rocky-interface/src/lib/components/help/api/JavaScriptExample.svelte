@@ -22,8 +22,9 @@
 		<h2>Authentication</h2>
 
 		<p>
-			Every request to the Rocky API requires an API key. Include your API key
-			in the <code>Authorization</code> header using the Bearer format.
+			Every request to the Rocky API requires an API key. Include it as the
+			<code>api-key</code> field in the JSON request body, not as an
+			<code>Authorization</code> header.
 		</p>
 
 		<p>
@@ -41,18 +42,23 @@
 		</p>
 
 		<pre><code>{`const response = await fetch(
-    "https://api.rocky.edu/v1/chat",
+    "https://rocky.cs.kent.edu/rocky-api",
     {
         method: "POST",
         headers: {
-            "Authorization": "Bearer YOUR_API_KEY",
             "Content-Type": "application/json"
         },
         body: JSON.stringify({
-            message: "Hello Rocky!"
+            "api-key": process.env.ROCKY_API_KEY,
+            message: "Hello Rocky!",
+            store: false
         })
     }
 );
+
+if (!response.ok) {
+    throw new Error(await response.text());
+}
 
 const data = await response.json();
 

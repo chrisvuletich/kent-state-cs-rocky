@@ -2,6 +2,7 @@
     import "$lib/styles/routes/views/chat.css";
     import SvelteMarkdown from "@humanspeak/svelte-markdown";
     import { onMount } from "svelte";
+    import { pendingChatConversationId } from "$lib/stores/chatNavigationStore";
 
     let input = "";
     let messages = [];
@@ -303,6 +304,14 @@ If you wouldn't post it publicly or email it to a stranger, don't share it with 
 
     onMount(() => {
         loadConversations();
+        const unsubscribe = pendingChatConversationId.subscribe((selectedConversationId) => {
+            if (!selectedConversationId) {
+                return;
+            }
+            pendingChatConversationId.set(null);
+            loadConversation(selectedConversationId);
+        });
+        return unsubscribe;
     });
 
 </script>

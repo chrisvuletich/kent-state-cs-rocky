@@ -8,6 +8,9 @@
 
 .account-card {
 	padding: var(--space-xl);
+	border: 1px solid color-mix(in srgb, var(--color-accent) 24%, var(--color-gray-300));
+	background: linear-gradient(135deg, var(--color-bg-primary), var(--color-accent-light));
+	box-shadow: var(--shadow-md);
 }
 
 .account-profile-header {
@@ -29,7 +32,7 @@
 	padding: 8px;
 	border: 1px solid var(--color-gray-400);
 	border-radius: 8px;
-	background: var(--color-bg-primary);
+	background: var(--color-accent-light);
 	box-shadow: var(--shadow-sm);
 	cursor: pointer;
 	transition: border-color var(--transition-base), box-shadow var(--transition-base);
@@ -214,6 +217,91 @@
 	transform: translateX(26px);
 }
 
+.account-overview-section h2 {
+	margin: 0 0 var(--space-lg);
+	font-size: var(--font-size-xl);
+	color: var(--color-primary-dark);
+}
+
+.account-overview-state {
+	color: var(--color-text-secondary);
+}
+
+.account-course-list {
+	display: grid;
+	gap: var(--space-sm);
+}
+
+.account-course-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--space-lg);
+	width: 100%;
+	padding: var(--space-md) var(--space-lg);
+	border: 1px solid var(--color-gray-300);
+	border-radius: var(--radius-md);
+	background: var(--color-bg-primary);
+	color: var(--color-text-primary);
+	text-align: left;
+	cursor: pointer;
+	transition: border-color var(--transition-base), background-color var(--transition-base), transform var(--transition-base), box-shadow var(--transition-base);
+}
+
+.account-course-row:hover,
+.account-course-row:focus-visible {
+	border-color: var(--color-accent);
+	background: var(--color-accent-light);
+	box-shadow: var(--shadow-sm);
+	transform: translateY(-1px);
+	outline: none;
+}
+
+.account-course-row span:first-child {
+	display: grid;
+	gap: var(--space-xs);
+}
+
+.account-course-row small {
+	color: var(--color-text-secondary);
+}
+
+.account-course-link {
+	color: var(--color-text-accent);
+	font-weight: var(--font-weight-semibold);
+	white-space: nowrap;
+}
+
+.account-usage-grid {
+	display: grid;
+	grid-template-columns: repeat(4, minmax(0, 1fr));
+	gap: var(--space-md);
+}
+
+.account-usage-grid div {
+	display: grid;
+	gap: var(--space-xs);
+	padding: var(--space-lg);
+	border: 1px solid var(--color-gray-300);
+	border-radius: var(--radius-md);
+	background: var(--color-bg-primary);
+	box-shadow: var(--shadow-sm);
+	border-top: 3px solid var(--color-accent);
+}
+
+.account-usage-grid div:nth-child(2) { border-top-color: var(--color-primary-light); }
+.account-usage-grid div:nth-child(3) { border-top-color: var(--color-highlight-gold); }
+.account-usage-grid div:nth-child(4) { border-top-color: #16a34a; }
+
+.account-usage-grid span {
+	color: var(--color-text-secondary);
+	font-size: var(--font-size-sm);
+}
+
+.account-usage-grid strong {
+	font-size: var(--font-size-2xl);
+}
+
 @media (max-width: 900px) {
 	.account-lead {
 		font-size: var(--font-size-base);
@@ -273,5 +361,9 @@
 
 	.account-theme-row {
 		align-items: flex-start;
+	}
+
+	.account-usage-grid {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
 	}
 }

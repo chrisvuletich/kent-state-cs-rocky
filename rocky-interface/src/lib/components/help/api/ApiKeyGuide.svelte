@@ -2,7 +2,7 @@
 </script>
 
 <div class="api-doc">
-	<h1>Getting Your API Key</h1>
+	<h1>API Keys</h1>
 
 	<p class="api-doc-lead">
 		Your API key allows your application to securely authenticate with the
@@ -15,7 +15,7 @@
 		<p>
 			An API key is a unique token that identifies your application when it
 			communicates with Rocky. Every request to the Rocky API must include a
-			valid API key.
+			valid API key. Keys are tied to a course.
 		</p>
 	</section>
 
@@ -23,11 +23,11 @@
 		<h2>Generate an API Key</h2>
 
 		<p>
-			Generate your API key from your Rocky account settings.
+			Generate your API key from an enrolled course.
 		</p>
 
 		<ol>
-			<li>Open the <strong>Course</strong> page.</li>
+			<li>Open the <strong>Courses</strong> view and select an enrolled course.</li>
 			<li>Select <strong>Home</strong>.</li>
 			<li>Click <strong>Generate API Key</strong>.</li>
 			<li>Copy and securely store your new API key.</li>
@@ -38,11 +38,18 @@
 		<h2>Using Your API Key</h2>
 
 		<p>
-			Include your API key in the <code>Authorization</code> header using the
-			Bearer format.
+			Include your API key as the <code>api-key</code> field in the JSON request
+			body. Rocky does not use an <code>Authorization</code> header.
 		</p>
+	</section>
 
-		<pre><code>{`Authorization: Bearer YOUR_API_KEY`}</code></pre>
+	<section class="api-doc-section">
+		<h2>Reset an API Key</h2>
+
+		<p>
+			Click <strong>Generate API Key</strong> again for the same key slot to
+			regenerate it. This invalidates the old key immediately.
+		</p>
 	</section>
 
 	<section class="api-doc-section">

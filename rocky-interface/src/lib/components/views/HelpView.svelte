@@ -8,6 +8,8 @@
 	import JavaScriptExample from '$lib/components/help/api/JavaScriptExample.svelte';
 	import BestPractices from '$lib/components/help/api/BestPractices.svelte';
 	import ApiReference from '$lib/components/help/api/ApiReference.svelte';
+	import CurlExample from '$lib/components/help/api/CurlExample.svelte';
+	import CourseRosterGuide from '$lib/components/help/documentation/CourseRosterGuide.svelte';
 
 	import {
 		IconHelpCircle,
@@ -24,6 +26,7 @@
 		apikey: ApiKeyGuide,
 		python: PythonExample,
 		javascript: JavaScriptExample,
+		curl: CurlExample,
 		'best-practices': BestPractices,
 		reference: ApiReference
 	} as const;
@@ -32,6 +35,7 @@
 		'intro',
 		'apikey',
 		'python',
+		'curl',
 		'javascript',
 		'best-practices',
 		'reference'
@@ -52,9 +56,10 @@
 			: null) as DocumentationPage | null;
 
 	const documentationTitles: Record<DocumentationPage, string> = {
-		intro: 'What is an API?',
-		apikey: 'Getting Your API Key',
+		intro: 'Getting Started',
+		apikey: 'API Keys',
 		python: 'Python Example',
+		curl: 'curl Example',
 		javascript: 'JavaScript Example',
 		'best-practices': 'Best Practices',
 		reference: 'API Reference'
@@ -102,14 +107,14 @@
 	const apiDocs: ApiDocCard[] = [
 		{
 			id: 'intro',
-			title: 'What is an API?',
+			title: 'Getting Started',
 			description: 'Learn the fundamentals of APIs, requests, responses, and authentication.',
 			action: 'Read Guide',
 			icon: IconHelpCircle
 		},
 		{
 			id: 'apikey',
-			title: 'Getting Your API Key',
+			title: 'API Keys',
 			description: 'Generate and manage your Rocky API key.',
 			action: 'View Guide',
 			icon: IconKey
@@ -120,6 +125,13 @@
 			description: 'Make your first Rocky API request using Python.',
 			action: 'View Example',
 			icon: IconBrandPython
+		},
+		{
+			id: 'curl',
+			title: 'curl Example',
+			description: 'Send a copyable Rocky API request from a terminal.',
+			action: 'View Example',
+			icon: IconBrandJavascript
 		},
 		{
 			id: 'javascript',
@@ -149,11 +161,13 @@
 		| 'intro'
 		| 'apikey'
 		| 'python'
+		| 'curl'
 		| 'javascript'
 		| 'best-practices'
 		| 'reference';
 
 	let selectedDocumentation: ApiDocumentation = 'home';
+	let isCourseWorkflowOpen = false;
 
 	$: currentDocumentation =
 		selectedDocumentation !== 'home'
@@ -162,7 +176,7 @@
 
 	const helpFiles: HelpDocument[] = [
 		{ title: 'User Management Guide', category: 'Administrators', date: '2026-03-21', status: 'Updated', url: '#' },
-		{ title: 'Course Creation Workflow', category: 'Instructors', date: '2026-02-15', status: 'Current', url: '#' },
+		{ title: 'Course Roster Workflow', category: 'Instructors', date: '2026-02-15', status: 'Current', url: '#' },
 		{ title: 'Analytics Dashboard Overview', category: 'General', date: '2026-01-10', status: 'Current', url: '#' },
 		{ title: 'System Roles & Permissions', category: 'Security', date: '2025-11-28', status: 'Current', url: '#' },
 		{ title: 'Troubleshooting Common Errors', category: 'Support', date: '2026-03-22', status: 'New', url: '#' }
@@ -176,6 +190,7 @@
 	}
 
 	function openDocumentation(page: ApiDocumentation) {
+		isCourseWorkflowOpen = false;
 		selectedDocumentation = page;
 
 		document.querySelector('.app-content')?.scrollTo({
@@ -183,10 +198,15 @@
 			behavior: 'smooth'
 		});
 	}
+
+	function openCourseWorkflow() {
+		isCourseWorkflowOpen = true;
+		document.querySelector('.app-content')?.scrollTo({ top: 0, behavior: 'smooth' });
+	}
 </script>
 
 <ViewShell title="Help Center">
-	{#if selectedDocumentation === 'home'}
+	{#if selectedDocumentation === 'home' && !isCourseWorkflowOpen}
 	<section class="section">
 		<div class="section-header">
 			<h2>Other Resources</h2>
@@ -275,7 +295,11 @@
 						{#each helpFiles as file}
 							<tr>
 								<td>
-									<a href={file.url} class="help-doc-link">{file.title}</a>
+									{#if file.title === 'Course Roster Workflow'}
+										<button type="button" class="help-doc-button" on:click={openCourseWorkflow}>{file.title}</button>
+									{:else}
+										<a href={file.url} class="help-doc-link">{file.title}</a>
+									{/if}
 								</td>
 								<td>{file.category}</td>
 								<td>{file.date}</td>
@@ -297,6 +321,17 @@
 		</div>
 	</section>
 
+	{:else if isCourseWorkflowOpen}
+		<section class="section">
+			<div class="documentation-header">
+				<button class="support-btn support-btn-secondary" on:click={() => (isCourseWorkflowOpen = false)}>
+					← Back to Help Center
+				</button>
+			</div>
+			<div class="section-content">
+				<CourseRosterGuide />
+			</div>
+		</section>
 	{:else}
 		<section class="section">
 		<div class="documentation-header">

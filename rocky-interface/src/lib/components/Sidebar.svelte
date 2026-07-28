@@ -17,6 +17,7 @@
 		courses: '/courses-icon.svg',
 		analytics: '/analytics-icon.svg',
 		admin: '/admin-icon.svg',
+		audit: '/analytics-icon.svg',
 		account: '/account-icon.svg',
 		chat: '/chat-icon.svg',
 		help: '/help-icon.svg'

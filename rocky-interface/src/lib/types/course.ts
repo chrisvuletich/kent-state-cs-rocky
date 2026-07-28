@@ -42,6 +42,7 @@ export type Course = {
 	apiKeyOwnerId: string | null;
 	apiKeyGroupCreatedBy: string | null;
 	apiKeyCreated: string | null;
+	members?: CourseMember[];
 };
 
 export type ApiCourseMember = Partial<{
@@ -156,7 +157,8 @@ export function normalizeCourse(raw: ApiCourse, index = 0): Course {
 		apiKeyOwnerType: raw.api_key_owner_type || null,
 		apiKeyOwnerId: raw.api_key_owner_id?.trim() || null,
 		apiKeyGroupCreatedBy: raw.api_key_group_created_by?.trim() || null,
-		apiKeyCreated: raw.api_key_created?.trim() || null
+		apiKeyCreated: raw.api_key_created?.trim() || null,
+		members: Array.isArray(raw.members) ? raw.members.map((member) => normalizeCourseMember(member)) : []
 	};
 }
 

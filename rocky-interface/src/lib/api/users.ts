@@ -11,6 +11,7 @@ export type ApiWhitelistEntry = Partial<{
 	id: string;
 	is_admin: boolean;
 	is_active: boolean;
+	role: 'student' | 'instructor' | 'admin';
 	created_at: string;
 }>;
 
@@ -21,6 +22,7 @@ export type WhitelistEntry = {
 	displayName: string;
 	email: string;
 	isAdmin: boolean;
+	role: 'student' | 'instructor' | 'admin';
 	isActive: boolean;
 	createdAt: string;
 };
@@ -43,7 +45,8 @@ function normalizeWhitelistEntry(raw: ApiWhitelistEntry): WhitelistEntry {
 		lastName,
 		displayName,
 		email: raw.email?.trim() || 'N/A',
-		isAdmin: Boolean(raw.is_admin),
+		role: raw.role === 'admin' || raw.role === 'instructor' || raw.role === 'student' ? raw.role : (raw.is_admin ? 'admin' : 'student'),
+		isAdmin: raw.role === 'admin' || (!raw.role && Boolean(raw.is_admin)),
 		isActive: raw.is_active === undefined ? true : Boolean(raw.is_active),
 		createdAt: raw.created_at?.trim() || ''
 	};
@@ -103,11 +106,21 @@ export async function createUser(input: CreateUserInput): Promise<void> {
 }
 
 export async function setUserActive(id: string, isActive: boolean): Promise<void> {
+	await updateUser(id, { is_active: isActive });
+	showSuccessFeedback(isActive ? 'User activated successfully.' : 'User deactivated successfully.');
+}
+
+export async function setUserRole(id: string, role: 'student' | 'instructor' | 'admin'): Promise<void> {
+	await updateUser(id, { role });
+	showSuccessFeedback(`Account role changed to ${role}.`);
+}
+
+async function updateUser(id: string, changes: { is_active?: boolean; is_admin?: boolean; role?: 'student' | 'instructor' | 'admin' }): Promise<void> {
 	try {
 		const response = await fetch(`/api/backend/users/${id}`, {
 			method: 'PUT',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ is_active: isActive })
+			body: JSON.stringify(changes)
 		});
 
 		if (!response.ok) {
@@ -115,9 +128,30 @@ export async function setUserActive(id: string, isActive: boolean): Promise<void
 			throw new Error(payload.error || `Failed to update user status (${response.status}).`);
 		}
 
-		showSuccessFeedback(isActive ? 'User activated successfully.' : 'User deactivated successfully.');
 	} catch (err) {
 		const message = getErrorMessage(err, 'Unable to update user status.');
+		showErrorFeedback(message);
+		throw err;
+	}
+}
+
+export async function setUsersActive(ids: string[], isActive: boolean): Promise<{ updatedIds: string[]; missingIds: string[] }> {
+	try {
+		const response = await fetch('/api/backend/users/bulk-status', {
+			method: 'PATCH',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ user_ids: ids, is_active: isActive })
+		});
+		const payload = (await response.json().catch(() => ({}))) as { updated_ids?: string[]; missing_ids?: string[]; error?: string };
+		if (!response.ok) {
+			throw new Error(payload.error || `Failed to update users (${response.status}).`);
+		}
+		const updatedIds = payload.updated_ids || [];
+		const missingIds = payload.missing_ids || [];
+		showSuccessFeedback(`${updatedIds.length} user${updatedIds.length === 1 ? '' : 's'} ${isActive ? 'activated' : 'deactivated'}.`);
+		return { updatedIds, missingIds };
+	} catch (err) {
+		const message = getErrorMessage(err, 'Unable to update selected users.');
 		showErrorFeedback(message);
 		throw err;
 	}

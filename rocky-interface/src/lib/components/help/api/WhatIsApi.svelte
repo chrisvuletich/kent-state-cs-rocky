@@ -2,13 +2,23 @@
 </script>
 
 <div class="api-doc">
-	<h1>What is an API?</h1>
+	<h1>Getting Started</h1>
 
 	<p class="api-doc-lead">
 		An API (Application Programming Interface) allows different software
 		applications to communicate with one another. The Rocky API lets your
 		application securely send requests and receive data from Rocky.
 	</p>
+
+	<section class="api-doc-section">
+		<h2>Join a class</h2>
+
+		<p>
+			Your instructor adds you to the course roster. Once added, the course
+			appears in the <strong>Courses</strong> view. If it is missing, contact
+			your instructor; students cannot add themselves to a course roster.
+		</p>
+	</section>
 
 	<section class="api-doc-section">
 		<h2>How APIs Work</h2>
@@ -62,6 +72,16 @@ Response`}</code></pre>
 			<li><strong>PUT</strong> — Update existing data.</li>
 			<li><strong>DELETE</strong> — Remove data.</li>
 		</ul>
+	</section>
+
+	<section class="api-doc-section">
+		<h2>Course API keys</h2>
+
+		<p>
+			API keys are tied to a course. Open an enrolled course to generate and
+			manage its key. Instructors can use the Course Roster Workflow in the
+			Help Center to add students.
+		</p>
 	</section>
 
 	<section class="api-doc-section">
