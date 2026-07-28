@@ -164,7 +164,7 @@
 
 	const helpFiles: HelpDocument[] = [
 		{ title: 'User Management Guide', category: 'Administrators', date: '2026-03-21', status: 'Updated', url: '#' },
-		{ title: 'Course Creation Workflow', category: 'Instructors', date: '2026-02-15', status: 'Current', url: '#' },
+		{ title: 'Course Roster Workflow', category: 'Instructors', date: '2026-02-15', status: 'Current', url: '#' },
 		{ title: 'Analytics Dashboard Overview', category: 'General', date: '2026-01-10', status: 'Current', url: '#' },
 		{ title: 'System Roles & Permissions', category: 'Security', date: '2025-11-28', status: 'Current', url: '#' },
 		{ title: 'Troubleshooting Common Errors', category: 'Support', date: '2026-03-22', status: 'New', url: '#' }
@@ -283,7 +283,7 @@
 						{#each helpFiles as file}
 							<tr>
 								<td>
-									{#if file.title === 'Course Creation Workflow'}
+									{#if file.title === 'Course Roster Workflow'}
 										<button type="button" class="help-doc-button" on:click={openCourseWorkflow}>{file.title}</button>
 									{:else}
 										<a href={file.url} class="help-doc-link">{file.title}</a>
