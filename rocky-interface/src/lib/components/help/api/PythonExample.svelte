@@ -57,7 +57,7 @@
 	<pre><code>{`import os
 import requests
 
-url = "https://rocky.cs.kent.edu/rocky-api"
+url = "https://rocky.cs.kent.edu/v1/responses"
 
 payload = {
     "api-key": os.environ["ROCKY_API_KEY"],

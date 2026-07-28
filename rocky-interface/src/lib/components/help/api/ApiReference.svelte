@@ -9,7 +9,7 @@
 		<h2>Endpoint and authentication</h2>
 		<table class="data-table">
 			<thead><tr><th>Method</th><th>Endpoint</th><th>Authentication</th></tr></thead>
-			<tbody><tr><td>POST</td><td><code>https://rocky.cs.kent.edu/rocky-api</code></td><td>JSON <code>api-key</code> field</td></tr></tbody>
+			<tbody><tr><td>POST</td><td><code>https://rocky.cs.kent.edu/v1/responses</code></td><td>JSON <code>api-key</code> field</td></tr></tbody>
 		</table>
 		<p>Use Rocky’s public Chat API endpoint for requests.</p>
 	</section>
