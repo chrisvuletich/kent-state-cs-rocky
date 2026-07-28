@@ -27,11 +27,16 @@
     gap: 1.25rem;
 }
 
-.dashboard-grid {
+.admin-content-grid {
     display: grid;
-    grid-template-columns: 2fr 1fr 1fr;
+    grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
     gap: 1.25rem;
     align-items: start;
+}
+
+.admin-side-stack {
+    display: grid;
+    gap: 1.25rem;
 }
 
 .panel-card {
@@ -102,26 +107,6 @@
     background: #1d4ed8;
 }
 
-.activity-row {
-    padding: .9rem 0;
-    border-bottom: 1px solid #edf1f5;
-}
-
-.activity-row:last-child {
-    border-bottom: none;
-}
-
-.activity-row strong {
-    display: block;
-    color: #1f2937;
-}
-
-.activity-row p {
-    margin-top: .2rem;
-    color: #6b7280;
-    font-size: .9rem;
-}
-
 .status-row {
     display: flex;
     justify-content: space-between;
@@ -190,7 +175,7 @@
 
 @media (max-width: 1200px) {
 
-    .dashboard-grid {
+    .admin-content-grid {
         grid-template-columns: 1fr;
     }
 

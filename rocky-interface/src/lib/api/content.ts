@@ -15,7 +15,6 @@ import {
 	type CourseGroup
 } from '$lib/types/course';
 import { normalizeFaqItems, type ApiFaqItem, type FaqItem } from '$lib/types/help';
-import { toPanelWidgets, type PanelWidget } from '$lib/types/widget';
 
 const USER_SAFE_ACTION_FAILURE = 'Action failed. Please try again.';
 const USER_SAFE_NETWORK_FAILURE = 'Unable to reach the server. Please try again.';
@@ -75,12 +74,6 @@ export async function fetchAnalyticsActivity(): Promise<ActivityRow[]> {
 	const url = '/api/backend/analytics/activity';
 	const rawRows = await fetchJson<Array<Partial<ActivityRow>>>(url);
 	return rawRows.map(toActivityRow);
-}
-
-export async function fetchDefaultWidgets(): Promise<PanelWidget[]> {
-	const url = '/api/backend/widgets/default';
-	const rawWidgets = await fetchJson<Array<Partial<PanelWidget>>>(url);
-	return toPanelWidgets(rawWidgets);
 }
 
 export async function fetchFaqItems(): Promise<FaqItem[]> {

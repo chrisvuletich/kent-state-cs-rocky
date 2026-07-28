@@ -1,4 +1,4 @@
-/* KPI cards reused by analytics and widgets */
+/* KPI cards reused by analytics views */
 .kpi-card {
 	background: var(--color-bg-primary);
 	border: 1px solid var(--color-gray-300);

@@ -24,19 +24,24 @@ def get_audit_logs(deps: dict[str, Any]):
     date_from = normalize_str(request.args.get("date_from"))
     date_to = normalize_str(request.args.get("date_to"))
     people = list(users.find()) + list(whitelist_users.find())
-    people_by_email = {normalize_str(person.get("email")).lower(): person for person in people}
+    people_by_identifier: dict[str, dict[str, Any]] = {}
+    for person in people:
+        for identifier in (person.get("email"), person.get("id"), person.get("_id")):
+            normalized_identifier = normalize_str(identifier).lower()
+            if normalized_identifier:
+                people_by_identifier[normalized_identifier] = person
 
     rows = []
     for record in api_history.find():
         row = _serialize_value(record)
-        email = normalize_str(row.get("u_id")).lower()
-        person = people_by_email.get(email, {})
+        user_identifier = normalize_str(row.get("u_id")).lower()
+        person = people_by_identifier.get(user_identifier, {})
         display_name = " ".join(filter(None, [normalize_str(person.get("first_name")), normalize_str(person.get("last_name"))])).strip()
-        row["user_email"] = email
-        row["user_name"] = display_name or email or "Unknown user"
+        row["user_email"] = normalize_str(person.get("email")).lower() or user_identifier
+        row["user_name"] = display_name or row["user_email"] or "Unknown user"
         stored_role = normalize_str(person.get("role")).lower()
         row["user_role"] = stored_role if stored_role in {"student", "instructor", "admin"} else ("admin" if person.get("is_admin") else "student")
-        haystack = " ".join([row["user_name"], email, normalize_str(row.get("c_id")), normalize_str(row.get("event_type"))]).lower()
+        haystack = " ".join([row["user_name"], row["user_email"], normalize_str(row.get("c_id")), normalize_str(row.get("event_type"))]).lower()
         created = normalize_str(row.get("created"))
         if search and search not in haystack:
             continue

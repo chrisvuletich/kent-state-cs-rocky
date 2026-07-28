@@ -89,13 +89,12 @@
 	width: 100%;
 }
 
-.users-col-name {
-	width: 20%;
-}
-
-.users-col-email {
-	width: 24%;
-}
+.users-table th:nth-child(1), .users-table td:nth-child(1) { width: 42px; padding-left: var(--space-sm); padding-right: var(--space-sm); }
+.users-table th:nth-child(2), .users-table td:nth-child(2) { width: 18%; }
+.users-table th:nth-child(3), .users-table td:nth-child(3) { width: 24%; }
+.users-table th:nth-child(4), .users-table td:nth-child(4) { width: 92px; }
+.users-table th:nth-child(5), .users-table td:nth-child(5) { width: 92px; }
+.users-table th:nth-child(6), .users-table td:nth-child(6) { width: 230px; }
 
 .users-table td,
 .users-table th {

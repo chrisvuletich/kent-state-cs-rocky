@@ -8,6 +8,7 @@
 	import JavaScriptExample from '$lib/components/help/api/JavaScriptExample.svelte';
 	import BestPractices from '$lib/components/help/api/BestPractices.svelte';
 	import ApiReference from '$lib/components/help/api/ApiReference.svelte';
+	import CourseRosterGuide from '$lib/components/help/documentation/CourseRosterGuide.svelte';
 
 	import {
 		IconHelpCircle,
@@ -154,6 +155,7 @@
 		| 'reference';
 
 	let selectedDocumentation: ApiDocumentation = 'home';
+	let isCourseWorkflowOpen = false;
 
 	$: currentDocumentation =
 		selectedDocumentation !== 'home'
@@ -176,6 +178,7 @@
 	}
 
 	function openDocumentation(page: ApiDocumentation) {
+		isCourseWorkflowOpen = false;
 		selectedDocumentation = page;
 
 		document.querySelector('.app-content')?.scrollTo({
@@ -183,10 +186,15 @@
 			behavior: 'smooth'
 		});
 	}
+
+	function openCourseWorkflow() {
+		isCourseWorkflowOpen = true;
+		document.querySelector('.app-content')?.scrollTo({ top: 0, behavior: 'smooth' });
+	}
 </script>
 
 <ViewShell title="Help Center">
-	{#if selectedDocumentation === 'home'}
+	{#if selectedDocumentation === 'home' && !isCourseWorkflowOpen}
 	<section class="section">
 		<div class="section-header">
 			<h2>Other Resources</h2>
@@ -275,7 +283,11 @@
 						{#each helpFiles as file}
 							<tr>
 								<td>
-									<a href={file.url} class="help-doc-link">{file.title}</a>
+									{#if file.title === 'Course Creation Workflow'}
+										<button type="button" class="help-doc-button" on:click={openCourseWorkflow}>{file.title}</button>
+									{:else}
+										<a href={file.url} class="help-doc-link">{file.title}</a>
+									{/if}
 								</td>
 								<td>{file.category}</td>
 								<td>{file.date}</td>
@@ -297,6 +309,17 @@
 		</div>
 	</section>
 
+	{:else if isCourseWorkflowOpen}
+		<section class="section">
+			<div class="documentation-header">
+				<button class="support-btn support-btn-secondary" on:click={() => (isCourseWorkflowOpen = false)}>
+					← Back to Help Center
+				</button>
+			</div>
+			<div class="section-content">
+				<CourseRosterGuide />
+			</div>
+		</section>
 	{:else}
 		<section class="section">
 		<div class="documentation-header">

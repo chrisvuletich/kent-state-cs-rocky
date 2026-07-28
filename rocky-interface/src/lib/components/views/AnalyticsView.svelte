@@ -37,10 +37,7 @@
 					<p><strong>Error:</strong> {error}</p>
 				</div>
 			{:else}
-				<p class="section-text">
-					Main trend area for workload, health, and moderation metrics. The widget bar on the right mirrors these
-					values for quick scanning.
-				</p>
+				<p class="section-text">Main trend area for workload, health, and moderation metrics.</p>
 
 				<div class="kpi-grid">
 					{#each kpis as kpi}

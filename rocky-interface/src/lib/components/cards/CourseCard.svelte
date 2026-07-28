@@ -22,8 +22,9 @@
 
   $: courseHexColor = course.color?.trim() || '#334155';
   $: courseCodeLabel = course.code?.trim() || '';
+  $: courseInstructorLabel = course.instructor?.trim() || '';
   $: courseSemesterLabel = course.semester?.trim() === 'None' ? '' : course.semester?.trim() || '';
-  $: courseMetaLabel = [courseCodeLabel, courseSemesterLabel].filter((value) => value.length > 0).join(' · ');
+  $: courseMetaLabel = [courseInstructorLabel, courseCodeLabel, courseSemesterLabel].filter((value) => value.length > 0).join(' · ');
 </script>
 
 {#if mode === 'card'}
