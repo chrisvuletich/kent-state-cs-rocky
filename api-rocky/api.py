@@ -10,6 +10,7 @@ from flask import Flask, request, jsonify, Response
 import requests
 import logging
 from mongita import MongitaClientDisk
+from telemetry import TelemetryStore, sanitize_model_metrics
 
 # Try PyMongo first (default to localhost). If unavailable, fall back to Mongita.
 try:
@@ -30,12 +31,15 @@ GRANITE_URL = os.getenv("ROCKY_GRANITE_URL", "http://127.0.0.1:5002/generate")
 DEFAULT_MODEL = os.getenv("ROCKY_CHAT_MODEL", os.getenv("OLLAMA_MODEL", "gemma4:latest"))
 CHAT_API_HOST = os.getenv("ROCKY_CHAT_API_HOST", "127.0.0.1")
 CHAT_API_PORT = int(os.getenv("ROCKY_CHAT_API_PORT", "5003"))
-GRANITE_TIMEOUT_SECONDS = int(os.getenv("ROCKY_GRANITE_TIMEOUT_SECONDS", "180"))
+GRANITE_TIMEOUT_SECONDS = int(os.getenv("ROCKY_GRANITE_TIMEOUT_SECONDS", "195"))
 
 
 api_keys_col = None
 conversations_col = None
 messages_col = None
+telemetry_interactions_col = None
+telemetry_current_col = None
+telemetry_store = None
 
 
 def normalize_api_key_value(key):
@@ -98,7 +102,10 @@ def ensure_chat_service_api_key():
         else:
             api_keys_col.insert_one(service_doc)
     except Exception as exc:
-        logging.warning("Could not ensure chat service API key record: %s", exc)
+        logging.warning(
+            "Could not ensure chat service API key record. error_type=%s",
+            type(exc).__name__,
+        )
 
 
 def create_index_safely(collection, keys, **kwargs):
@@ -107,7 +114,10 @@ def create_index_safely(collection, keys, **kwargs):
     try:
         collection.create_index(keys, **kwargs)
     except Exception as exc:
-        logging.warning("Could not create chat API index %s: %s", keys, exc)
+        logging.warning(
+            "Could not create chat API index. error_type=%s",
+            type(exc).__name__,
+        )
 
 
 def ensure_chat_indexes():
@@ -152,6 +162,8 @@ def initialize_database():
     global api_keys_col
     global conversations_col
     global messages_col
+    global telemetry_interactions_col
+    global telemetry_current_col
 
     if DB_BACKEND == "mongodb":
         if MongoClient is None:
@@ -159,14 +171,11 @@ def initialize_database():
                 "ROCKY_DB_BACKEND is set to mongodb, but PyMongo is unavailable."
             )
 
-        last_error = None
-
         for attempt in range(1, MONGODB_CONNECT_ATTEMPTS + 1):
             try:
                 logging.info(
-                    "Connecting to MongoDB at %s/%s "
+                    "Connecting to MongoDB database=%s "
                     "(attempt %s of %s)",
-                    MONGODB_URI,
                     DB_NAME,
                     attempt,
                     MONGODB_CONNECT_ATTEMPTS,
@@ -183,22 +192,21 @@ def initialize_database():
                 api_keys_col = database["api_keys"]
                 conversations_col = database["conversations"]
                 messages_col = database["messages"]
+                telemetry_interactions_col = database["telemetry_interactions"]
+                telemetry_current_col = database["telemetry_current"]
 
                 logging.info(
-                    "Using MongoDB at %s/%s",
-                    MONGODB_URI,
+                    "Using MongoDB database=%s",
                     DB_NAME,
                 )
                 return
 
             except PyMongoError as exc:
-                last_error = exc
-
                 logging.warning(
-                    "MongoDB connection attempt %s of %s failed: %s",
+                    "MongoDB connection attempt %s of %s failed. error_type=%s",
                     attempt,
                     MONGODB_CONNECT_ATTEMPTS,
-                    exc,
+                    type(exc).__name__,
                 )
 
                 if attempt < MONGODB_CONNECT_ATTEMPTS:
@@ -209,7 +217,7 @@ def initialize_database():
             f"{MONGODB_CONNECT_ATTEMPTS} attempts. "
             "Refusing to fall back to Mongita while "
             "ROCKY_DB_BACKEND=mongodb."
-        ) from last_error
+        )
 
     if DB_BACKEND == "mongita":
         logging.warning(
@@ -235,6 +243,74 @@ initialize_database()
 ensure_chat_indexes()
 ensure_chat_service_api_key()
 
+telemetry_enabled = os.getenv(
+    "ROCKY_TELEMETRY_ENABLED", "true"
+).strip().lower() not in {"0", "false", "no", "off"}
+if DB_BACKEND == "mongodb" and telemetry_enabled:
+    telemetry_store = TelemetryStore(
+        telemetry_interactions_col,
+        telemetry_current_col,
+        logger=app.logger,
+    )
+    telemetry_store.ensure_indexes()
+
+
+def has_effective_user_prompt(payload):
+    if not isinstance(payload, dict) or not isinstance(payload.get("input"), list):
+        return False
+    for item in payload["input"]:
+        if not isinstance(item, dict) or item.get("role") != "user":
+            continue
+        content = item.get("content")
+        if isinstance(content, list) and any(
+            isinstance(block, dict)
+            and block.get("type") == "input_text"
+            and isinstance(block.get("text"), str)
+            and block["text"].strip()
+            for block in content
+        ):
+            return True
+    return False
+
+
+def begin_telemetry_interaction():
+    if telemetry_store is None:
+        return None
+    try:
+        return telemetry_store.record_accepted()
+    except Exception as error:
+        app.logger.warning(
+            "telemetry.accept_unexpected_failure error_type=%s",
+            type(error).__name__,
+        )
+        return None
+
+
+def finish_telemetry_interaction(interaction, outcome, model_metrics=None):
+    if telemetry_store is None or interaction is None:
+        return False
+    try:
+        return telemetry_store.record_terminal(
+            interaction, outcome, model_metrics=model_metrics
+        )
+    except Exception as error:
+        app.logger.warning(
+            "telemetry.terminal_unexpected_failure error_type=%s",
+            type(error).__name__,
+        )
+        return False
+
+
+def model_error_status(error_type):
+    return {"bad_request": 400, "timeout": 504}.get(error_type, 502)
+
+
+def telemetry_json(payload, status, interaction):
+    response = jsonify(payload)
+    if isinstance(interaction, dict) and interaction.get("request_id"):
+        response.headers["X-Rocky-Request-Id"] = interaction["request_id"]
+    return response, status
+
 
 
 @app.route("/health", methods=["GET"])
@@ -257,80 +333,96 @@ def rocky_api():
         return jsonify({"error": "Invalid API key"}), 401
 
     request_body = apirequest.get("requestbody")
+    store_history = should_store_history(request_body)
+    granite_payload = None
+    chat_user_context = None
+    user_id = None
+    user_message = None
+    requested_conversation_id = None
 
-    if should_store_history(request_body):
+    if store_history:
         chat_user_context = get_chat_user_context(key_doc)
         if not chat_user_context:
             return jsonify({"error": "Missing chat user context."}), 400
 
         user_id = chat_user_context["user_id"]
         user_message = extract_user_message_text(request_body)
-
         if not user_message:
             return jsonify({"error": "Missing message."}), 400
-
-        requested_conversation_id = None
         if isinstance(request_body, dict):
             requested_conversation_id = request_body.get("conversation_id")
+    else:
+        granite_payload = _build_granite_payload(request_body)
+        if not has_effective_user_prompt(granite_payload):
+            return jsonify({"error": "Missing message."}), 400
 
-        conversation_id = get_or_create_conversation(
-            user_id=user_id,
-            conversation_id=requested_conversation_id,
-            first_message=user_message,
-            user_context=chat_user_context
-        )
+    interaction = begin_telemetry_interaction()
+    model_metrics = None
+    conversation_id = None
+    try:
+        model_request = granite_payload
+        if store_history:
+            conversation_id = get_or_create_conversation(
+                user_id=user_id,
+                conversation_id=requested_conversation_id,
+                first_message=user_message,
+                user_context=chat_user_context
+            )
 
-        save_message(
-            conversation_id=conversation_id,
-            user_id=user_id,
-            role="user",
-            content=user_message,
-            user_context=chat_user_context
-        )
+            save_message(
+                conversation_id=conversation_id,
+                user_id=user_id,
+                role="user",
+                content=user_message,
+                user_context=chat_user_context
+            )
 
-        recent_messages = load_recent_messages(conversation_id, user_id)
-        granite_input = messages_to_granite_input(recent_messages)
-        history_request_body = build_history_request_body(request_body, granite_input)
+            recent_messages = load_recent_messages(conversation_id, user_id)
+            granite_input = messages_to_granite_input(recent_messages)
+            history_request_body = build_history_request_body(
+                request_body,
+                granite_input,
+            )
+            model_request = history_request_body
 
-        response = request_ai(history_request_body)
-
+        response = request_ai(model_request)
+        model_metrics = response.get("_telemetry")
         if response.get("error"):
-            status = 400 if response.get("error_type") == "bad_request" else 502
-            return jsonify({"error": response["error"]}), status
+            outcome = (
+                "timed_out"
+                if response.get("error_type") == "timeout"
+                else "failed"
+            )
+            finish_telemetry_interaction(interaction, outcome, model_metrics)
+            return telemetry_json(
+                {"error": response["error"]},
+                model_error_status(response.get("error_type")),
+                interaction,
+            )
 
-        assistant_reply = response.get("output_text", "")
+        assistant_reply = response["output_text"]
+        if store_history:
+            save_message(
+                conversation_id=conversation_id,
+                user_id=user_id,
+                role="assistant",
+                content=assistant_reply,
+                model=response.get("model"),
+                user_context=chat_user_context
+            )
+    except Exception:
+        finish_telemetry_interaction(interaction, "failed", model_metrics)
+        raise
 
-        save_message(
-            conversation_id=conversation_id,
-            user_id=user_id,
-            role="assistant",
-            content=assistant_reply,
-            model=response.get("model"),
-            user_context=chat_user_context
-        )
-
-        return jsonify(
-            {
-                "reply": assistant_reply,
-                "model": response.get("model"),
-                "metadata": response.get("metadata", {}),
-                "conversation_id": conversation_id
-            }
-        ), 200
-
-    response = request_ai(request_body)
-
-    if response.get("error"):
-        status = 400 if response.get("error_type") == "bad_request" else 502
-        return jsonify({"error": response["error"]}), status
-
-    return jsonify(
-        {
-            "reply": response.get("output_text", ""),
-            "model": response.get("model"),
-            "metadata": response.get("metadata", {}),
-        }
-    ), 200
+    finish_telemetry_interaction(interaction, "completed", model_metrics)
+    response_payload = {
+        "reply": assistant_reply,
+        "model": response.get("model"),
+        "metadata": response.get("metadata", {}),
+    }
+    if conversation_id is not None:
+        response_payload["conversation_id"] = conversation_id
+    return telemetry_json(response_payload, 200, interaction)
 
 @app.route("/conversations/<conversation_id>/export", methods=["POST"])
 def export_conversation(conversation_id):
@@ -636,7 +728,8 @@ def extract_user_message_text(request_body):
     if not isinstance(request_body, dict):
         return ""
 
-    return str(request_body.get("message", "")).strip()
+    message = request_body.get("message")
+    return message.strip() if isinstance(message, str) else ""
 
 def get_or_create_conversation(user_id, conversation_id, first_message, user_context=None):
     """
@@ -860,9 +953,10 @@ def _build_granite_payload(request_body):
     if isinstance(request_body.get("input"), list):
         return request_body
 
-    message_text = str(request_body.get("message", "")).strip()
-    if not message_text:
+    message_text = request_body.get("message")
+    if not isinstance(message_text, str) or not message_text.strip():
         return None
+    message_text = message_text.strip()
 
     payload = {
         "model": str(request_body.get("model") or DEFAULT_MODEL),
@@ -884,21 +978,89 @@ def _build_granite_payload(request_body):
     return payload
 
 
-def request_ai(request_body):
-    # Send a chat request to Granite and return the parsed response body.
-    try:
-        payload = _build_granite_payload(request_body)
-        if payload is None:
-            return {"error": "Missing message.", "error_type": "bad_request"}
+def extract_granite_telemetry(data):
+    if not isinstance(data, dict):
+        return {}
+    telemetry = data.get("telemetry")
+    if not isinstance(telemetry, dict):
+        return {}
+    provider = telemetry.get("provider")
+    metrics = dict(provider) if isinstance(provider, dict) else {}
+    metrics["model_input_bytes"] = telemetry.get("model_input_bytes")
+    metrics["model_output_bytes"] = telemetry.get("model_output_bytes")
+    return sanitize_model_metrics(metrics)
 
-        resp = requests.post(GRANITE_URL, json=payload, timeout=GRANITE_TIMEOUT_SECONDS)
-        resp.raise_for_status()
+
+def model_failure(error_type, metrics=None):
+    messages = {
+        "bad_request": "Granite rejected the request.",
+        "timeout": "Model request timed out.",
+        "bad_response": "Granite returned an invalid response.",
+    }
+    return {
+        "error": messages.get(error_type, "Model service request failed."),
+        "error_type": error_type,
+        "_telemetry": metrics or {},
+    }
+
+
+def request_ai(request_body):
+    payload = _build_granite_payload(request_body)
+    if payload is None:
+        return model_failure("bad_request")
+
+    try:
+        resp = requests.post(
+            GRANITE_URL,
+            json=payload,
+            timeout=GRANITE_TIMEOUT_SECONDS,
+        )
+    except requests.Timeout:
+        return model_failure("timeout")
+    except requests.RequestException:
+        return model_failure("network")
+
+    response_status = getattr(resp, "status_code", 500)
+    try:
         data = resp.json()
-        if not str(data.get("output_text", "")).strip():
-            return {"error": "Granite returned no output.", "error_type": "bad_response"}
-        return data
-    except requests.RequestException as exc:
-        return {"error": f"Error contacting AI: {exc}", "error_type": "network"}
+    except ValueError:
+        if response_status == 504:
+            return model_failure("timeout")
+        error_type = "bad_response" if 200 <= response_status < 300 else "network"
+        return model_failure(error_type)
+
+    if not isinstance(data, dict):
+        if response_status == 504:
+            return model_failure("timeout")
+        return model_failure(
+            "bad_response" if 200 <= response_status < 300 else "network"
+        )
+
+    model_metrics = extract_granite_telemetry(data)
+    granite_error = data.get("error")
+    granite_error_type = (
+        granite_error.get("type")
+        if isinstance(granite_error, dict)
+        else None
+    )
+
+    if not 200 <= response_status < 300 or granite_error is not None:
+        if response_status == 400 or granite_error_type == "bad_request":
+            error_type = "bad_request"
+        elif response_status == 504 or granite_error_type == "model_timeout":
+            error_type = "timeout"
+        else:
+            error_type = "network"
+        return model_failure(error_type, model_metrics)
+
+    output_text = data.get("output_text")
+    if not isinstance(output_text, str) or not output_text.strip():
+        return model_failure("bad_response", model_metrics)
+
+    result = dict(data)
+    result.pop("telemetry", None)
+    result["_telemetry"] = model_metrics
+    return result
 
 
 if __name__ == "__main__":

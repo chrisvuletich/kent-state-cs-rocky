@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify
 
-from app.ollama_client import call_ollama_chat
+from app.ollama_client import OllamaCallError, call_ollama_chat
 from app.request_parser import extract_model, extract_messages, extract_reasoning, extract_generation_options
 import os
 
@@ -45,11 +45,25 @@ def generate():
 
     try:
         ollama_result = call_ollama_chat(model, messages, options, think)
-    except Exception as error:
+    except OllamaCallError as error:
+        is_timeout = error.kind == "timeout"
+        return jsonify({
+            "error": {
+                "type": "model_timeout" if is_timeout else "model_error",
+                "message": (
+                    "Model request timed out."
+                    if is_timeout
+                    else "Model service request failed."
+                ),
+            },
+            "telemetry": error.telemetry,
+        }), 504 if is_timeout else 502
+    except Exception:
+        app.logger.error("Unexpected Ollama client failure.")
         return jsonify({
             "error": {
                 "type": "model_error",
-                "message": str(error)
+                "message": "Model service request failed.",
             }
         }), 502
     
@@ -61,7 +75,8 @@ def generate():
                     "Reasoning was requested, but the model "
                     "returned no reasoning output."
                 )
-            }
+            },
+            "telemetry": ollama_result["telemetry"],
         }), 502
     
     metadata = {
@@ -81,7 +96,8 @@ def generate():
     return jsonify({
         "model": model,
         "output_text": ollama_result["content"],
-        "metadata": metadata
+        "metadata": metadata,
+        "telemetry": ollama_result["telemetry"],
     }), 200
 
     
@@ -90,4 +106,3 @@ def generate():
 
 if __name__ == "__main__":
     app.run(host=GRANITE_HOST, port=GRANITE_PORT, debug=True)
-

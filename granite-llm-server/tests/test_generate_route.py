@@ -1,11 +1,30 @@
+import json
 import unittest
 from unittest.mock import Mock, patch
+
+import requests
 
 from app.main import app as flask_app
 
 
 # Run from the granite-llm-server directory:
 # python -m unittest tests.test_generate_route -v
+
+
+def encode_json(payload):
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"),
+                      allow_nan=False).encode("utf-8")
+
+
+def make_ollama_response(payload):
+    return Mock(content=encode_json(payload), status_code=200)
+
+
+def granite_payload(text="Hello"):
+    return {"model": "gemma4:latest", "input": [{
+        "role": "user",
+        "content": [{"type": "input_text", "text": text}],
+    }]}
 
 
 class TestGenerateRoute(unittest.TestCase):
@@ -19,14 +38,19 @@ class TestGenerateRoute(unittest.TestCase):
         self,
         mock_post
     ):
-        mock_response = Mock()
-        mock_response.raise_for_status.return_value = None
-        mock_response.json.return_value = {
+        mock_response = make_ollama_response({
+            "model": "gemma4:latest",
+            "done_reason": "stop",
+            "prompt_eval_count": 12,
+            "eval_count": 8,
+            "prompt": "must not be telemetry",
+            "response": "must not be telemetry",
+            "user_id": "must not be telemetry",
             "message": {
-                "content": "Fake Ollama response",
+                "content": "Olá 🪨",
                 "thinking": "Fake private reasoning"
             }
-        }
+        })
         mock_post.return_value = mock_response
 
         granite_payload = {
@@ -37,7 +61,7 @@ class TestGenerateRoute(unittest.TestCase):
                     "content": [
                         {
                             "type": "input_text",
-                            "text": "Explain gradient descent."
+                            "text": "Explain résumé 🪨."
                         }
                     ]
                 }
@@ -58,7 +82,7 @@ class TestGenerateRoute(unittest.TestCase):
             "messages": [
                 {
                     "role": "user",
-                    "content": "Explain gradient descent."
+                    "content": "Explain résumé 🪨."
                 }
             ],
             "stream": False,
@@ -87,7 +111,7 @@ class TestGenerateRoute(unittest.TestCase):
         )
         self.assertEqual(
             response_data["output_text"],
-            "Fake Ollama response"
+            "Olá 🪨"
         )
 
         metadata = response_data["metadata"]
@@ -110,14 +134,42 @@ class TestGenerateRoute(unittest.TestCase):
             response.get_data(as_text=True)
         )
 
+        telemetry = response_data["telemetry"]
+        self.assertEqual(
+            telemetry["model_output_bytes"],
+            len(mock_response.content),
+        )
+        self.assertEqual(
+            telemetry["provider"],
+            {
+                "actual_model": "gemma4:latest",
+                "stop_reason": "stop",
+                "prompt_eval_count": 12,
+                "eval_count": 8,
+            },
+        )
+
         mock_post.assert_called_once()
 
         _, keyword_arguments = mock_post.call_args
-        actual_ollama_payload = keyword_arguments["json"]
+        actual_request_body = keyword_arguments["data"]
+        actual_ollama_payload = json.loads(actual_request_body)
 
         self.assertEqual(
             actual_ollama_payload,
             expected_ollama_payload
+        )
+        self.assertEqual(
+            telemetry["model_input_bytes"],
+            len(actual_request_body),
+        )
+        self.assertGreater(
+            len(actual_request_body),
+            len(actual_request_body.decode("utf-8")),
+        )
+        self.assertEqual(
+            keyword_arguments["headers"],
+            {"Content-Type": "application/json"},
         )
 
         # "think" belongs at the top level, not in options.
@@ -137,13 +189,11 @@ class TestGenerateRoute(unittest.TestCase):
         self,
         mock_post
     ):
-        mock_response = Mock()
-        mock_response.raise_for_status.return_value = None
-        mock_response.json.return_value = {
+        mock_response = make_ollama_response({
             "message": {
                 "content": "Fake Ollama response"
             }
-        }
+        })
         mock_post.return_value = mock_response
 
         granite_payload = {
@@ -191,7 +241,7 @@ class TestGenerateRoute(unittest.TestCase):
         mock_post.assert_called_once()
 
         _, keyword_arguments = mock_post.call_args
-        actual_ollama_payload = keyword_arguments["json"]
+        actual_ollama_payload = json.loads(keyword_arguments["data"])
 
         self.assertEqual(
             actual_ollama_payload,
@@ -290,13 +340,11 @@ class TestGenerateRoute(unittest.TestCase):
         self,
         mock_post
     ):
-        mock_response = Mock()
-        mock_response.raise_for_status.return_value = None
-        mock_response.json.return_value = {
+        mock_response = make_ollama_response({
             "message": {
                 "content": "Answer without a thinking field"
             }
-        }
+        })
         mock_post.return_value = mock_response
 
         granite_payload = {
@@ -335,10 +383,40 @@ class TestGenerateRoute(unittest.TestCase):
             "returned no reasoning output",
             response_data["error"]["message"]
         )
+        self.assertEqual(
+            response_data["telemetry"]["model_output_bytes"],
+            len(mock_response.content),
+        )
 
         # The request reached Ollama, but Ollama did not fulfill
         # the reasoning portion of the contract.
         mock_post.assert_called_once()
+
+    @patch("app.ollama_client.requests.post")
+    def test_generate_returns_sanitized_timeout_with_byte_counts(self, mock_post):
+        mock_post.side_effect = requests.Timeout("private timeout details")
+
+        response = self.client.post("/generate", json=granite_payload())
+
+        data = response.get_json()
+        self.assertEqual((response.status_code, data["error"]["type"]),
+                         (504, "model_timeout"))
+        self.assertGreater(data["telemetry"]["model_input_bytes"], 0)
+        self.assertEqual(data["telemetry"]["model_output_bytes"], 0)
+        self.assertNotIn("private timeout details", response.get_data(as_text=True))
+
+    @patch("app.ollama_client.requests.post")
+    def test_generate_rejects_non_string_or_empty_model_output(self, mock_post):
+        for output in (None, "   "):
+            with self.subTest(output=output):
+                mock_post.return_value = make_ollama_response({
+                    "message": {"content": output},
+                })
+                response = self.client.post("/generate", json=granite_payload())
+                self.assertEqual(
+                    (response.status_code, response.get_json()["error"]["type"]),
+                    (502, "model_error"),
+                )
 
 
 if __name__ == "__main__":
