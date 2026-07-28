@@ -36,6 +36,8 @@
 }
 
 .user-filters input { min-width: min(100%, 290px); flex: 1; }
+.user-filters select { width: 160px; max-width: 100%; }
+.user-filters select[aria-label="Filter by course"] { width: 220px; }
 .bulk-toolbar { padding: 10px 12px; background: #eef5ff; border: 1px solid #b9d4fb; border-radius: 8px; }
 .bulk-confirmation { padding: 12px; border: 1px solid #c88a00; background: #fff8e1; border-radius: 8px; }
 .bulk-confirmation span { flex: 1; }

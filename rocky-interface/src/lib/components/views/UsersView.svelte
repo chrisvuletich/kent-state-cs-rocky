@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { createOAuthWhitelistEntry, fetchOAuthWhitelistEntries, fetchUsersForViews, setUserActive, setUserRole, setUsersActive, type WhitelistEntry } from '$lib/api/users';
+	import { fetchCourses } from '$lib/api/content';
+	import type { Course } from '$lib/types/course';
 	import type { User } from '$lib/types/user';
 	import ViewShell from '$lib/components/ViewShell.svelte';
 	import '$lib/styles/routes/modules/users-view.css';
@@ -17,6 +19,9 @@
 	let searchQuery = '';
 	let roleFilter = 'all';
 	let statusFilter = 'all';
+	let courseFilter = '';
+	let nameSort: 'asc' | 'desc' = 'asc';
+	let courses: Course[] = [];
 	let selectedIds: string[] = [];
 	let pendingBulkStatus: boolean | null = null;
 	let firstName = '';
@@ -26,13 +31,23 @@
 	$: listedUsers = (activeTab === 'kent'
 		? users.filter((user) => user.email.toLowerCase().endsWith('@kent.edu'))
 		: whitelistEntries) as ListedUser[];
+	$: coursesForFilter = [...courses].sort((first, second) => `${first.name} ${first.code}`.localeCompare(`${second.name} ${second.code}`));
+	$: if (courseFilter && !coursesForFilter.some((course) => String(course.id) === courseFilter)) courseFilter = '';
 	$: visibleUsers = listedUsers.filter((user) => {
 		const query = searchQuery.trim().toLowerCase();
 		const matchesSearch = !query || user.displayName.toLowerCase().includes(query) || user.email.toLowerCase().includes(query);
 		const matchesRole = roleFilter === 'all' || user.role === roleFilter;
 		const matchesStatus = statusFilter === 'all' || (statusFilter === 'active' ? user.isActive : !user.isActive);
-		return matchesSearch && matchesRole && matchesStatus;
+		const matchesCourse = !courseFilter || courses.some((course) => String(course.id) === courseFilter && isEnrolledInCourse(user, course));
+		return matchesSearch && matchesRole && matchesStatus && matchesCourse;
+	}).sort((first, second) => {
+		const comparison = first.displayName.localeCompare(second.displayName) || first.email.localeCompare(second.email);
+		return nameSort === 'asc' ? comparison : -comparison;
 	});
+	$: {
+		const visibleSelectedIds = selectedIds.filter((id) => visibleUsers.some((user) => user.id === id));
+		if (visibleSelectedIds.length !== selectedIds.length) selectedIds = visibleSelectedIds;
+	}
 	$: selectedVisibleCount = visibleUsers.filter((user) => selectedIds.includes(user.id)).length;
 	$: allVisibleSelected = visibleUsers.length > 0 && selectedVisibleCount === visibleUsers.length;
 
@@ -41,14 +56,22 @@
 	async function refresh(): Promise<void> {
 		isLoading = true;
 		try {
-			const [loadedUsers, loadedWhitelist] = await Promise.all([fetchUsersForViews(), fetchOAuthWhitelistEntries()]);
+			const [loadedUsers, loadedWhitelist, loadedCourses] = await Promise.all([fetchUsersForViews(), fetchOAuthWhitelistEntries(), fetchCourses()]);
 			users = loadedUsers;
 			whitelistEntries = loadedWhitelist;
+			courses = loadedCourses;
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Unable to load users.';
 		} finally {
 			isLoading = false;
 		}
+	}
+
+	function isEnrolledInCourse(user: ListedUser, course: Course): boolean {
+		const identifiers = [user.id, user.email].map((value) => value.toLowerCase());
+		const courseIdentifiers = [course.instructorId, course.instructorEmail, ...course.taIds, ...course.taEmails]
+			.map((value) => (value || '').toLowerCase());
+		return courseIdentifiers.some((identifier) => identifiers.includes(identifier)) || (course.members || []).some((member) => identifiers.includes((member.id || '').toLowerCase()) || identifiers.includes(member.email.toLowerCase()));
 	}
 
 	function toggleSelected(id: string): void {
@@ -114,6 +137,8 @@
 				<input type="search" placeholder="Search name or email" bind:value={searchQuery} aria-label="Search users" />
 				<select bind:value={roleFilter} aria-label="Filter by role"><option value="all">All roles</option><option value="student">Students</option><option value="instructor">Instructors</option><option value="admin">Admins</option></select>
 				<select bind:value={statusFilter} aria-label="Filter by status"><option value="all">All statuses</option><option value="active">Active</option><option value="inactive">Inactive</option></select>
+				<select bind:value={courseFilter} aria-label="Filter by course"><option value="">All courses</option>{#each coursesForFilter as course (course.id)}<option value={String(course.id)}>{course.name} {course.code ? `(${course.code})` : ''}</option>{/each}</select>
+				<select bind:value={nameSort} aria-label="Sort users by name"><option value="asc">Name: A–Z</option><option value="desc">Name: Z–A</option></select>
 			</div>
 			{#if activeTab === 'whitelist'}
 				<div class="whitelist-form"><input placeholder="First name" bind:value={firstName} /><input placeholder="Last name" bind:value={lastName} /><input type="email" placeholder="Email" bind:value={email} /><button class="view-btn" type="button" onclick={addWhitelistEntry} disabled={isSaving}>Add account</button></div>
