@@ -11,6 +11,7 @@ export type ApiWhitelistEntry = Partial<{
 	id: string;
 	is_admin: boolean;
 	is_active: boolean;
+	role: 'student' | 'instructor' | 'admin';
 	created_at: string;
 }>;
 
@@ -21,6 +22,7 @@ export type WhitelistEntry = {
 	displayName: string;
 	email: string;
 	isAdmin: boolean;
+	role: 'student' | 'instructor' | 'admin';
 	isActive: boolean;
 	createdAt: string;
 };
@@ -43,7 +45,8 @@ function normalizeWhitelistEntry(raw: ApiWhitelistEntry): WhitelistEntry {
 		lastName,
 		displayName,
 		email: raw.email?.trim() || 'N/A',
-		isAdmin: Boolean(raw.is_admin),
+		role: raw.role === 'admin' || raw.role === 'instructor' || raw.role === 'student' ? raw.role : (raw.is_admin ? 'admin' : 'student'),
+		isAdmin: raw.role === 'admin' || (!raw.role && Boolean(raw.is_admin)),
 		isActive: raw.is_active === undefined ? true : Boolean(raw.is_active),
 		createdAt: raw.created_at?.trim() || ''
 	};
@@ -107,12 +110,12 @@ export async function setUserActive(id: string, isActive: boolean): Promise<void
 	showSuccessFeedback(isActive ? 'User activated successfully.' : 'User deactivated successfully.');
 }
 
-export async function setUserAdmin(id: string, isAdmin: boolean): Promise<void> {
-	await updateUser(id, { is_admin: isAdmin });
-	showSuccessFeedback(isAdmin ? 'Administrator access granted.' : 'Administrator access removed.');
+export async function setUserRole(id: string, role: 'student' | 'instructor' | 'admin'): Promise<void> {
+	await updateUser(id, { role });
+	showSuccessFeedback(`Account role changed to ${role}.`);
 }
 
-async function updateUser(id: string, changes: { is_active?: boolean; is_admin?: boolean }): Promise<void> {
+async function updateUser(id: string, changes: { is_active?: boolean; is_admin?: boolean; role?: 'student' | 'instructor' | 'admin' }): Promise<void> {
 	try {
 		const response = await fetch(`/api/backend/users/${id}`, {
 			method: 'PUT',

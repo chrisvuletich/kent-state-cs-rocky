@@ -28,7 +28,8 @@ export function initAuthFromStorage(): void {
 				displayName: parsed.displayName,
 				email: parsed.email,
 				apiKeyOwnerId: parsed.apiKeyOwnerId || parsed.id,
-				isAdmin: Boolean(parsed.isAdmin),
+				role: parsed.role === 'admin' || parsed.role === 'instructor' || parsed.role === 'student' ? parsed.role : (parsed.isAdmin ? 'admin' : 'student'),
+				isAdmin: parsed.role === 'admin' || (!parsed.role && Boolean(parsed.isAdmin)),
 				isActive: true
 			});
 		}

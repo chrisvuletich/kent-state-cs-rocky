@@ -117,13 +117,20 @@ def update_user(deps: dict[str, Any], user_id: str):
     if not isinstance(data, dict) or not data:
         return _bad_request("Request body must be a non-empty JSON object.")
 
-    allowed_fields = {"is_active", "is_admin"}
+    allowed_fields = {"is_active", "is_admin", "role"}
     if not set(data).issubset(allowed_fields):
-        return _bad_request("Only is_active and is_admin may be updated through this endpoint.")
-    if any(not isinstance(data.get(key), bool) for key in data):
+        return _bad_request("Only is_active, is_admin, and role may be updated through this endpoint.")
+    if any(not isinstance(data.get(key), bool) for key in {"is_active", "is_admin"} & set(data)):
         return _bad_request("is_active and is_admin must be booleans.")
+    if "role" in data and data["role"] not in {"student", "instructor", "admin"}:
+        return _bad_request("role must be one of: student, instructor, admin.")
 
     changes = {key: bool(value) for key, value in data.items()}
+    if "role" in data:
+        changes["role"] = data["role"]
+        changes["is_admin"] = data["role"] == "admin"
+    elif "is_admin" in data:
+        changes["role"] = "admin" if data["is_admin"] else "student"
     users.update_one({"id": user["id"]}, {"$set": changes})
     whitelist_users.update_one({"id": user["id"]}, {"$set": changes})
     return jsonify({"message": "User updated"})

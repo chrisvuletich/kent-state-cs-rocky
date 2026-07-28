@@ -487,6 +487,13 @@ def _resolve_requester_user_id(email: str) -> str:
     return normalize_str(email).lower()
 
 
+def _user_role(user_record: dict[str, Any]) -> str:
+    role = normalize_str(user_record.get("role")).lower()
+    if role in {"student", "instructor", "admin"}:
+        return role
+    return "admin" if bool(user_record.get("is_admin")) else "student"
+
+
 def _serialize_user(user_record: dict[str, Any]) -> dict[str, Any]:
     first_name = normalize_str(user_record.get("first_name"))
     last_name = normalize_str(user_record.get("last_name"))
@@ -499,7 +506,8 @@ def _serialize_user(user_record: dict[str, Any]) -> dict[str, Any]:
             "email": normalize_str(user_record.get("email")).lower(),
             "id": normalize_str(user_record.get("id") or user_record.get("_id")),
             "api_key_owner_id": api_key_owner_id,
-            "is_admin": bool(user_record.get("is_admin")),
+            "role": _user_role(user_record),
+            "is_admin": _user_role(user_record) == "admin",
             "is_active": _is_user_active(user_record),
             "created_at": user_record.get("created_at"),
             "settings": user_record.get("settings", _default_user_settings()),
@@ -514,7 +522,8 @@ def _serialize_whitelist_user(entry: dict[str, Any]) -> dict[str, Any]:
             "last_name": normalize_str(entry.get("last_name")),
             "email": normalize_str(entry.get("email")).lower(),
             "id": normalize_str(entry.get("id") or entry.get("_id")),
-            "is_admin": bool(entry.get("is_admin")),
+            "role": _user_role(entry),
+            "is_admin": _user_role(entry) == "admin",
             "is_active": _is_user_active(entry),
             "settings": entry.get("settings", _default_user_settings()),
             "created_at": entry.get("created_at"),

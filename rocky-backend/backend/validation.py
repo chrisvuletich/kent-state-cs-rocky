@@ -168,6 +168,12 @@ def validate_user_payload(payload: Any):
     else:
         return None, "is_admin must be a boolean."
 
+    raw_role = normalize_str(payload.get("role")).lower()
+    if raw_role and raw_role not in {"student", "instructor", "admin"}:
+        return None, "role must be one of: student, instructor, admin."
+    role = raw_role or ("admin" if is_admin else "student")
+    is_admin = role == "admin"
+
     raw_is_active = payload.get("is_active") if "is_active" in payload else payload.get("isActive")
     if raw_is_active is None:
         is_active = True
@@ -188,6 +194,7 @@ def validate_user_payload(payload: Any):
         "last_name": last_name,
         "email": email,
         "is_admin": is_admin,
+        "role": role,
         "is_active": is_active,
     }
 

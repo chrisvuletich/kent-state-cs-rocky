@@ -1,12 +1,12 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { createOAuthWhitelistEntry, fetchOAuthWhitelistEntries, fetchUsersForViews, setUserActive, setUserAdmin, setUsersActive, type WhitelistEntry } from '$lib/api/users';
+	import { createOAuthWhitelistEntry, fetchOAuthWhitelistEntries, fetchUsersForViews, setUserActive, setUserRole, setUsersActive, type WhitelistEntry } from '$lib/api/users';
 	import type { User } from '$lib/types/user';
 	import ViewShell from '$lib/components/ViewShell.svelte';
 	import '$lib/styles/routes/modules/users-view.css';
 
 	type UserTab = 'kent' | 'whitelist';
-	type ListedUser = Pick<User, 'id' | 'displayName' | 'email' | 'isAdmin' | 'isActive'>;
+	type ListedUser = Pick<User, 'id' | 'displayName' | 'email' | 'isAdmin' | 'role' | 'isActive'>;
 	let users: User[] = [];
 	let whitelistEntries: WhitelistEntry[] = [];
 	let activeTab: UserTab = 'kent';
@@ -29,7 +29,7 @@
 	$: visibleUsers = listedUsers.filter((user) => {
 		const query = searchQuery.trim().toLowerCase();
 		const matchesSearch = !query || user.displayName.toLowerCase().includes(query) || user.email.toLowerCase().includes(query);
-		const matchesRole = roleFilter === 'all' || (roleFilter === 'admin' ? user.isAdmin : !user.isAdmin);
+		const matchesRole = roleFilter === 'all' || user.role === roleFilter;
 		const matchesStatus = statusFilter === 'all' || (statusFilter === 'active' ? user.isActive : !user.isActive);
 		return matchesSearch && matchesRole && matchesStatus;
 	});
@@ -72,10 +72,10 @@
 		} finally { isSaving = false; }
 	}
 
-	async function updateAdmin(user: ListedUser): Promise<void> {
-		if (!confirm(`${user.isAdmin ? 'Remove' : 'Grant'} administrator access for ${user.displayName}?`)) return;
+	async function updateRole(user: ListedUser, role: 'student' | 'instructor' | 'admin'): Promise<void> {
+		if (role === user.role || !confirm(`Change ${user.displayName}'s account role to ${role}?`)) return;
 		isSaving = true;
-		try { await setUserAdmin(user.id, !user.isAdmin); await refresh(); }
+		try { await setUserRole(user.id, role); await refresh(); }
 		catch (err) { error = err instanceof Error ? err.message : 'Unable to update role.'; }
 		finally { isSaving = false; }
 	}
@@ -112,7 +112,7 @@
 			</div>
 			<div class="user-filters">
 				<input type="search" placeholder="Search name or email" bind:value={searchQuery} aria-label="Search users" />
-				<select bind:value={roleFilter} aria-label="Filter by role"><option value="all">All roles</option><option value="admin">Admins</option><option value="user">Non-admins</option></select>
+				<select bind:value={roleFilter} aria-label="Filter by role"><option value="all">All roles</option><option value="student">Students</option><option value="instructor">Instructors</option><option value="admin">Admins</option></select>
 				<select bind:value={statusFilter} aria-label="Filter by status"><option value="all">All statuses</option><option value="active">Active</option><option value="inactive">Inactive</option></select>
 			</div>
 			{#if activeTab === 'whitelist'}
@@ -128,7 +128,7 @@
 			{/if}
 			<div class="table-container"><table class="data-table users-table"><thead><tr><th><input type="checkbox" checked={allVisibleSelected} onchange={toggleAllVisible} aria-label="Select all visible users" /></th><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Actions</th></tr></thead><tbody>
 				{#if visibleUsers.length === 0}<tr><td colspan="6">No users match these filters.</td></tr>
-				{:else}{#each visibleUsers as user (user.id)}<tr><td><input type="checkbox" checked={selectedIds.includes(user.id)} onchange={() => toggleSelected(user.id)} aria-label={`Select ${user.displayName}`} /></td><td>{user.displayName}</td><td>{user.email}</td><td><span class:role-admin={user.isAdmin} class="role-badge">{user.isAdmin ? 'Admin' : 'User'}</span></td><td><span class:status-active={user.isActive} class="status-badge">{user.isActive ? 'Active' : 'Inactive'}</span></td><td><div class="user-actions"><button class="view-btn user-action-btn" disabled={isSaving} onclick={() => updateStatus(user, !user.isActive)}>{user.isActive ? 'Deactivate' : 'Reactivate'}</button><button class="view-btn user-action-btn" disabled={isSaving} onclick={() => updateAdmin(user)}>{user.isAdmin ? 'Remove admin' : 'Make admin'}</button></div></td></tr>{/each}{/if}
+				{:else}{#each visibleUsers as user (user.id)}<tr><td><input type="checkbox" checked={selectedIds.includes(user.id)} onchange={() => toggleSelected(user.id)} aria-label={`Select ${user.displayName}`} /></td><td>{user.displayName}</td><td>{user.email}</td><td><span class:role-admin={user.role === 'admin'} class="role-badge">{user.role}</span></td><td><span class:status-active={user.isActive} class="status-badge">{user.isActive ? 'Active' : 'Inactive'}</span></td><td><div class="user-actions"><button class="view-btn user-action-btn" disabled={isSaving} onclick={() => updateStatus(user, !user.isActive)}>{user.isActive ? 'Deactivate' : 'Reactivate'}</button><select class="role-select" value={user.role} disabled={isSaving} onchange={(event) => updateRole(user, (event.currentTarget as HTMLSelectElement).value as 'student' | 'instructor' | 'admin')} aria-label={`Change ${user.displayName}'s role`}><option value="student">Student</option><option value="instructor">Instructor</option><option value="admin">Admin</option></select></div></td></tr>{/each}{/if}
 			</tbody></table></div>
 		</section>
 	{/if}

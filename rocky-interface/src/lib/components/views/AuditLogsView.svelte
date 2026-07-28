@@ -29,7 +29,7 @@
 		<p class="audit-intro">Review administrative and course activity. Filters can be combined to narrow the results.</p>
 		<form class="audit-filters" onsubmit={(event) => { event.preventDefault(); loadLogs(); }}>
 			<input bind:value={search} type="search" placeholder="Search name, email, course, or action" aria-label="Search audit logs" />
-			<select bind:value={role} aria-label="Filter by role"><option value="">All user roles</option><option value="student">Students</option><option value="admin">Admins</option></select>
+			<select bind:value={role} aria-label="Filter by role"><option value="">All user roles</option><option value="student">Students</option><option value="instructor">Instructors</option><option value="admin">Admins</option></select>
 			<input bind:value={course} placeholder="Course" aria-label="Filter by course" />
 			<input bind:value={action} placeholder="Action type" aria-label="Filter by action type" />
 			<label>From <input bind:value={dateFrom} type="date" /></label><label>To <input bind:value={dateTo} type="date" /></label>
@@ -37,6 +37,6 @@
 		</form>
 		{#if loading}<div class="empty-state"><p>Loading audit logs...</p></div>
 		{:else if error}<div class="empty-state"><p>{error}</p></div>
-		{:else}<p class="audit-count">{logs.length} log {logs.length === 1 ? 'entry' : 'entries'}</p><div class="table-container"><table class="data-table audit-table"><thead><tr><th>Time</th><th>User</th><th>Role</th><th>Action</th><th>Course</th></tr></thead><tbody>{#if logs.length === 0}<tr><td colspan="5">No logs match these filters.</td></tr>{:else}{#each logs as log (`${log.created}-${log.userId}-${log.action}`)}<tr><td>{formatDate(log.created)}</td><td><strong>{log.userName}</strong><br /><span>{log.userEmail}</span></td><td>{log.userRole === 'admin' ? 'Admin' : 'Student'}</td><td>{log.action.replace(/-/g, ' ')}</td><td>{log.course}</td></tr>{/each}{/if}</tbody></table></div>{/if}
+		{:else}<p class="audit-count">{logs.length} log {logs.length === 1 ? 'entry' : 'entries'}</p><div class="table-container"><table class="data-table audit-table"><thead><tr><th>Time</th><th>User</th><th>Role</th><th>Action</th><th>Course</th></tr></thead><tbody>{#if logs.length === 0}<tr><td colspan="5">No logs match these filters.</td></tr>{:else}{#each logs as log (`${log.created}-${log.userId}-${log.action}`)}<tr><td>{formatDate(log.created)}</td><td><strong>{log.userName}</strong><br /><span>{log.userEmail}</span></td><td>{log.userRole}</td><td>{log.action.replace(/-/g, ' ')}</td><td>{log.course}</td></tr>{/each}{/if}</tbody></table></div>{/if}
 	</section>
 </ViewShell>

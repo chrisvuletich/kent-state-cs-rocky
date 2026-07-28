@@ -6,6 +6,7 @@ export type ApiUser = Partial<{
 	api_key_owner_id: string;
 	is_admin: boolean;
 	is_active: boolean;
+	role: 'student' | 'instructor' | 'admin';
 }>;
 
 export type User = {
@@ -16,6 +17,7 @@ export type User = {
 	email: string;
 	apiKeyOwnerId: string;
 	isAdmin: boolean;
+	role: 'student' | 'instructor' | 'admin';
 	isActive: boolean;
 };
 
@@ -26,6 +28,7 @@ export type DbUser = {
 	displayName: string;
 	email: string;
 	isAdmin: boolean;
+	role: 'student' | 'instructor' | 'admin';
 	isActive: boolean;
 };
 
@@ -36,6 +39,7 @@ export type CreateUserInput = {
 	lastName: string;
 	email: string;
 	isAdmin?: boolean;
+	role?: 'student' | 'instructor' | 'admin';
 	id?: string;
 };
 
@@ -45,6 +49,7 @@ export type CreateUserPayload = {
 	email: string;
 	id: string;
 	is_admin: boolean;
+	role: 'student' | 'instructor' | 'admin';
 };
 
 export function normalizeUser(raw: ApiUser): User {
@@ -62,7 +67,8 @@ export function normalizeUser(raw: ApiUser): User {
 		displayName,
 		email,
 		apiKeyOwnerId,
-		isAdmin: Boolean(raw.is_admin),
+		role: raw.role === 'admin' || raw.role === 'instructor' || raw.role === 'student' ? raw.role : (raw.is_admin ? 'admin' : 'student'),
+		isAdmin: raw.role === 'admin' || (!raw.role && Boolean(raw.is_admin)),
 		isActive: raw.is_active === undefined ? true : Boolean(raw.is_active)
 	};
 }
@@ -83,6 +89,7 @@ export function normalizeDbUser(raw: ApiUser): DbUser {
 		displayName,
 		email: raw.email?.trim() || 'N/A',
 		isAdmin: Boolean(raw.is_admin),
+		role: raw.role === 'admin' || raw.role === 'instructor' || raw.role === 'student' ? raw.role : (raw.is_admin ? 'admin' : 'student'),
 		isActive: raw.is_active === undefined ? true : Boolean(raw.is_active)
 	};
 }
@@ -97,6 +104,7 @@ export function toCreateUserPayload(input: CreateUserInput): CreateUserPayload {
 		last_name: input.lastName.trim(),
 		email: input.email.trim(),
 		id: input.id?.trim() || 'test123',
-		is_admin: Boolean(input.isAdmin)
+		is_admin: input.role === 'admin' || (!input.role && Boolean(input.isAdmin)),
+		role: input.role || (input.isAdmin ? 'admin' : 'student')
 	};
 }

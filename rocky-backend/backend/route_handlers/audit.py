@@ -34,7 +34,8 @@ def get_audit_logs(deps: dict[str, Any]):
         display_name = " ".join(filter(None, [normalize_str(person.get("first_name")), normalize_str(person.get("last_name"))])).strip()
         row["user_email"] = email
         row["user_name"] = display_name or email or "Unknown user"
-        row["user_role"] = "admin" if person.get("is_admin") else "student"
+        stored_role = normalize_str(person.get("role")).lower()
+        row["user_role"] = stored_role if stored_role in {"student", "instructor", "admin"} else ("admin" if person.get("is_admin") else "student")
         haystack = " ".join([row["user_name"], email, normalize_str(row.get("c_id")), normalize_str(row.get("event_type"))]).lower()
         created = normalize_str(row.get("created"))
         if search and search not in haystack:
