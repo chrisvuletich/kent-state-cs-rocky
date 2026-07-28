@@ -7,6 +7,7 @@
 	import type { Course } from '$lib/types/course';
 	import type { User } from '$lib/types/user';
 	import '$lib/styles/routes/modules/audit-logs.css';
+	import '$lib/styles/routes/modules/api-keys-view.css';
 
 	type ApiKeyRecord = {
 		keyId: string;
@@ -192,16 +193,3 @@
 		{/if}
 	</section>
 </ViewShell>
-
-<style>
-	.api-key-bulk-toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; padding: 10px 12px; background: #eef5ff; border: 1px solid #b9d4fb; border-radius: 8px; }
-	.api-key-sort { padding: 0; border: 0; background: transparent; color: inherit; font: inherit; font-weight: inherit; cursor: pointer; }
-	.api-key-active { background: #f0f9f3; }
-	.api-key-inactive { background: #fff4f4; }
-	.api-key-active:hover { background: #e7f5eb; }
-	.api-key-inactive:hover { background: #fdeaea; }
-	.api-key-selected { box-shadow: inset 3px 0 0 #3568a8; }
-	.api-key-status { display: inline-block; border-radius: 999px; padding: 3px 9px; font-size: .82rem; font-weight: 600; }
-	.api-key-status-active { background: #e8f7ed; color: #18743b; }
-	.api-key-status-inactive { background: #fff0f0; color: #b42318; }
-</style>

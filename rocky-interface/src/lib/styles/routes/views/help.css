@@ -329,13 +329,20 @@
 	font-size: var(--font-size-sm);
 }
 
-.course-workflow-step img {
+.course-workflow-step img,
+.documentation-screenshot {
 	display: block;
 	width: 100%;
 	margin-top: var(--space-lg);
 	border: 1px solid var(--color-gray-300);
 	border-radius: var(--radius-sm);
 	box-shadow: var(--shadow-sm);
+}
+
+.documentation-screenshot-caption {
+	margin: var(--space-sm) 0 0;
+	font-size: var(--font-size-sm);
+	color: var(--color-text-secondary);
 }
 
 /* Documenttion Styles */
