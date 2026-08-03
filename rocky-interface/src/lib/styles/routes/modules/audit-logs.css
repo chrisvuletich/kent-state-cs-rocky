@@ -6,3 +6,4 @@
 .audit-count { margin: 0 0 10px; color: #667085; }
 .audit-table td span { font-size: .84rem; color: #667085; }
 @media (max-width: 768px) { .audit-table { min-width: 760px; } .audit-filters > input { flex-basis: 100%; } }
+@media (max-width: 600px) { .audit-filters label, .audit-filters select { width: 100%; } }

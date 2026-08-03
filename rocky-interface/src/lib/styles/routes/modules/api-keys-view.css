@@ -8,3 +8,20 @@
 .api-key-status { display: inline-block; border-radius: 999px; padding: 3px 9px; font-size: .82rem; font-weight: 600; }
 .api-key-status-active { background: #e8f7ed; color: #18743b; }
 .api-key-status-inactive { background: #fff0f0; color: #b42318; }
+
+@media (max-width: 768px) {
+	.audit-table {
+		min-width: 980px;
+	}
+
+	.api-key-bulk-toolbar .view-btn {
+		flex: 1 1 auto;
+	}
+}
+
+@media (max-width: 600px) {
+	.audit-filters select,
+	.audit-filters input {
+		width: 100%;
+	}
+}

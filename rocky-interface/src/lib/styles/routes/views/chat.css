@@ -88,7 +88,8 @@
     display:flex;
     flex-direction:column;
     gap:22px;
-    height:65vh;
+    flex:1;
+    min-height:0;
     overflow-y:auto;
     background:transparent;
     box-shadow:none;
@@ -101,6 +102,7 @@
 
 .message{
     width:100%;
+    min-width:0;
 }
 
 .message.user{
@@ -123,6 +125,7 @@
     border-radius:22px;
     font-size:1rem;
     line-height:1.5;
+    overflow-wrap:anywhere;
 }
 
 /*    for light bubble for assistant
@@ -146,6 +149,8 @@
     padding:0;
     font-size:1rem;
     line-height:1.8;
+    min-width:0;
+    overflow-wrap:anywhere;
 }
 
 .bottom{
@@ -219,6 +224,7 @@
     padding: 1rem;
     border-radius: 8px;
     overflow-x: auto;
+    max-width: 100%;
 }
 
 .assistant code {
@@ -228,7 +234,7 @@
 .chat-layout {
     display: grid;
     grid-template-columns: 260px 1fr;
-    height: calc(100vh - 90px);
+    height: 100%;
     min-height: 0;
     transition: grid-template-columns .2s ease;
 }
@@ -349,16 +355,108 @@
 
 @media (max-width: 740px) {
     .chat-layout {
-        grid-template-columns: 210px minmax(0, 1fr);
+        position: relative;
+        grid-template-columns: 52px minmax(0, 1fr);
+        height: 100%;
     }
 
     .chat {
-        padding: 20px;
+        gap: 16px;
+        padding: 16px;
     }
 
     .bottom {
-        width: auto;
-        margin-right: 16px;
-        margin-left: 16px;
+        gap: 10px;
+        margin: 12px 16px 16px;
+        min-width: 0;
+    }
+
+    .messageInput {
+        min-width: 0;
+        padding: 14px 16px;
+    }
+
+    .sendButton {
+        width: 48px;
+        height: 48px;
+        flex: 0 0 48px;
+        font-size: 1.5rem;
+    }
+
+    .user,
+    .assistant {
+        max-width: 100%;
+    }
+
+    .assistant ul,
+    .assistant ol {
+        padding-left: 1.25rem;
+    }
+
+    .assistant table {
+        display: block;
+        max-width: 100%;
+        overflow-x: auto;
+    }
+
+    .welcome {
+        margin-top: 32px;
+    }
+
+    .welcome h2 {
+        font-size: 1.5rem;
+    }
+
+    .examples {
+        width: 100%;
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .examples button {
+        width: 100%;
+        padding: 12px 16px;
+    }
+
+    .conversation-panel {
+        width: 52px;
+        padding: 8px;
+        overflow: hidden;
+    }
+
+    .conversation-panel:not(.conversation-panel-collapsed) {
+        position: absolute;
+        inset: 0 auto 0 0;
+        width: min(280px, calc(100vw - 32px));
+        padding: 1rem;
+        box-shadow: 8px 0 20px rgba(0, 38, 100, 0.18);
+        z-index: 2;
+        overflow-y: auto;
+    }
+
+    .conversation-panel-collapsed .conversation-panel-header {
+        margin-bottom: 0;
+    }
+
+    .conversation-icon-action {
+        margin-top: 8px;
+    }
+}
+
+@media (max-width: 380px) {
+    .chat-header {
+        margin-bottom: 12px;
+    }
+
+    .chat-title {
+        font-size: 1.5rem;
+    }
+
+    .chat-subtitle {
+        font-size: 0.85rem;
+    }
+
+    .chat {
+        padding: 12px;
     }
 }

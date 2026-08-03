@@ -451,6 +451,7 @@
 .markdown-documentation code {
 	font-family: SFMono-Regular, Consolas, monospace;
 	font-size: 0.95rem;
+	overflow-wrap: anywhere;
 }
 
 .markdown-documentation table {
@@ -498,5 +499,15 @@
 	.markdown-documentation table {
 		display: block;
 		overflow-x: auto;
+	}
+
+	.documentation-navigation {
+		flex-direction: column;
+		gap: var(--space-md);
+	}
+
+	.documentation-nav-next {
+		align-items: flex-start;
+		text-align: left;
 	}
 }

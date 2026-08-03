@@ -158,6 +158,12 @@
     border-collapse: collapse;
 }
 
+.admin-audit-table-wrap {
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
 .audit-section th {
     text-align: left;
     padding: .9rem;
@@ -201,6 +207,20 @@
 
     .card-header button {
         width: 100%;
+    }
+
+    .audit-section table {
+        min-width: 620px;
+    }
+
+    .status-row,
+    .course-top {
+        gap: .75rem;
+    }
+
+    .course-top span:first-child {
+        min-width: 0;
+        overflow-wrap: anywhere;
     }
 
 }

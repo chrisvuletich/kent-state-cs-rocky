@@ -377,3 +377,24 @@
 		grid-template-columns: repeat(2, minmax(0, 1fr));
 	}
 }
+
+@media (max-width: 600px) {
+	.account-profile-header,
+	.account-course-row {
+		flex-direction: column;
+		align-items: stretch;
+	}
+
+	.account-avatar-picker {
+		left: 50%;
+		transform: translateX(-50%);
+	}
+
+	.account-course-link {
+		white-space: normal;
+	}
+
+	.account-usage-grid {
+		grid-template-columns: 1fr;
+	}
+}

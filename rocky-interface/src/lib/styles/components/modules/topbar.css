@@ -82,3 +82,26 @@
 		height: 42px;
 	}
 }
+
+@media (max-width: 380px) {
+	.topbar {
+		padding: 0 var(--space-sm);
+		gap: var(--space-sm);
+	}
+
+	.brand-logo {
+		height: 40px;
+	}
+
+	.brand-name {
+		font-size: 20px;
+	}
+
+	.brand-sub {
+		display: none;
+	}
+
+	.ksu-logo {
+		height: 32px;
+	}
+}

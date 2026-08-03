@@ -305,6 +305,7 @@ If you wouldn't post it publicly or email it to a stranger, don't share it with 
     }
 
     onMount(() => {
+		historyCollapsed = window.matchMedia("(max-width: 740px)").matches;
         loadConversations();
         const unsubscribe = pendingChatConversationId.subscribe((selectedConversationId) => {
             if (!selectedConversationId) {
