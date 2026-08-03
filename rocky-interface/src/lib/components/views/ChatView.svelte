@@ -3,6 +3,7 @@
     import SvelteMarkdown from "@humanspeak/svelte-markdown";
     import { onMount } from "svelte";
     import { pendingChatConversationId } from "$lib/stores/chatNavigationStore";
+    import { IconChevronLeft, IconChevronRight, IconPlus } from "@tabler/icons-svelte";
 
     let input = "";
     let messages = [];
@@ -10,6 +11,7 @@
     let conversations = [];
     let loadingConversations = false;
     let chatContainer;
+    let historyCollapsed = false;
 
     function showIntroduction(){
         conversationId = "";
@@ -316,8 +318,18 @@ If you wouldn't post it publicly or email it to a stranger, don't share it with 
 
 </script>
 
-<div class="chat-layout">
-    <aside class="conversation-panel">
+<div class="chat-layout" class:history-collapsed={historyCollapsed}>
+    <aside class="conversation-panel" class:conversation-panel-collapsed={historyCollapsed}>
+        <div class="conversation-panel-header">
+            {#if !historyCollapsed}<strong>Chat History</strong>{/if}
+            <button class="conversation-collapse-button" type="button" onclick={() => (historyCollapsed = !historyCollapsed)} aria-label={historyCollapsed ? "Expand chat history" : "Collapse chat history"} title={historyCollapsed ? "Expand chat history" : "Collapse chat history"}>
+                <svelte:component this={historyCollapsed ? IconChevronRight : IconChevronLeft} size={20} />
+            </button>
+        </div>
+
+        {#if historyCollapsed}
+            <button class="conversation-icon-action" type="button" onclick={newConversation} aria-label="New chat" title="New chat"><IconPlus size={20} /></button>
+        {:else}
         <button class="conversation-action" onclick={newConversation}>
             + New Chat
         </button>
@@ -347,6 +359,7 @@ If you wouldn't post it publicly or email it to a stranger, don't share it with 
                 {/each}
             {/if}
         </div>
+        {/if}
     </aside>
 
     <main class="chat-main">
