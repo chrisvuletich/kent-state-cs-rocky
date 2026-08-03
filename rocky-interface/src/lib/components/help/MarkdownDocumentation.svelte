@@ -1,12 +1,14 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import SvelteMarkdown from '@humanspeak/svelte-markdown';
+	import SvelteMarkdown, { defaultRenderers } from '@humanspeak/svelte-markdown';
+	import MarkdownCodeBlock from '$lib/components/help/MarkdownCodeBlock.svelte';
 
 	export let sourcePath: string;
 
 	let content = '';
 	let error = '';
 	let loading = true;
+	const renderers = { ...defaultRenderers, code: MarkdownCodeBlock };
 
 	onMount(async () => {
 		try {
@@ -27,6 +29,6 @@
 	<div class="documentation-message documentation-error">{error}</div>
 {:else}
 	<article class="api-doc markdown-documentation">
-		<SvelteMarkdown source={content} />
+		<SvelteMarkdown source={content} {renderers} />
 	</article>
 {/if}

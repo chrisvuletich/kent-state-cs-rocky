@@ -15,7 +15,8 @@
 		IconInfoCircle,
 		IconUsers,
 		IconLayoutDashboard,
-		IconTerminal2
+		IconTerminal2,
+		IconMail
 	} from '@tabler/icons-svelte';
 
 	const resources: HelpResource[] = [
@@ -57,6 +58,7 @@
 		python: IconBrandPython,
 		javascript: IconBrandJavascript,
 		curl: IconTerminal2,
+		'email-scam-detector': IconMail,
 		'course-roster': IconBook2,
 		'user-management': IconUsers,
 		'api-key-management': IconKey,
