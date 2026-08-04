@@ -38,11 +38,18 @@
 
 		<p>
 			The example below sends a simple chat request to the Rocky API using the
-			built-in <code>fetch()</code> function.
+			built-in <code>fetch()</code> function. Set <code>ROCKY_API_URL</code> to
+			the endpoint provided by your administrator; a public endpoint is not
+			configured by this repository.
 		</p>
 
-		<pre><code>{`const response = await fetch(
-    "https://rocky.cs.kent.edu/v1/responses",
+		<pre><code>{`const rockyApiUrl = process.env.ROCKY_API_URL;
+if (!rockyApiUrl) {
+    throw new Error("Set ROCKY_API_URL to an endpoint provided by your administrator.");
+}
+
+const response = await fetch(
+    rockyApiUrl,
     {
         method: "POST",
         headers: {

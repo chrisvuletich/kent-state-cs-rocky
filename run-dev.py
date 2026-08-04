@@ -26,7 +26,7 @@ from run_env import (
 REPO_ROOT = Path(__file__).resolve().parent
 BACKEND_DIR = REPO_ROOT / "rocky-backend"
 FRONTEND_DIR = REPO_ROOT / "rocky-interface"
-GRANITE_DIR = REPO_ROOT / "granite-llm-server" / "app"
+GRANITE_DIR = REPO_ROOT / "granite-llm-server"
 CHAT_API_DIR = REPO_ROOT / "api-rocky"
 SEED_SCRIPT = BACKEND_DIR / "seed_from_backend.py"
 
@@ -172,7 +172,7 @@ def run_both() -> int:
         granite_env["ROCKY_GRANITE_HOST"] = granite_host
         granite_env["ROCKY_GRANITE_PORT"] = granite_port
         log(f"Launching Granite service on http://{granite_host}:{granite_port}")
-        granite_process = subprocess.Popen([python_exe, "main.py"], cwd=str(GRANITE_DIR), env=granite_env)
+        granite_process = subprocess.Popen([python_exe, "-m", "app.main"], cwd=str(GRANITE_DIR), env=granite_env)
 
     chat_host, chat_port = chat_api_bind()
     chat_env = os.environ.copy()

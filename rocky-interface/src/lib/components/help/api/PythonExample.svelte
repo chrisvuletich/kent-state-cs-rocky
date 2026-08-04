@@ -50,14 +50,15 @@
 
 		<p>
 			The example below sends a simple chat request to the Rocky API. Store
-			your key in the <code>ROCKY_API_KEY</code> environment variable before
-			running the script.
+			your key in <code>ROCKY_API_KEY</code> and the administrator-provided
+			endpoint in <code>ROCKY_API_URL</code> before running the script. A public
+			endpoint is not configured by this repository.
 		</p>
 
 	<pre><code>{`import os
 import requests
 
-url = "https://rocky.cs.kent.edu/v1/responses"
+url = os.environ["ROCKY_API_URL"]
 
 payload = {
     "api-key": os.environ["ROCKY_API_KEY"],

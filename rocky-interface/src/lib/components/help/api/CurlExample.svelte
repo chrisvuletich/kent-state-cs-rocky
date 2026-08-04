@@ -12,16 +12,17 @@
 
 	<section class="api-doc-section">
 		<h2>Send a request</h2>
-		<pre><code>{`export ROCKY_API_KEY='replace-with-your-course-api-key'
+		<pre><code>{`export ROCKY_API_URL='http://127.0.0.1:5003/v1/responses'
+export ROCKY_API_KEY='replace-with-your-course-api-key'
 
-curl --request POST https://rocky.cs.kent.edu/v1/responses \\
+curl --request POST "$ROCKY_API_URL" \\
   --header 'Content-Type: application/json' \\
   --data "{
     \\"api-key\\": \\"$ROCKY_API_KEY\\",
     \\"message\\": \\"Explain recursion in one paragraph.\\",
     \\"store\\": false
   }"`}</code></pre>
-		<p><code>https://rocky.cs.kent.edu/v1/responses</code> is Rocky’s public Chat API endpoint.</p>
+		<p><code>http://127.0.0.1:5003/v1/responses</code> is the local internal Chat API route. A public developer API endpoint is currently unconfirmed and not configured by this repository.</p>
 	</section>
 
 	<section class="api-doc-section">

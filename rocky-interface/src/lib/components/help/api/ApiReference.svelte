@@ -6,12 +6,16 @@
 	<p class="api-doc-lead">Reference for Rocky’s current Chat API request and response contract.</p>
 
 	<section class="api-doc-section">
-		<h2>Endpoint and authentication</h2>
+		<h2>Route layers and authentication</h2>
 		<table class="data-table">
-			<thead><tr><th>Method</th><th>Endpoint</th><th>Authentication</th></tr></thead>
-			<tbody><tr><td>POST</td><td><code>https://rocky.cs.kent.edu/v1/responses</code></td><td>JSON <code>api-key</code> field</td></tr></tbody>
+			<thead><tr><th>Layer</th><th>Method</th><th>Endpoint</th><th>Authentication</th></tr></thead>
+			<tbody>
+				<tr><td>Browser-facing generation</td><td>POST</td><td><code>/api/chat</code></td><td>Rocky browser session</td></tr>
+				<tr><td>Internal Chat API</td><td>POST</td><td><code>http://127.0.0.1:5003/v1/responses</code></td><td>JSON <code>api-key</code> field</td></tr>
+				<tr><td>Public developer API</td><td>—</td><td>Unconfirmed / not configured</td><td>To be determined</td></tr>
+			</tbody>
 		</table>
-		<p>Use Rocky’s public Chat API endpoint for requests.</p>
+		<p>The browser route forwards generation requests to the internal Chat API route. This repository does not currently confirm or configure a public developer endpoint.</p>
 	</section>
 
 	<section class="api-doc-section">
