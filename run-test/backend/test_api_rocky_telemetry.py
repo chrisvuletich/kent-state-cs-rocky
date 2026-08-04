@@ -17,11 +17,10 @@ sys.path.insert(0, str(ROOT / "api-rocky"))
 sys.path.insert(0, str(ROOT / "run-test" / "integration"))
 with (
     patch.dict(os.environ, {
-        "ROCKY_DB_BACKEND": "mongita",
-        "ROCKY_DB_NAME": "rocky_api_test",
+        "ROCKY_APP_ENV": "test",
         "ROCKY_CHAT_API_KEY": "",
+        "ROCKY_TEST_SKIP_DATABASE_INIT": "true",
     }),
-    patch("mongita.MongitaClientDisk", return_value=MongitaClientMemory()),
 ):
     import api as rocky
 
@@ -116,7 +115,7 @@ class ApiTelemetryTests(unittest.TestCase):
         self.client = rocky.app.test_client()
 
     def post(self, **values):
-        return self.client.post("/rocky-api", json={
+        return self.client.post("/v1/responses", json={
             "api-key": self.key,
             "message": "Private prompt café ☕",
             "model": "requested-model",
@@ -193,7 +192,7 @@ class ApiTelemetryTests(unittest.TestCase):
                            "type": "input_text", "text": "ignored",
                        }],
                    }]}
-        self.assertEqual(self.client.post("/rocky-api", json=invalid).status_code,
+        self.assertEqual(self.client.post("/v1/responses", json=invalid).status_code,
                          400)
         post.return_value = success(output=None)
         self.assertEqual(self.post().status_code, 502)
@@ -319,12 +318,13 @@ class LiveSmokeTests(unittest.TestCase):
             patch.object(live_telemetry_smoke, "MongoClient",
                          return_value=client),
             patch.object(live_telemetry_smoke.requests, "post",
-                         return_value=response),
+                         return_value=response) as post,
             patch("telemetry_projection.refresh_current",
                   side_effect=(before, after, before)),
         ):
             result = live_telemetry_smoke.run_live_smoke()
             self.assertEqual(result["interactions_completed_total"], 1)
+            self.assertEqual(post.call_args.args[0], "test/v1/responses")
             response.headers["X-Rocky-Request-Id"] = str(uuid4())
             with self.assertRaises(live_telemetry_smoke.SmokeFailure):
                 live_telemetry_smoke.run_live_smoke()

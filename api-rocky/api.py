@@ -239,20 +239,36 @@ def initialize_database():
     )
 
 
-initialize_database()
-ensure_chat_indexes()
-ensure_chat_service_api_key()
-
 telemetry_enabled = os.getenv(
     "ROCKY_TELEMETRY_ENABLED", "true"
 ).strip().lower() not in {"0", "false", "no", "off"}
-if DB_BACKEND == "mongodb" and telemetry_enabled:
-    telemetry_store = TelemetryStore(
-        telemetry_interactions_col,
-        telemetry_current_col,
-        logger=app.logger,
-    )
-    telemetry_store.ensure_indexes()
+
+
+def should_skip_database_initialization_for_tests():
+    skip_requested = os.getenv("ROCKY_TEST_SKIP_DATABASE_INIT","false").strip().lower() == "true"
+
+    if not skip_requested:
+        return False
+
+    app_environment = os.getenv("ROCKY_APP_ENV","").strip().lower()
+
+    if app_environment != "test":
+        raise RuntimeError("Database initialization can only be skipped when ROCKY_APP_ENV=test")
+
+    return True
+
+if not should_skip_database_initialization_for_tests():
+    initialize_database()
+    ensure_chat_indexes()
+    ensure_chat_service_api_key()
+
+    if DB_BACKEND == "mongodb" and telemetry_enabled:
+        telemetry_store = TelemetryStore(
+            telemetry_interactions_col,
+            telemetry_current_col,
+            logger=app.logger,
+        )
+        telemetry_store.ensure_indexes()
 
 
 def has_effective_user_prompt(payload):

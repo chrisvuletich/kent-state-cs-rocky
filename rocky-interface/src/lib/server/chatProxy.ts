@@ -1,11 +1,10 @@
 import { env } from '$env/dynamic/private';
 import { error } from '@sveltejs/kit';
-import { createHmac } from 'node:crypto';
+import { deriveHiddenApiKey } from '$lib/server/hiddenApiKey';
+import { deriveChatApiBaseUrl } from './chatProxyUrl';
 
-export const CHAT_API_URL = (env.ROCKY_CHAT_API_URL ?? 'http://127.0.0.1:5003/rocky-api').trim();
-export const CHAT_API_BASE_URL = CHAT_API_URL.replace(/\/rocky-api\/?$/, '');
-const HIDDEN_API_KEY_PREFIX = 'sk_kent_hidden_';
-const HIDDEN_API_KEY_CONTEXT = 'rocky:user-default-api-key:v1:';
+export const CHAT_API_URL = (env.ROCKY_CHAT_API_URL ?? 'http://127.0.0.1:5003/v1/responses').trim();
+export const CHAT_API_BASE_URL = deriveChatApiBaseUrl(CHAT_API_URL);
 const HIDDEN_API_KEY_SECRET = (env.ROCKY_HIDDEN_API_KEY_SECRET ?? env.ROCKY_CHAT_API_KEY ?? '').trim();
 
 export function requireChatUser(locals: App.Locals): NonNullable<App.Locals['currentUser']> {
@@ -37,10 +36,7 @@ export function hiddenApiKeyForUser(user: NonNullable<App.Locals['currentUser']>
 		throw error(500, 'Hidden chat API key secret is not configured.');
 	}
 
-	const digest = createHmac('sha256', HIDDEN_API_KEY_SECRET)
-		.update(`${HIDDEN_API_KEY_CONTEXT}${ownerId}`)
-		.digest('hex');
-	return `${HIDDEN_API_KEY_PREFIX}${digest}`;
+	return deriveHiddenApiKey(ownerId, HIDDEN_API_KEY_SECRET);
 }
 
 export function chatApiPayload(user: NonNullable<App.Locals['currentUser']>, extra: Record<string, unknown> = {}): Record<string, unknown> {

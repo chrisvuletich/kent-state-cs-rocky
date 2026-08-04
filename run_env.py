@@ -112,5 +112,6 @@ def chat_api_bind() -> tuple[str, str]:
 
 
 def chat_api_url() -> str:
-    host, port = chat_api_bind()
-    return f"http://{host}:{port}/rocky-api"
+    chat_host, chat_port = chat_api_bind()
+    completed_URL = f"http://{chat_host}:{chat_port}/v1/responses"
+    return completed_URL

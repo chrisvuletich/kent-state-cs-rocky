@@ -125,6 +125,14 @@ def wait_for_http(url: str, timeout_seconds: int = 15) -> bool:
     return False
 
 
+def chat_api_health_url(generation_url: str) -> str:
+    if generation_url.endswith('/'):
+        generation_url = generation_url.removesuffix("/")
+
+    generation_url = generation_url.removesuffix("/v1/responses")
+    return generation_url + "/health"
+
+
 def run_backend_only() -> int:
     python_exe = get_python_executable(require_backend_deps=True)
     resolved_backend_url = backend_url()
@@ -181,7 +189,7 @@ def run_both() -> int:
         if granite_process is not None and not wait_for_http(resolved_granite_url.replace("/generate", "/health")):
             raise RuntimeError(f"Granite service did not become ready at {resolved_granite_url}")
 
-        if not wait_for_http(resolved_chat_api_url.replace("/rocky-api", "/health")):
+        if not wait_for_http(chat_api_health_url(resolved_chat_api_url)):
             raise RuntimeError(f"Rocky chat API did not become ready at {resolved_chat_api_url}")
 
         if not wait_for_http(f"{resolved_backend_url}/health"):

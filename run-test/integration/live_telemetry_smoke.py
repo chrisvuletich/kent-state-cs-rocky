@@ -51,8 +51,8 @@ def run_live_smoke():
         before = refresh_current(interactions, current, users)
 
         endpoint = values["ROCKY_LIVE_API_URL"].rstrip("/")
-        if not endpoint.endswith("/rocky-api"):
-            endpoint += "/rocky-api"
+        if not endpoint.endswith("/v1/responses"):
+            endpoint += "/v1/responses"
         response = requests.post(endpoint, json={
             "api-key": values["ROCKY_LIVE_API_KEY"],
             "model": values["ROCKY_LIVE_MODEL"],
