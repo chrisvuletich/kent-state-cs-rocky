@@ -106,6 +106,7 @@
         <button type="button" onclick={() => currentFrame.set('audit')}>View All Logs</button>
       </div>
 
+      <div class="admin-audit-table-wrap">
       <table>
         <thead>
           <tr>
@@ -127,6 +128,7 @@
           {/each}
         </tbody>
       </table>
+      </div>
     </section>
 
     <aside class="admin-side-stack">

@@ -139,3 +139,26 @@
         white-space: nowrap;
     }
 }
+
+@media (max-width: 600px) {
+	.user-tab-btn,
+	.user-filters input,
+	.user-filters select {
+		width: 100%;
+	}
+
+	.user-filters input {
+		min-width: 0;
+		flex-basis: 100%;
+	}
+
+	.bulk-toolbar,
+	.bulk-confirmation {
+		align-items: stretch;
+	}
+
+	.bulk-toolbar .view-btn,
+	.bulk-confirmation .view-btn {
+		flex: 1 1 100%;
+	}
+}

@@ -219,6 +219,7 @@
 {/if}
 
 <nav class="sidebar" class:open={$sidebarOpen}>
+	<div class="sidebar-navigation">
 	{#each framesBeforeCourses as frame}
 		<button class="nav-link" class:active={activeFrame === frame} onclick={() => handleFrameChange(frame)}>
 			<img class="nav-link-icon" src={iconForFrame(frame)} alt="" aria-hidden="true" />
@@ -272,14 +273,21 @@
 			<img class="nav-link-icon" src={iconForFrame(frame)} alt="" aria-hidden="true" />
 			<span class="nav-link-label">{toFrameLabel(frame)}</span>
 		</button>
+		{#if frame === 'chat' && allowedFrames.includes('help')}
+			<button class="nav-link mobile-help-link" class:active={activeFrame === 'help'} onclick={() => handleFrameChange('help')}>
+				<img class="nav-link-icon" src={iconForFrame('help')} alt="" aria-hidden="true" />
+				<span class="nav-link-label">{toFrameLabel('help')}</span>
+			</button>
+		{/if}
 	{/each}
-
-	<div class="spacer"></div>
+	</div>
 
 	{#if allowedFrames.includes('help')}
+		<div class="sidebar-footer desktop-help-footer">
 		<button class="nav-link" class:active={activeFrame === 'help'} onclick={() => handleFrameChange('help')}>
 			<img class="nav-link-icon" src={iconForFrame('help')} alt="" aria-hidden="true" />
 			<span class="nav-link-label">{toFrameLabel('help')}</span>
 		</button>
+		</div>
 	{/if}
 </nav>

@@ -267,6 +267,7 @@
 	padding: var(--space-lg);
 	box-shadow: var(--shadow-lg);
 	max-height: calc(100vh - 2 * var(--space-lg));
+	max-height: calc(100dvh - 2 * var(--space-lg));
 	overflow: auto;
 }
 
@@ -373,5 +374,32 @@
 		top: calc(var(--size-topbar-height) + var(--space-sm)) !important;
 		transform: none;
 		width: calc(100vw - 2 * var(--space-md));
+	}
+}
+
+@media (max-width: 600px) {
+	.course-semester-row {
+		grid-template-columns: 1fr;
+	}
+
+	.course-edit-actions,
+	.course-people-actions {
+		justify-content: stretch;
+	}
+
+	.course-edit-actions .view-btn,
+	.course-people-actions .view-btn,
+	.course-group-create-row .view-btn {
+		width: 100%;
+	}
+
+	.course-popout-panel {
+		max-height: calc(100dvh - 2 * var(--space-lg));
+		overflow: auto;
+	}
+
+	.course-people-table,
+	.group-table {
+		min-width: 680px;
 	}
 }
