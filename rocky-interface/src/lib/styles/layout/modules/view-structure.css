@@ -79,9 +79,10 @@
         font-size: var(--font-size-xl);
     }
 
-    .view-actions {
-        flex-shrink: 1;
-        gap: var(--space-sm);
+	.view-actions {
+		flex-shrink: 1;
+		gap: var(--space-sm);
+		flex-wrap: wrap;
     }
 
     .view-btn {

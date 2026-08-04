@@ -56,8 +56,17 @@
 	border-left-color: var(--color-highlight-gold);
 }
 
-.spacer {
+.sidebar-navigation {
 	flex: 1;
+	min-height: 0;
+}
+
+.sidebar-footer {
+	flex-shrink: 0;
+}
+
+.mobile-help-link {
+	display: none;
 }
 
 @media (max-width: 768px) {
@@ -65,10 +74,29 @@
 		position: fixed;
 		top: var(--size-topbar-height);
 		left: 0;
-		height: calc(100% - var(--size-topbar-height));
+		height: calc(100vh - var(--size-topbar-height));
+		height: calc(100dvh - var(--size-topbar-height));
 		transform: translateX(-100%);
 		transition: transform 0.25s ease;
 		z-index: 200;
+		overflow: hidden;
+	}
+
+	.sidebar-navigation {
+		overflow-y: auto;
+		overscroll-behavior: contain;
+	}
+
+	.sidebar-footer {
+		padding-bottom: env(safe-area-inset-bottom);
+	}
+
+	.mobile-help-link {
+		display: flex;
+	}
+
+	.desktop-help-footer {
+		display: none;
 	}
 
 	.sidebar.open {

@@ -101,7 +101,8 @@
 	margin-top: var(--space-lg);
 	border: 1px solid var(--color-gray-200);
 	border-radius: var(--radius-lg);
-	overflow: hidden;
+	overflow-x: auto;
+	-webkit-overflow-scrolling: touch;
 }
 
 th,
@@ -141,8 +142,12 @@ tbody tr:hover {
   }
 
   th,
-  td {
+	td {
     padding: 8px 9px;
     font-size: 0.84rem;
-  }
+	}
+
+	.table-wrap .data-table {
+		min-width: 560px;
+	}
 }

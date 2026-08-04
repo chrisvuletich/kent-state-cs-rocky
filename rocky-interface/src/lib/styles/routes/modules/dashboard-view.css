@@ -14,3 +14,4 @@
 .recent-chat-button:hover, .recent-chat-button:focus-visible { border-color: var(--color-accent); background: var(--color-accent-light); }
 .recent-chats-note { color: var(--color-text-secondary); font-size: var(--font-size-sm); margin: 0; }
 @media (max-width: 960px) { .dashboard-main-grid { grid-template-columns: 1fr; } .recent-chats-card { order: -1; } }
+@media (max-width: 600px) { .recent-chats-card { padding: var(--space-md); } .recent-chats-heading { align-items: flex-start; flex-direction: column; } }

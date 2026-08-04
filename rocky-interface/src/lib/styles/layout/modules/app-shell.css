@@ -2,6 +2,7 @@
 .app-shell {
 	display: flex;
 	height: calc(100vh - var(--size-topbar-height));
+	height: calc(100dvh - var(--size-topbar-height));
 	min-height: 0;
 	gap: 0;
 }
@@ -34,6 +35,7 @@
 	.app-content {
 		padding: var(--space-lg);
 		overflow-x: hidden;
+		padding-bottom: calc(var(--space-lg) + env(safe-area-inset-bottom));
 	}
 
 	.page-layout {

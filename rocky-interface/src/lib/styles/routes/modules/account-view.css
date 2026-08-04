@@ -7,6 +7,7 @@
 }
 
 .account-card {
+	margin-bottom: var(--space-xl);
 	padding: var(--space-xl);
 	border: 1px solid color-mix(in srgb, var(--color-accent) 24%, var(--color-gray-300));
 	background: linear-gradient(135deg, var(--color-bg-primary), var(--color-accent-light));
@@ -223,6 +224,11 @@
 	color: var(--color-primary-dark);
 }
 
+.account-overview-section {
+	margin-bottom: var(--space-xl);
+	padding: var(--space-xl);
+}
+
 .account-overview-state {
 	color: var(--color-text-secondary);
 }
@@ -311,6 +317,10 @@
 		padding: var(--space-lg);
 	}
 
+	.account-overview-section {
+		padding: var(--space-lg);
+	}
+
 	.account-profile-header {
 		align-items: flex-start;
 		gap: var(--space-lg);
@@ -365,5 +375,26 @@
 
 	.account-usage-grid {
 		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+}
+
+@media (max-width: 600px) {
+	.account-profile-header,
+	.account-course-row {
+		flex-direction: column;
+		align-items: stretch;
+	}
+
+	.account-avatar-picker {
+		left: 50%;
+		transform: translateX(-50%);
+	}
+
+	.account-course-link {
+		white-space: normal;
+	}
+
+	.account-usage-grid {
+		grid-template-columns: 1fr;
 	}
 }
