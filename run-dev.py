@@ -26,7 +26,7 @@ from run_env import (
 REPO_ROOT = Path(__file__).resolve().parent
 BACKEND_DIR = REPO_ROOT / "rocky-backend"
 FRONTEND_DIR = REPO_ROOT / "rocky-interface"
-GRANITE_DIR = REPO_ROOT / "granite-llm-server" / "app"
+GRANITE_DIR = REPO_ROOT / "granite-llm-server"
 CHAT_API_DIR = REPO_ROOT / "api-rocky"
 SEED_SCRIPT = BACKEND_DIR / "seed_from_backend.py"
 
@@ -125,6 +125,14 @@ def wait_for_http(url: str, timeout_seconds: int = 15) -> bool:
     return False
 
 
+def chat_api_health_url(generation_url: str) -> str:
+    if generation_url.endswith('/'):
+        generation_url = generation_url.removesuffix("/")
+
+    generation_url = generation_url.removesuffix("/v1/responses")
+    return generation_url + "/health"
+
+
 def run_backend_only() -> int:
     python_exe = get_python_executable(require_backend_deps=True)
     resolved_backend_url = backend_url()
@@ -164,7 +172,7 @@ def run_both() -> int:
         granite_env["ROCKY_GRANITE_HOST"] = granite_host
         granite_env["ROCKY_GRANITE_PORT"] = granite_port
         log(f"Launching Granite service on http://{granite_host}:{granite_port}")
-        granite_process = subprocess.Popen([python_exe, "main.py"], cwd=str(GRANITE_DIR), env=granite_env)
+        granite_process = subprocess.Popen([python_exe, "-m", "app.main"], cwd=str(GRANITE_DIR), env=granite_env)
 
     chat_host, chat_port = chat_api_bind()
     chat_env = os.environ.copy()
@@ -181,7 +189,7 @@ def run_both() -> int:
         if granite_process is not None and not wait_for_http(resolved_granite_url.replace("/generate", "/health")):
             raise RuntimeError(f"Granite service did not become ready at {resolved_granite_url}")
 
-        if not wait_for_http(resolved_chat_api_url.replace("/rocky-api", "/health")):
+        if not wait_for_http(chat_api_health_url(resolved_chat_api_url)):
             raise RuntimeError(f"Rocky chat API did not become ready at {resolved_chat_api_url}")
 
         if not wait_for_http(f"{resolved_backend_url}/health"):

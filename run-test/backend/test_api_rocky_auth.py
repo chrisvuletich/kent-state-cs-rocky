@@ -2,19 +2,29 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[2]
 MODULE_PATH = ROOT / "api-rocky" / "api.py"
+sys.path.insert(0, str(ROOT / "api-rocky"))
 
 spec = importlib.util.spec_from_file_location("api_rocky_api", MODULE_PATH)
 if spec is None or spec.loader is None:
     raise RuntimeError(f"Unable to load api-rocky module from {MODULE_PATH}")
 
 api_rocky = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(api_rocky)
+with patch.dict(
+    os.environ,
+    {
+        "ROCKY_APP_ENV": "test",
+        "ROCKY_TEST_SKIP_DATABASE_INIT": "true",
+    },
+):
+    spec.loader.exec_module(api_rocky)
 
 
 class FakeCollection:

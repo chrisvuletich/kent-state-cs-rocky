@@ -1,0 +1,16 @@
+[
+  {
+    "case_id": "trim-and-lowercase-owner",
+    "owner_id": " Synthetic-Owner ",
+    "normalized_owner_id": "synthetic-owner",
+    "secret": "phase-one-contract-secret-a",
+    "expected_api_key": "sk_kent_hidden_d737cecff1c3db688fb102327290c60cb2c7abe5979666b1859fd7c06b7d752f"
+  },
+  {
+    "case_id": "lowercase-email-owner",
+    "owner_id": "COURSE.User@KENT.EDU",
+    "normalized_owner_id": "course.user@kent.edu",
+    "secret": "phase-one-contract-secret-b",
+    "expected_api_key": "sk_kent_hidden_10b847adca80cc9d5698a000eb24cfee3255da08d37ec4860b3837811094d4ca"
+  }
+]

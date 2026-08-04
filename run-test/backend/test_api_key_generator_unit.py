@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import importlib.util
 import hashlib
+import json
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 MODULE_PATH = ROOT / "rocky-backend" / "backend" / "api_key_generator.py"
+CONTRACT_PATH = ROOT / "run-test" / "fixtures" / "hidden_api_key_contract.json"
 
 spec = importlib.util.spec_from_file_location("api_key_generator", MODULE_PATH)
 if spec is None or spec.loader is None:
@@ -61,6 +63,23 @@ class ApiKeyGeneratorUnitTests(unittest.TestCase):
 
         self.assertTrue(plaintext.startswith(HIDDEN_API_KEY_PREFIX))
         self.assertEqual(key_hash, hashlib.sha256(plaintext.encode("utf-8")).hexdigest())
+
+    def test_shared_hidden_api_key_contract_vectors(self):
+        vectors = json.loads(CONTRACT_PATH.read_text(encoding="utf-8"))
+
+        for vector in vectors:
+            derived = derive_hidden_api_key(vector["owner_id"], vector["secret"])
+            derived_from_normalized_owner = derive_hidden_api_key(
+                vector["normalized_owner_id"],
+                vector["secret"],
+            )
+
+            self.assertEqual(derived, vector["expected_api_key"])
+            self.assertEqual(
+                derived_from_normalized_owner,
+                vector["expected_api_key"],
+            )
+            self.assertTrue(derived.startswith("sk_kent_hidden_"))
 
 
 if __name__ == "__main__":
