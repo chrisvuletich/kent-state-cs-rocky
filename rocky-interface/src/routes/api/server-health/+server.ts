@@ -1,4 +1,5 @@
 import { json, type RequestHandler } from '@sveltejs/kit';
+import { env } from '$env/dynamic/private';
 
 type ServiceName = 'web' | 'backend' | 'granite' | 'chat-api' | 'ollama';
 
@@ -16,19 +17,19 @@ type ServiceDefinition = {
 const SERVICES: ServiceDefinition[] = [
 	{
 		name: 'backend',
-		url: 'http://127.0.0.1:5001/health'
+		url: env.ROCKY_BACKEND_HEALTH_URL?.trim() || 'http://127.0.0.1:5001/health'
 	},
 	{
 		name: 'granite',
-		url: 'http://127.0.0.1:5002/health'
+		url: env.ROCKY_GRANITE_HEALTH_URL?.trim() || 'http://127.0.0.1:5002/health'
 	},
 	{
 		name: 'chat-api',
-		url: 'http://127.0.0.1:5003/health'
+		url: env.ROCKY_CHAT_API_HEALTH_URL?.trim() || 'http://127.0.0.1:5003/health'
 	},
 	{
 		name: 'ollama',
-		url: 'http://granite.cs.kent.edu:11434/api/tags'
+		url: env.ROCKY_OLLAMA_HEALTH_URL?.trim() || 'http://granite.cs.kent.edu:11434/api/tags'
 	}
 ];
 
