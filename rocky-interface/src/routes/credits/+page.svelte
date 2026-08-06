@@ -12,14 +12,15 @@
     { name: 'Branson', title: 'Project Stakeholder', variant: 'gold' },
     { name: 'Ian Rohrbacher', title: 'Scrum Master, Full Stack Developer', variant: 'navy' },
     { name: 'Chris Vuletich', title: 'Front-end Developer', variant: 'gold' },
-    { name: 'Savar Shrestha', title: 'Mobile Developer, Dashboard Developer', variant: 'navy' },
+    { name: 'Nicholas Vuletich', title: 'AI/ML Engineering Intern and Backend Developer', variant: 'navy' },
+    { name: 'Savar Shrestha', title: 'Mobile Developer, Dashboard Developer', variant: 'gold' },
+    { name: 'Rowan Ess', title: 'Backend Developer', variant: 'navy' },
     { name: 'Ian Smaglinski', title: 'Account, Help, and Credits Page, API Key Generator Script', variant: 'gold' },
     { name: 'Archie Horne', title: 'Artist, Presentation Director', variant: 'navy' },
     { name: 'Zoe Eigenbrod', title: 'Developer Tools, Table Manager, Burndown Director, User Page', variant: 'gold' },
     { name: 'Dovlet Gurbanov', title: '', variant: 'navy' },
     { name: 'Simran Gautam', title: '', variant: 'gold' },
     { name: 'Tasmia Jannat Shammi', title: '', variant: 'navy' },
-    { name: 'Nicholas Vuletich', title: 'AI/ML Engineering Intern and Backend Developer', variant: 'gold' },
   ];
 
 	const assetCredits: Credit[] = [
