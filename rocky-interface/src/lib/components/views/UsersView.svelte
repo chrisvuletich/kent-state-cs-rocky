@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { page } from '$app/stores';
 	import { createOAuthWhitelistEntry, fetchOAuthWhitelistEntries, fetchUsersForViews, setUserActive, setUserRole, setUsersActive, type WhitelistEntry } from '$lib/api/users';
 	import { fetchCourses } from '$lib/api/content';
 	import type { Course } from '$lib/types/course';
@@ -31,6 +32,8 @@
 	$: listedUsers = (activeTab === 'kent'
 		? users.filter((user) => user.email.toLowerCase().endsWith('@kent.edu'))
 		: whitelistEntries) as ListedUser[];
+	$: currentUserId = $page.data.currentUser?.id?.trim().toLowerCase() || '';
+	$: currentUserEmail = $page.data.currentUser?.email?.trim().toLowerCase() || '';
 	$: coursesForFilter = [...courses].sort((first, second) => `${first.name} ${first.code}`.localeCompare(`${second.name} ${second.code}`));
 	$: if (courseFilter && !coursesForFilter.some((course) => String(course.id) === courseFilter)) courseFilter = '';
 	$: visibleUsers = listedUsers.filter((user) => {
@@ -45,11 +48,12 @@
 		return nameSort === 'asc' ? comparison : -comparison;
 	});
 	$: {
-		const visibleSelectedIds = selectedIds.filter((id) => visibleUsers.some((user) => user.id === id));
+		const visibleSelectedIds = selectedIds.filter((id) => visibleUsers.some((user) => user.id === id && !isCurrentUser(user)));
 		if (visibleSelectedIds.length !== selectedIds.length) selectedIds = visibleSelectedIds;
 	}
-	$: selectedVisibleCount = visibleUsers.filter((user) => selectedIds.includes(user.id)).length;
-	$: allVisibleSelected = visibleUsers.length > 0 && selectedVisibleCount === visibleUsers.length;
+	$: selectableVisibleUsers = visibleUsers.filter((user) => !isCurrentUser(user));
+	$: selectedVisibleCount = selectableVisibleUsers.filter((user) => selectedIds.includes(user.id)).length;
+	$: allVisibleSelected = selectableVisibleUsers.length > 0 && selectedVisibleCount === selectableVisibleUsers.length;
 
 	onMount(refresh);
 
@@ -74,17 +78,28 @@
 		return courseIdentifiers.some((identifier) => identifiers.includes(identifier)) || (course.members || []).some((member) => identifiers.includes((member.id || '').toLowerCase()) || identifiers.includes(member.email.toLowerCase()));
 	}
 
+	function isCurrentUser(user: ListedUser): boolean {
+		return Boolean(
+			(currentUserId && user.id.trim().toLowerCase() === currentUserId) ||
+			(currentUserEmail && user.email.trim().toLowerCase() === currentUserEmail)
+		);
+	}
+
 	function toggleSelected(id: string): void {
+		const user = visibleUsers.find((candidate) => candidate.id === id);
+		if (user && isCurrentUser(user)) return;
 		selectedIds = selectedIds.includes(id) ? selectedIds.filter((selectedId) => selectedId !== id) : [...selectedIds, id];
 	}
 
 	function toggleAllVisible(): void {
-		const visibleIds = visibleUsers.map((user) => user.id);
+		const visibleIds = selectableVisibleUsers.map((user) => user.id);
 		selectedIds = allVisibleSelected ? selectedIds.filter((id) => !visibleIds.includes(id)) : [...new Set([...selectedIds, ...visibleIds])];
 	}
 
 	async function updateStatus(user: ListedUser, isActive: boolean): Promise<void> {
+		if (isCurrentUser(user) && !isActive) return;
 		isSaving = true;
+		error = null;
 		message = null;
 		try {
 			await setUserActive(user.id, isActive);
@@ -96,8 +111,11 @@
 	}
 
 	async function updateRole(user: ListedUser, role: 'student' | 'instructor' | 'admin'): Promise<void> {
+		if (isCurrentUser(user) && role !== 'admin') return;
 		if (role === user.role || !confirm(`Change ${user.displayName}'s account role to ${role}?`)) return;
 		isSaving = true;
+		error = null;
+		message = null;
 		try { await setUserRole(user.id, role); await refresh(); }
 		catch (err) { error = err instanceof Error ? err.message : 'Unable to update role.'; }
 		finally { isSaving = false; }
@@ -106,6 +124,8 @@
 	async function applyBulkStatus(): Promise<void> {
 		if (pendingBulkStatus === null) return;
 		isSaving = true;
+		error = null;
+		message = null;
 		try {
 			const result = await setUsersActive(selectedIds, pendingBulkStatus);
 			await refresh();
@@ -116,6 +136,8 @@
 	}
 
 	async function addWhitelistEntry(): Promise<void> {
+		error = null;
+		message = null;
 		if (!firstName.trim() || !lastName.trim() || !email.trim()) { error = 'First name, last name, and email are required.'; return; }
 		isSaving = true;
 		try { await createOAuthWhitelistEntry({ firstName, lastName, email }); firstName = ''; lastName = ''; email = ''; await refresh(); message = 'Whitelist entry added.'; }
@@ -153,7 +175,7 @@
 			{/if}
 			<div class="table-container"><table class="data-table users-table"><thead><tr><th><input type="checkbox" checked={allVisibleSelected} onchange={toggleAllVisible} aria-label="Select all visible users" /></th><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Actions</th></tr></thead><tbody>
 				{#if visibleUsers.length === 0}<tr><td colspan="6">No users match these filters.</td></tr>
-				{:else}{#each visibleUsers as user (user.id)}<tr><td><input type="checkbox" checked={selectedIds.includes(user.id)} onchange={() => toggleSelected(user.id)} aria-label={`Select ${user.displayName}`} /></td><td>{user.displayName}</td><td>{user.email}</td><td><span class:role-admin={user.role === 'admin'} class="role-badge">{user.role}</span></td><td><span class:status-active={user.isActive} class="status-badge">{user.isActive ? 'Active' : 'Inactive'}</span></td><td><div class="user-actions"><button class="view-btn user-action-btn" disabled={isSaving} onclick={() => updateStatus(user, !user.isActive)}>{user.isActive ? 'Deactivate' : 'Reactivate'}</button><select class="role-select" value={user.role} disabled={isSaving} onchange={(event) => updateRole(user, (event.currentTarget as HTMLSelectElement).value as 'student' | 'instructor' | 'admin')} aria-label={`Change ${user.displayName}'s role`}><option value="student">Student</option><option value="instructor">Instructor</option><option value="admin">Admin</option></select></div></td></tr>{/each}{/if}
+				{:else}{#each visibleUsers as user (user.id)}<tr><td><input type="checkbox" checked={selectedIds.includes(user.id)} disabled={isCurrentUser(user)} onchange={() => toggleSelected(user.id)} aria-label={`Select ${user.displayName}`} title={isCurrentUser(user) ? 'You cannot bulk-update your own administrator account.' : undefined} /></td><td>{user.displayName}</td><td>{user.email}</td><td><span class:role-admin={user.role === 'admin'} class="role-badge">{user.role}</span></td><td><span class:status-active={user.isActive} class="status-badge">{user.isActive ? 'Active' : 'Inactive'}</span></td><td><div class="user-actions"><button class="view-btn user-action-btn" disabled={isSaving || isCurrentUser(user)} title={isCurrentUser(user) ? 'You cannot deactivate your own administrator account.' : undefined} onclick={() => updateStatus(user, !user.isActive)}>{user.isActive ? 'Deactivate' : 'Reactivate'}</button><select class="role-select" value={user.role} disabled={isSaving || isCurrentUser(user)} title={isCurrentUser(user) ? 'You cannot change your own administrator role.' : undefined} onchange={(event) => updateRole(user, (event.currentTarget as HTMLSelectElement).value as 'student' | 'instructor' | 'admin')} aria-label={`Change ${user.displayName}'s role`}><option value="student">Student</option><option value="instructor">Instructor</option><option value="admin">Admin</option></select></div></td></tr>{/each}{/if}
 			</tbody></table></div>
 		</section>
 	{/if}

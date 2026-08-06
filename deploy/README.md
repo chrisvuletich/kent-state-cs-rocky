@@ -34,3 +34,7 @@ ROCKY_APP_ENV=production
 ROCKY_DB_BACKEND=mongodb
 ROCKY_MONGODB_URI=...
 ```
+
+The chat API reads API keys from the same database, so `ROCKY_DB_NAME` and the MongoDB settings must be identical for `rocky-backend` and `rocky-chat-api`. Keep the Granite bridge and Ollama private; nginx exposes only the frontend and `POST /v1/responses`.
+
+Set the same long random `ROCKY_HIDDEN_API_KEY_SECRET` in both `/etc/rocky/backend.env` and `/etc/rocky/frontend.env` so the built-in web chat can use each user's hidden key.

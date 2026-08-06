@@ -127,6 +127,17 @@
     font-weight: 600;
 }
 
+.unhealthy {
+    color: #b42318;
+    font-weight: 600;
+}
+
+.panel-empty-state {
+    margin: 0;
+    color: #667085;
+    font-size: .9rem;
+}
+
 .course-row {
     margin-bottom: 1.2rem;
 }

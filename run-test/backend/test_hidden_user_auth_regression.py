@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import subprocess
 import sys
+import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
+
+from mongita import MongitaClientDisk
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -16,7 +20,7 @@ BACKEND_DIR = ROOT / "rocky-backend"
 sys.path.insert(0, str(API_ROCKY_DIR))
 sys.path.insert(0, str(BACKEND_DIR))
 
-from backend.api_key_generator import derive_hidden_api_key
+from backend.api_key_generator import derive_hidden_api_key, generate_api_key_pair
 from backend.route_handlers.auth import ensure_default_api_key_for_user
 
 
@@ -118,9 +122,13 @@ class HiddenUserAuthRegressionTests(unittest.TestCase):
         return derive_hidden_api_key(SYNTHETIC_OWNER_NORMALIZED, secret)
 
     def _post_conversation_list(self, key):
+        headers = {}
+        if isinstance(key, str):
+            headers["Authorization"] = f"Bearer {key}"
         return self.client.post(
             "/conversations/list",
-            json={"api-key": key},
+            json={},
+            headers=headers,
         )
 
     def _assert_invalid(self, response):
@@ -241,10 +249,11 @@ class HiddenUserAuthRegressionTests(unittest.TestCase):
             response = self.client.post(
                 "/v1/responses",
                 json={
-                    "api-key": "synthetic-unknown-key",
-                    "message": "synthetic prompt",
+                    "model": "rocky",
+                    "input": "synthetic prompt",
                     "store": False,
                 },
+                headers={"Authorization": "Bearer synthetic-unknown-key"},
             )
 
         self._assert_invalid(response)
@@ -260,6 +269,108 @@ class HiddenUserAuthRegressionTests(unittest.TestCase):
         self.assertTrue(first_key == second_key)
         self.assertEqual(len(persistent_database.rows), 1)
         self.assertEqual(self._post_conversation_list(second_key).status_code, 200)
+
+    def test_mongita_key_inserted_by_backend_process_is_visible_without_restart(self):
+        plaintext_key, key_hash = generate_api_key_pair()
+        original_values = (
+            api_rocky.MONGITA_PATH,
+            api_rocky.DB_NAME,
+            api_rocky.api_keys_col,
+            api_rocky.MONGITA_KEY_READ_REFRESH_ENABLED,
+        )
+
+        try:
+            with tempfile.TemporaryDirectory(prefix="rocky-mongita-auth-") as temp_path:
+                database_name = "cross_process_key_test"
+                stale_collection = MongitaClientDisk(temp_path)[database_name]["api_keys"]
+                api_rocky.MONGITA_PATH = Path(temp_path)
+                api_rocky.DB_NAME = database_name
+                api_rocky.api_keys_col = stale_collection
+                api_rocky.MONGITA_KEY_READ_REFRESH_ENABLED = True
+                self.assertIsNone(stale_collection.find_one({"hash": key_hash}))
+
+                insert_code = (
+                    "from mongita import MongitaClientDisk; import sys; "
+                    "MongitaClientDisk(sys.argv[1])[sys.argv[2]]['api_keys'].insert_one("
+                    "{'hash': sys.argv[3], 'owner_id': 'synthetic-owner', "
+                    "'owner_type': 'person', 'is_active': True})"
+                )
+                subprocess.run(
+                    [sys.executable, "-c", insert_code, temp_path, database_name, key_hash],
+                    check=True,
+                )
+
+                self.assertIsNone(stale_collection.find_one({"hash": key_hash}))
+                self.assertIsNotNone(api_rocky.get_key_doc(plaintext_key))
+        finally:
+            (
+                api_rocky.MONGITA_PATH,
+                api_rocky.DB_NAME,
+                api_rocky.api_keys_col,
+                api_rocky.MONGITA_KEY_READ_REFRESH_ENABLED,
+            ) = original_values
+
+    def test_development_auth_bypass_fails_closed_outside_development(self):
+        with (
+            patch.dict(os.environ, {"ROCKY_DEV_AUTH_BYPASS": "true"}),
+            patch.object(api_rocky, "APP_ENV", "production"),
+        ):
+            self.assertIsNone(api_rocky.get_key_doc("any-key"))
+
+    def test_generated_key_can_call_rocky_and_revocation_stops_it(self):
+        plaintext_key, key_hash = generate_api_key_pair()
+        api_rocky.api_keys_col = FakeCollection([{
+            "hash": key_hash,
+            "owner_id": SYNTHETIC_OWNER_NORMALIZED,
+            "owner_type": "person",
+            "is_active": True,
+        }])
+        request_body = {
+            "model": "rocky",
+            "input": "Say hello.",
+            "store": False,
+        }
+        headers = {"Authorization": f"Bearer {plaintext_key}"}
+
+        with patch.object(api_rocky, "request_ai", return_value={
+            "output_text": "Hello.",
+            "model": "internal-model",
+            "metadata": {},
+        }):
+            accepted = self.client.post(
+                "/v1/responses",
+                json=request_body,
+                headers=headers,
+            )
+
+        self.assertEqual(accepted.status_code, 200)
+        self.assertEqual(accepted.get_json()["output_text"], "Hello.")
+
+        api_rocky.api_keys_col.rows[0]["is_active"] = False
+        revoked = self.client.post(
+            "/v1/responses",
+            json=request_body,
+            headers=headers,
+        )
+        self.assertEqual(revoked.status_code, 401)
+
+    def test_oversized_request_returns_json_error(self):
+        original_limit = api_rocky.app.config["MAX_CONTENT_LENGTH"]
+        api_rocky.app.config["MAX_CONTENT_LENGTH"] = 128
+        try:
+            response = self.client.post(
+                "/v1/responses",
+                json={"model": "rocky", "input": "x" * 512},
+                headers={"Authorization": "Bearer any-key"},
+            )
+        finally:
+            api_rocky.app.config["MAX_CONTENT_LENGTH"] = original_limit
+
+        self.assertEqual(response.status_code, 413)
+        self.assertEqual(
+            response.get_json(),
+            {"error": "Request body is too large."},
+        )
 
 
 if __name__ == "__main__":

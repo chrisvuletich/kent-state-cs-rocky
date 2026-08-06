@@ -20,6 +20,11 @@ class SeedDataShapeTests(BackendTestCase):
         self.assertEqual(admin_counts[True], 1)
         self.assertEqual(admin_counts[False], 6)
 
+        roles_by_email = {user.get("email"): user.get("role") for user in main.users.find()}
+        self.assertEqual(roles_by_email["admin.local@kent.edu"], "admin")
+        self.assertEqual(roles_by_email["instructor.local@kent.edu"], "instructor")
+        self.assertEqual(roles_by_email["student.local@kent.edu"], "student")
+
         self.assertEqual(main.users.count_documents({}), 7)
         self.assertEqual(main.courses.count_documents({}), 6)
         self.assertEqual(main.api_history.count_documents({}), 5)

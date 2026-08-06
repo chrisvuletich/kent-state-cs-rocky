@@ -30,8 +30,8 @@ async function loadChatProxy(
 	vi.doMock('$env/dynamic/private', () => ({ env: privateEnvironment }));
 	vi.doMock('$lib/server/hiddenApiKey', () => ({ deriveHiddenApiKey }));
 
-	const { hiddenApiKeyForUser } = await import('./chatProxy');
-	return { deriveHiddenApiKey, hiddenApiKeyForUser };
+	const { chatRequestHeaders, hiddenApiKeyForUser } = await import('./chatProxy');
+	return { chatRequestHeaders, deriveHiddenApiKey, hiddenApiKeyForUser };
 }
 
 function expectServerError(call: () => unknown, message: string) {
@@ -122,5 +122,18 @@ describe('hiddenApiKeyForUser', () => {
 
 		expect(hiddenApiKeyForUser(user)).toBe(syntheticHelperResult);
 		expect(deriveHiddenApiKey).toHaveBeenCalledOnce();
+	});
+
+	it('sends the derived key as a Bearer credential', async () => {
+		const { chatRequestHeaders } = await loadChatProxy({
+			ROCKY_HIDDEN_API_KEY_SECRET: 'synthetic-primary-secret'
+		});
+		const user = syntheticUser();
+
+		expect(chatRequestHeaders(user)).toMatchObject({
+			Authorization: `Bearer ${SYNTHETIC_DERIVED_KEY}`,
+			'X-Rocky-User-Id': user.id,
+			'X-Rocky-User-Email': user.email
+		});
 	});
 });

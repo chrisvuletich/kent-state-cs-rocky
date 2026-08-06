@@ -34,9 +34,10 @@ pip install requests
 Replace the placeholder with your course API key. Do not share or commit your key.
 
 ```python
+import os
 import requests
 
-API_KEY = "your-rocky-api-key"
+API_KEY = os.environ["ROCKY_API_KEY"]
 EMAIL_TEXT = """Subject: Your Account Has Been Suspended
 
 Dear Customer,
@@ -54,12 +55,13 @@ whether it is likely phishing:\n\n{EMAIL_TEXT}"""
 
 response = requests.post(
     "https://rocky.cs.kent.edu/v1/responses",
-    json={"api-key": API_KEY, "message": prompt, "store": False},
-    timeout=30,
+    headers={"Authorization": f"Bearer {API_KEY}"},
+    json={"model": "rocky", "input": prompt, "store": False},
+    timeout=180,
 )
 response.raise_for_status()
 
-print(response.json()["reply"])
+print(response.json()["output_text"])
 ```
 
 ## Example Output

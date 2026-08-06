@@ -13,7 +13,7 @@ if str(API_ROCKY_DIR) not in sys.path:
 
 OPT_IN = "ROCKY_RUN_LIVE_TELEMETRY_SMOKE"
 REQUIRED = (
-    "ROCKY_LIVE_API_URL", "ROCKY_LIVE_API_KEY", "ROCKY_LIVE_MODEL",
+    "ROCKY_LIVE_API_URL", "ROCKY_LIVE_API_KEY",
     "ROCKY_LIVE_MONGODB_URI", "ROCKY_LIVE_DB_NAME",
 )
 PROMPT = "Reply with only the word Rocky. Unicode check: café ☕"
@@ -54,17 +54,18 @@ def run_live_smoke():
         if not endpoint.endswith("/v1/responses"):
             endpoint += "/v1/responses"
         response = requests.post(endpoint, json={
-            "api-key": values["ROCKY_LIVE_API_KEY"],
-            "model": values["ROCKY_LIVE_MODEL"],
-            "message": PROMPT,
+            "model": "rocky",
+            "input": PROMPT,
             "store": False,
+        }, headers={
+            "Authorization": f"Bearer {values['ROCKY_LIVE_API_KEY']}"
         }, timeout=timeout)
         if not response.ok:
             raise SmokeFailure("API_RESPONSE_FAILED")
         payload = response.json()
         if (not isinstance(payload, dict)
-                or not isinstance(payload.get("reply"), str)
-                or not payload["reply"].strip()):
+                or not isinstance(payload.get("output_text"), str)
+                or not payload["output_text"].strip()):
             raise SmokeFailure("API_REPLY_EMPTY")
 
         interaction = interactions.find_one(

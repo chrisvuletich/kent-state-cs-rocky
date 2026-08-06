@@ -40,6 +40,7 @@ Core variables:
 - `ROCKY_DB_BACKEND`: `mongita` | `mongodb`
 - `ROCKY_MONGODB_URI`: required in production
 - `ROCKY_DB_NAME`: database name
+- `ROCKY_MONGITA_PATH`: local data directory shared with `api-rocky`
 - `ROCKY_API_HOST` and `ROCKY_API_PORT`: backend bind settings
 
 Security-related toggles:

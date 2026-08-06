@@ -1,8 +1,19 @@
+import os
+from pathlib import Path
+
+from dotenv import load_dotenv
 from flask import Flask, request, jsonify
+
+
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+SERVICE_ROOT = Path(__file__).resolve().parents[1]
+load_dotenv(REPOSITORY_ROOT / ".env", override=False)
+load_dotenv(REPOSITORY_ROOT / ".env.local", override=True)
+load_dotenv(SERVICE_ROOT / ".env", override=False)
+load_dotenv(SERVICE_ROOT / ".env.local", override=True)
 
 from app.ollama_client import OllamaCallError, call_ollama_chat
 from app.request_parser import extract_model, extract_messages, extract_reasoning, extract_generation_options
-import os
 
 
 app = Flask(__name__)
@@ -105,4 +116,10 @@ def generate():
 
 
 if __name__ == "__main__":
-    app.run(host=GRANITE_HOST, port=GRANITE_PORT, debug=True)
+    app_env = os.getenv("ROCKY_APP_ENV", "development").strip().lower()
+    app.run(
+        host=GRANITE_HOST,
+        port=GRANITE_PORT,
+        debug=app_env == "development",
+        use_reloader=False,
+    )

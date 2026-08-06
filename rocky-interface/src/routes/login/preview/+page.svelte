@@ -65,7 +65,7 @@
 						<article class="preview-user-card">
 							<h2>{user.displayName}</h2>
 							<p>{user.email}</p>
-							<span class="preview-role">{user.isAdmin ? 'admin' : 'user'}</span>
+							<span class="preview-role">{user.role}</span>
 							<button class="login-signin-btn" type="button" on:click={() => enterAsUser(user)}>Continue as {user.displayName}</button>
 						</article>
 					{/each}

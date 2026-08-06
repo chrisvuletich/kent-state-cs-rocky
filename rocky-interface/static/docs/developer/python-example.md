@@ -18,7 +18,7 @@ pip install requests
 
 ## Authentication
 
-Every request to the Rocky API requires an API key. Include it as the `api-key` field in the JSON request body, not as an `Authorization` header.
+Every request to the Rocky API requires an API key. Send it as a Bearer token in the `Authorization` header.
 
 Keep your API key private. Anyone with access to your key can make requests on your behalf.
 
@@ -32,16 +32,20 @@ import requests
 
 url = "https://rocky.cs.kent.edu/v1/responses"
 
+headers = {
+    "Authorization": f"Bearer {os.environ['ROCKY_API_KEY']}"
+}
 payload = {
-    "api-key": os.environ["ROCKY_API_KEY"],
-    "message": "Hello Rocky!",
-    "store": False
+    "model": "rocky",
+    "input": "Hello Rocky!",
+    "max_output_tokens": 300,
+    "store": False,
 }
 
-response = requests.post(url, json=payload, timeout=30)
+response = requests.post(url, headers=headers, json=payload, timeout=180)
 response.raise_for_status()
 
-print(response.json()["reply"])
+print(response.json()["output_text"])
 ```
 
 ## Example Response
@@ -50,10 +54,45 @@ If the request succeeds, Rocky returns a JSON response similar to the example be
 
 ```json
 {
-  "reply": "Hello! How can I help you today?",
-  "model": "configured-model-name",
-  "metadata": { "source": "ollama" }
+  "id": "resp_123...",
+  "object": "response",
+  "status": "completed",
+  "model": "rocky",
+  "output": [
+    {
+      "type": "message",
+      "role": "assistant",
+      "content": [
+        { "type": "output_text", "text": "Hello! How can I help you today?" }
+      ]
+    }
+  ],
+  "output_text": "Hello! How can I help you today?"
 }
+
+Rocky's documented Python interface uses `requests` and does not require an AI-provider SDK.
+
+## Optional compatible client
+
+If an assignment benefits from a higher-level client, the OpenAI Python library can be pointed at Rocky's base URL. This library is optional client-side convenience; the Rocky server does not import or depend on it.
+
+```python
+import os
+from openai import OpenAI
+
+client = OpenAI(
+    api_key=os.environ["ROCKY_API_KEY"],
+    base_url="https://rocky.cs.kent.edu/v1",
+)
+
+response = client.responses.create(
+    model="rocky",
+    input="Hello Rocky!",
+    store=False,
+)
+
+print(response.output_text)
+```
 ```
 
 ## Next Steps

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 from mongita import MongitaClientDisk, MongitaClientMemory
 from pymongo import MongoClient
@@ -77,14 +78,23 @@ def ensure_indexes(collections: Collections) -> None:
 
 
 def build_collections(settings: Settings) -> Collections:
-    if settings.mongodb_uri and (settings.db_backend == "mongodb" or settings.app_env == "production"):
+    if settings.db_backend == "mongodb" or settings.app_env == "production":
+        if not settings.mongodb_uri:
+            raise RuntimeError("ROCKY_MONGODB_URI is required for the MongoDB backend")
         client = MongoClient(settings.mongodb_uri)
         db = client[settings.db_name]
         collections = _from_db(db)
         ensure_indexes(collections)
         return collections
 
-    client = MongitaClientDisk()
+    if settings.db_backend != "mongita":
+        raise RuntimeError(
+            f"Unsupported ROCKY_DB_BACKEND value: {settings.db_backend!r}. "
+            "Expected 'mongodb' or 'mongita'."
+        )
+
+    Path(settings.mongita_path).mkdir(parents=True, exist_ok=True)
+    client = MongitaClientDisk(settings.mongita_path)
     db = client[settings.db_name]
     collections = _from_db(db)
     ensure_indexes(collections)

@@ -962,4 +962,9 @@ def get_help_faq():
 
 
 if __name__ == "__main__":
-    app.run(debug=settings.debug, host=settings.host, port=settings.port)
+    app.run(
+        debug=settings.debug,
+        host=settings.host,
+        port=settings.port,
+        use_reloader=False,
+    )

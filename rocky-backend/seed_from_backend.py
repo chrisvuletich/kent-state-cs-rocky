@@ -138,6 +138,9 @@ def seed_from_backend() -> dict[str, int]:
 
         raw_is_admin = raw.get("is_admin") if raw.get("is_admin") is not None else raw.get("isAdmin")
         is_admin = bool(raw_is_admin)
+        raw_role = str(raw.get("role") or "").strip().lower()
+        role = raw_role if raw_role in {"student", "instructor", "admin"} else ("admin" if is_admin else "student")
+        is_admin = role == "admin"
         raw_is_active = raw.get("is_active") if raw.get("is_active") is not None else raw.get("isActive")
         is_active = True if raw_is_active is None else bool(raw_is_active)
 
@@ -148,6 +151,7 @@ def seed_from_backend() -> dict[str, int]:
             "last_name": (raw.get("last_name") or "").strip(),
             "email": email,
             "is_admin": is_admin,
+            "role": role,
             "is_active": is_active,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "settings": settings_payload,

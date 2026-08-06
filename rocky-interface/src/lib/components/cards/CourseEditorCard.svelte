@@ -208,7 +208,7 @@
 			{/if}
 		</div>
 		<div class="form-group">
-			<label class="form-label">Course Color</label>
+			<span class="form-label">Course Color</span>
 			{#if readOnly}
 				<div class="text-input course-locked-field">{form.color || 'N/A'}</div>
 			{:else}

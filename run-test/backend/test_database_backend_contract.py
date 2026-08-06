@@ -65,6 +65,7 @@ def settings_for(*, app_env: str, db_backend: str, mongodb_uri: str) -> Settings
         db_backend=db_backend,
         mongodb_uri=mongodb_uri,
         db_name="synthetic_test_database",
+        mongita_path=".rocky-data/test-mongita",
         enable_db_inspector=False,
         enable_preview_login=False,
         enable_microsoft_oauth=True,
@@ -108,7 +109,6 @@ class DatabaseBackendContractTests(unittest.TestCase):
         self.assertIsNotNone(collections.api_keys)
         mongita_client.assert_not_called()
 
-    @unittest.expectedFailure
     def test_unknown_backend_selector_fails_clearly(self):
         configured = settings_for(
             app_env="development",
@@ -154,10 +154,12 @@ class DatabaseBackendContractTests(unittest.TestCase):
     def test_api_mongodb_failure_never_falls_back_to_mongita(self):
         original_values = (
             api_rocky.DB_BACKEND,
+            api_rocky.MONGODB_URI,
             api_rocky.MONGODB_CONNECT_ATTEMPTS,
             api_rocky.MONGODB_RETRY_SECONDS,
         )
         api_rocky.DB_BACKEND = "mongodb"
+        api_rocky.MONGODB_URI = "mongodb://synthetic.invalid:27017"
         api_rocky.MONGODB_CONNECT_ATTEMPTS = 1
         api_rocky.MONGODB_RETRY_SECONDS = 0
         try:
@@ -175,6 +177,7 @@ class DatabaseBackendContractTests(unittest.TestCase):
         finally:
             (
                 api_rocky.DB_BACKEND,
+                api_rocky.MONGODB_URI,
                 api_rocky.MONGODB_CONNECT_ATTEMPTS,
                 api_rocky.MONGODB_RETRY_SECONDS,
             ) = original_values

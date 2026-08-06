@@ -1,58 +1,98 @@
 # API Reference
 
-Reference for Rocky’s current Chat API request and response contract.
+Rocky exposes one text-generation endpoint. It uses ordinary HTTP and JSON, so no provider-specific client library is required.
 
 ## Endpoint and authentication
 
 | Method | Endpoint | Authentication |
 | --- | --- | --- |
-| POST | `https://rocky.cs.kent.edu/v1/responses` | JSON `api-key` field |
+| POST | `https://rocky.cs.kent.edu/v1/responses` | `Authorization: Bearer sk_kent_...` |
 
-Use Rocky’s public Chat API endpoint for requests.
+The request body must be valid JSON. API keys placed in the JSON body or URL are not accepted.
 
-## Simple request parameters
+## Request fields
 
-Use this form for a single message. History is stored unless `store` is set to `false`.
-
-| Parameter | Data type | Required | Description | Default |
+| Field | Type | Required | Description | Default |
 | --- | --- | --- | --- | --- |
-| `api-key` | string | Yes | Active course API key. | None |
-| `message` | string | Yes* | The user message sent to Rocky. | None |
+| `model` | string | No | Public model alias. The only supported value is `rocky`. | `rocky` |
+| `input` | string or array | Yes | A prompt string or an array of text message objects. | None |
+| `instructions` | string | No | System-level instructions applied before the input. | None |
+| `temperature` | number | No | Sampling temperature from 0 through 2. | Model default |
+| `top_p` | number | No | Nucleus sampling value from 0 through 1. | Model default |
+| `max_output_tokens` | integer | No | Maximum generated tokens from 1 through 2048. | Model default |
 | `store` | boolean | No | Store the exchange and use conversation history. | `true` |
-| `conversation_id` | string | No | Continue a stored conversation owned by the key’s user. | New conversation |
-| `model` | string | No | Model name forwarded to the generation service. | Configured server model |
-| `temperature` | number | No | Sampling temperature; accepted range is 0–2. | Generation-service default |
-| `top_p` | number | No | Nucleus sampling value; accepted range is 0–1. | Generation-service default |
-| `max_output_tokens` | integer | No | Maximum generated tokens; accepted range is 1–3500. | Generation-service default |
+| `conversation_id` | string | No | Continue a stored conversation owned by the key's user. | New conversation |
 
-**\*** Required when history is stored. A request with `store: false` may use the advanced `input` form below instead.
+The simplest request uses a string:
 
-## Advanced input parameters
+```json
+{
+  "model": "rocky",
+  "input": "Explain recursion in one paragraph.",
+  "store": false
+}
+```
 
-For a prebuilt message list, set `store` to `false` and send `input` instead of `message`.
+For multiple messages, `content` can be a string or a list of text blocks:
 
-| Parameter | Data type | Required | Description | Default |
-| --- | --- | --- | --- | --- |
-| `input` | array | Yes | Array of message objects passed to the generation service. | None |
-| `input[].role` | string | No | Message role. | `user` |
-| `input[].content` | array | No | Content blocks for the message. | Empty array |
-| `input[].content[].type` | string | Yes for usable text | Use `input_text` for text content. | None |
-| `input[].content[].text` | string | Yes for usable text | Text sent in an `input_text` block. | None |
+```json
+{
+  "model": "rocky",
+  "input": [
+    { "role": "user", "content": "My name is Flash." },
+    { "role": "assistant", "content": "Nice to meet you." },
+    {
+      "role": "user",
+      "content": [{ "type": "input_text", "text": "What is my name?" }]
+    }
+  ],
+  "store": false
+}
+```
 
-## Successful response fields
+Rocky currently accepts text only. Streaming, tools, file input, and image input are not part of this first contract.
 
-| Field | Data type | Description |
-| --- | --- | --- |
-| `reply` | string | Rocky’s generated response text. |
-| `model` | string | Model reported by the generation service. |
-| `metadata` | object | Generation-service metadata. |
-| `conversation_id` | string | Stored conversation ID; returned only when history is stored. |
+## Successful response
 
-## Error responses and status codes
+```json
+{
+  "id": "resp_123...",
+  "object": "response",
+  "created_at": 1786032000,
+  "status": "completed",
+  "model": "rocky",
+  "output": [
+    {
+      "id": "msg_123...",
+      "type": "message",
+      "status": "completed",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "Recursion is ...",
+          "annotations": []
+        }
+      ]
+    }
+  ],
+  "output_text": "Recursion is ...",
+  "usage": {
+    "input_tokens": 8,
+    "output_tokens": 24,
+    "total_tokens": 32
+  }
+}
+```
 
-| Status | Returned fields | When it occurs |
-| --- | --- | --- |
-| 200 | `reply`, `model`, `metadata`, optional `conversation_id` | Request completed. |
-| 400 | `error` (string) | Invalid JSON, missing message, missing chat context, or an invalid request handled as a bad request. |
-| 401 | `error` (string) | Missing, invalid, inactive, revoked, or expired API key. |
-| 502 | `error` (string) | Rocky could not contact the generation service or the service returned an unusable response. |
+Use `output_text` when you only need the generated text. The structured `output` array is available for students practicing a familiar response-envelope pattern. A stored request also returns `conversation_id`.
+
+## Status codes
+
+| Status | Meaning |
+| --- | --- |
+| 200 | Generation completed. |
+| 400 | The JSON, model, input, or generation settings are invalid. |
+| 401 | The Bearer key is missing, invalid, inactive, revoked, or expired. |
+| 502 | Rocky could not reach the model service or received an unusable response. |
+| 504 | Model generation timed out. |

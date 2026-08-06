@@ -12,12 +12,13 @@ Replace the environment-variable value with your own course API key. Keep the ke
 export ROCKY_API_KEY='replace-with-your-course-api-key'
 
 curl --request POST https://rocky.cs.kent.edu/v1/responses \
+  --header "Authorization: Bearer $ROCKY_API_KEY" \
   --header 'Content-Type: application/json' \
-  --data "{
-    \"api-key\": \"$ROCKY_API_KEY\",
-    \"message\": \"Explain recursion in one paragraph.\",
-    \"store\": false
-  }"
+  --data '{
+    "model": "rocky",
+    "input": "Explain recursion in one paragraph.",
+    "store": false
+  }'
 ```
 
 `https://rocky.cs.kent.edu/v1/responses` is Rocky’s public Chat API endpoint.
@@ -26,10 +27,9 @@ curl --request POST https://rocky.cs.kent.edu/v1/responses \
 
 ```json
 {
-  "reply": "Recursion is a technique where a function solves a problem by calling itself with a smaller version of that problem.",
-  "model": "configured-model-name",
-  "metadata": {
-    "source": "ollama"
-  }
+  "object": "response",
+  "status": "completed",
+  "model": "rocky",
+  "output_text": "Recursion is a technique where a function solves a problem by calling itself with a smaller version of that problem."
 }
 ```

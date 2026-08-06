@@ -108,7 +108,6 @@
 	let pendingInstructorHandoutLimit = 2;
 	let pendingGroupKeyLimitById: Record<string, number> = {};
 	let editedSlotKeyNamesById: Record<string, string> = {};
-	let slotHasGeneratedKeyById: Record<string, boolean> = {};
 	let selectedInstructorStudentId = '';
 	let selectedInstructorGroupId = '';
 	let rosterEntries: RosterEntry[] = [];
@@ -445,13 +444,6 @@
 		};
 	}
 
-	function setSlotHasGeneratedKey(slotStateId: string, hasGeneratedKey: boolean) {
-		slotHasGeneratedKeyById = {
-			...slotHasGeneratedKeyById,
-			[slotStateId]: hasGeneratedKey
-		};
-	}
-
 	async function generateKeyForSlot(
 		ownerType: 'person' | 'group',
 		ownerId: string,
@@ -482,8 +474,6 @@
 				...editedSlotKeyNamesById,
 				[slotStateId]: keyName
 			};
-			setSlotHasGeneratedKey(slotStateId, true);
-
 			upsertGeneratedApiKeySummary(response);
 			return response.api_key?.trim() || null;
 		} catch (err) {
@@ -534,7 +524,6 @@
 					}
 					: entry
 			);
-			setSlotHasGeneratedKey(slotStateId, false);
 		} catch (err) {
 			apiKeyActionError = err instanceof Error ? err.message : 'Unable to remove key.';
 		}
@@ -584,8 +573,8 @@
 		}
 	}
 
-	function getGroupOwnedKeys(groupId: string): CourseApiKeySummary[] {
-		return groupOwnedKeys.filter(
+	function getGroupOwnedKeys(groupId: string, availableKeys: CourseApiKeySummary[]): CourseApiKeySummary[] {
+		return availableKeys.filter(
 			(key) => key.hasHash !== false && normalizeIdentifier(key.ownerId) === normalizeIdentifier(groupId)
 		);
 	}
@@ -597,30 +586,35 @@
 		return member.id?.trim() || member.email?.trim() || '';
 	}
 
-	function getCourseInstructorOwnerId(): string {
-		if (!selectedCourse) {
+	function getCourseInstructorOwnerId(
+		course: Course | null,
+		detail: CourseDetail | null,
+		requesterId: string,
+		requesterEmail: string
+	): string {
+		if (!course) {
 			return '';
 		}
 
-		const instructorMember = (selectedDetail?.members || []).find((member) => {
+		const instructorMember = (detail?.members || []).find((member) => {
 			return (
-				normalizeIdentifier(member.id) === normalizeIdentifier(selectedCourse.instructorId) ||
-				normalizeIdentifier(member.email) === normalizeIdentifier(selectedCourse.instructorEmail)
+				normalizeIdentifier(member.id) === normalizeIdentifier(course.instructorId) ||
+				normalizeIdentifier(member.email) === normalizeIdentifier(course.instructorEmail)
 			);
 		});
 
-		return [selectedCourse.instructorId, selectedCourse.instructorEmail, instructorMember?.id, instructorMember?.email, currentUserId, currentUserEmail]
+		return [course.instructorId, course.instructorEmail, instructorMember?.id, instructorMember?.email, requesterId, requesterEmail]
 			.map((value) => value?.trim() || '')
 			.find((value) => value.length > 0) || '';
 	}
 
-	function getMemberOwnedKeys(member: CourseDetail['members'][number] | null): CourseApiKeySummary[] {
+	function getMemberOwnedKeys(member: CourseDetail['members'][number] | null, availableKeys: CourseApiKeySummary[]): CourseApiKeySummary[] {
 		if (!member) {
 			return [];
 		}
 
 		const ownerIdentifiers = [member.id, member.email].map(normalizeIdentifier).filter(Boolean);
-		return courseApiKeys.filter(
+		return availableKeys.filter(
 			(key) =>
 				key.hasHash !== false &&
 				key.ownerType === 'person' &&
@@ -628,13 +622,13 @@
 		);
 	}
 
-	function getPersonOwnedKeys(ownerIdentifiers: Array<string | null | undefined>): CourseApiKeySummary[] {
+	function getPersonOwnedKeys(ownerIdentifiers: Array<string | null | undefined>, availableKeys: CourseApiKeySummary[]): CourseApiKeySummary[] {
 		const normalizedOwnerIdentifiers = ownerIdentifiers.map(normalizeIdentifier).filter(Boolean);
 		if (normalizedOwnerIdentifiers.length === 0) {
 			return [];
 		}
 
-		return courseApiKeys.filter(
+		return availableKeys.filter(
 			(key) =>
 				key.hasHash !== false &&
 				key.ownerType === 'person' &&
@@ -789,18 +783,18 @@
 	$: selectedInstructorStudent =
 		instructorVisibleStudents.find((member) => getMemberIdentifier(member) === selectedInstructorStudentId) || null;
 	$: selectedInstructorStudentOwnerId = getMemberOwnerId(selectedInstructorStudent);
-	$: selectedInstructorStudentKeys = getMemberOwnedKeys(selectedInstructorStudent);
+	$: selectedInstructorStudentKeys = getMemberOwnedKeys(selectedInstructorStudent, courseApiKeys);
 	$: instructorStudentKeyLimit = selectedInstructorStudent?.keyLimit ?? 0;
 	$: instructorStudentKeySlots = selectedInstructorStudent
 		? buildKeySlots(instructorStudentKeyLimit, selectedInstructorStudentKeys)
 		: [];
 	$: selectedInstructorGroup = selectedGroups.find((group) => group.id === selectedInstructorGroupId) || null;
 	$: instructorGroupKeySlots = selectedInstructorGroup
-		? buildKeySlots(selectedInstructorGroup.keyLimit, getGroupOwnedKeys(selectedInstructorGroup.id))
+		? buildKeySlots(selectedInstructorGroup.keyLimit, getGroupOwnedKeys(selectedInstructorGroup.id, groupOwnedKeys))
 		: [];
-	$: courseInstructorOwnerId = getCourseInstructorOwnerId();
+	$: courseInstructorOwnerId = getCourseInstructorOwnerId(selectedCourse, selectedDetail, currentUserId, currentUserEmail);
 	$: courseInstructorKeyLimit = Math.max(0, selectedCourse?.instructorKeyLimit ?? 2);
-	$: courseInstructorKeySlots = buildKeySlots(courseInstructorKeyLimit, getPersonOwnedKeys([courseInstructorOwnerId]));
+	$: courseInstructorKeySlots = buildKeySlots(courseInstructorKeyLimit, getPersonOwnedKeys([courseInstructorOwnerId], courseApiKeys));
 	$: currentUserMember = (selectedDetail?.members || []).find((member) => memberMatchesCurrentUser(member)) || null;
 	$: studentPersonalKeyOwnerId = normalizeIdentifier(currentUserId) || currentUserEmail;
 	$: personalKeyLimit = currentUserMatchesCourseManager()
@@ -810,7 +804,7 @@
 	$: studentGroupTabs = studentVisibleGroups.map((group) => `group:${group.id}` as CourseTab);
 	$: activeStudentGroup = resolveActiveStudentGroup(activeTab);
 	$: activeStudentGroupKeySlots = activeStudentGroup
-		? buildKeySlots(activeStudentGroup.keyLimit, getGroupOwnedKeys(activeStudentGroup.id))
+		? buildKeySlots(activeStudentGroup.keyLimit, getGroupOwnedKeys(activeStudentGroup.id, groupOwnedKeys))
 		: [];
 	$: courseStudentKeyLimit = Math.max(0, selectedCourse?.instructorHandoutLimit ?? 2);
 	$: if (selectedCourse) {
@@ -826,16 +820,6 @@
 			(selectedDetail?.members || []).some((member) => memberMatchesCurrentUser(member))
 		)
 	);
-	$: hasExistingApiKey = Boolean(selectedCourse?.hasApiKey);
-	$: currentUserIsApiKeyOwner = selectedCourse?.apiKeyOwnerType === 'person' && Boolean(selectedCourse?.apiKeyOwnerId && [normalizeIdentifier(currentUserId), currentUserEmail].includes(normalizeIdentifier(selectedCourse.apiKeyOwnerId)));
-	$: currentUserIsApiKeyGroupMember =
-		selectedCourse?.apiKeyOwnerType === 'group' &&
-		Boolean(
-			selectedCourse.apiKeyOwnerId &&
-			selectedGroups.some((group) => group.id === selectedCourse.apiKeyOwnerId && group.memberIds.map(normalizeIdentifier).some((id) => [normalizeIdentifier(currentUserId), currentUserEmail].includes(id)))
-		);
-	$: shouldShowMaskedApiKey = hasExistingApiKey && (isCurrentUserAdmin || currentUserIsApiKeyOwner || currentUserIsApiKeyGroupMember);
-	$: maskedApiKeyPreview = shouldShowMaskedApiKey ? buildMaskedApiKeyPreview(30) : null;
 	$: showCourseTabBar = availableTabs.length > 0;
 	$: selectableGroupMembers = selectedDetail?.members || [];
 	$: availableTabs = canEditPeopleAndGroups
@@ -1552,7 +1536,7 @@
 									title={`Personal Key ${slot.slotIndex + 1}`}
 									keyName={getSlotKeyName(slotStateId, slot.baseKeyName)}
 									hasExistingKey={slot.hasExistingKey}
-									maskedPreview={maskedApiKeyPreview ?? buildMaskedApiKeyPreview(30)}
+									maskedPreview={slot.hasExistingKey ? buildMaskedApiKeyPreview(30) : ''}
 									placeholderText="No key exists for this slot yet."
 									slotIdentity={slotStateId}
 									readOnly={isSelectedCourseClosed}
@@ -1586,7 +1570,7 @@
 									title={`Instructor Key ${slot.slotIndex + 1}`}
 									keyName={getSlotKeyName(slotStateId, slot.baseKeyName)}
 									hasExistingKey={slot.hasExistingKey}
-									maskedPreview={maskedApiKeyPreview ?? buildMaskedApiKeyPreview(30)}
+									maskedPreview={slot.hasExistingKey ? buildMaskedApiKeyPreview(30) : ''}
 									placeholderText="No key exists for this slot yet."
 									slotIdentity={slotStateId}
 									readOnly={isSelectedCourseClosed}
@@ -1638,7 +1622,7 @@
 									title={`${selectedInstructorStudent ? getMemberDisplayName(selectedInstructorStudent) : 'Student'} Key ${slot.slotIndex + 1}`}
 									keyName={getSlotKeyName(slotStateId, slot.baseKeyName)}
 									hasExistingKey={slot.hasExistingKey}
-									maskedPreview={buildMaskedApiKeyPreview(30)}
+									maskedPreview={slot.hasExistingKey ? buildMaskedApiKeyPreview(30) : ''}
 									placeholderText="No key exists for this slot yet."
 									slotIdentity={slotStateId}
 									readOnly={isSelectedCourseClosed}
@@ -1689,7 +1673,7 @@
 									title={`${selectedInstructorGroup ? selectedInstructorGroup.name : 'Group'} Key ${slot.slotIndex + 1}`}
 									keyName={getSlotKeyName(slotStateId, slot.baseKeyName)}
 									hasExistingKey={slot.hasExistingKey}
-									maskedPreview={buildMaskedApiKeyPreview(30)}
+									maskedPreview={slot.hasExistingKey ? buildMaskedApiKeyPreview(30) : ''}
 									placeholderText="No key exists for this slot yet."
 									slotIdentity={slotStateId}
 									readOnly={isSelectedCourseClosed}
@@ -1723,7 +1707,7 @@
 								title={`${activeStudentGroup.name} Key ${slot.slotIndex + 1}`}
 								keyName={getSlotKeyName(slotStateId, slot.baseKeyName)}
 								hasExistingKey={slot.hasExistingKey}
-								maskedPreview={maskedApiKeyPreview ?? buildMaskedApiKeyPreview(30)}
+								maskedPreview={slot.hasExistingKey ? buildMaskedApiKeyPreview(30) : ''}
 								placeholderText="No key exists for this slot yet."
 								slotIdentity={slotStateId}
 								readOnly={isSelectedCourseClosed}

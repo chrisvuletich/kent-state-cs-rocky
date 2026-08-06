@@ -46,6 +46,7 @@ def get_users(deps: dict[str, Any]):
 def bulk_update_users(deps: dict[str, Any]):
     """Apply an activation state to a deliberately selected set of accounts."""
     require_admin = deps["require_admin"]
+    require_requester_identity = deps["require_requester_identity"]
     _resolve_user_record = deps["_resolve_user_record"]
     users = deps["users"]
     whitelist_users = deps["whitelist_users"]
@@ -54,6 +55,9 @@ def bulk_update_users(deps: dict[str, Any]):
     ok, err = require_admin()
     if not ok:
         return jsonify({"error": "Admin access is required."}), 403
+    requester_email, requester_detail = require_requester_identity()
+    if requester_email is None:
+        return jsonify(requester_detail[0]), requester_detail[1]
 
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
@@ -73,6 +77,10 @@ def bulk_update_users(deps: dict[str, Any]):
             resolved_users.append(user)
         else:
             missing.append(user_id)
+    if not is_active and any(
+        str(user.get("email") or "").strip().lower() == requester_email for user in resolved_users
+    ):
+        return jsonify({"error": "Administrators cannot deactivate their own account."}), 409
     updated: list[str] = []
     for user in resolved_users:
         resolved_id = user["id"]
@@ -100,6 +108,7 @@ def get_user(deps: dict[str, Any], user_id: str):
 
 def update_user(deps: dict[str, Any], user_id: str):
     require_admin = deps["require_admin"]
+    require_requester_identity = deps["require_requester_identity"]
     _resolve_user_record = deps["_resolve_user_record"]
     users = deps["users"]
     whitelist_users = deps["whitelist_users"]
@@ -108,6 +117,9 @@ def update_user(deps: dict[str, Any], user_id: str):
     ok, err = require_admin()
     if not ok:
         return jsonify({"error": "Admin access is required."}), 403
+    requester_email, requester_detail = require_requester_identity()
+    if requester_email is None:
+        return jsonify(requester_detail[0]), requester_detail[1]
 
     user = _resolve_user_record(user_id, None)
     if not user:
@@ -124,6 +136,15 @@ def update_user(deps: dict[str, Any], user_id: str):
         return _bad_request("is_active and is_admin must be booleans.")
     if "role" in data and data["role"] not in {"student", "instructor", "admin"}:
         return _bad_request("role must be one of: student, instructor, admin.")
+
+    is_requester = str(user.get("email") or "").strip().lower() == requester_email
+    removes_admin_access = (
+        data.get("is_active") is False
+        or data.get("is_admin") is False
+        or ("role" in data and data["role"] != "admin")
+    )
+    if is_requester and removes_admin_access:
+        return jsonify({"error": "Administrators cannot deactivate or demote their own account."}), 409
 
     changes = {key: bool(value) for key, value in data.items()}
     if "role" in data:

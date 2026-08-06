@@ -4,7 +4,6 @@ import { browser } from '$app/environment';
 import DashboardView from '$lib/components/views/DashboardView.svelte';
 import UsersView from '$lib/components/views/UsersView.svelte';
 import CoursesView from '$lib/components/views/CoursesView.svelte';
-import AnalyticsView from '$lib/components/views/AnalyticsView.svelte';
 import AdminPanel from '$lib/components/views/AdminPanel.svelte';
 import AuditLogsView from '$lib/components/views/AuditLogsView.svelte';
 import ApiKeysView from '$lib/components/views/ApiKeysView.svelte';
@@ -26,7 +25,6 @@ export const frameMap: Record<FrameName, FrameComponent> = {
     dashboard: DashboardView,
     users: UsersView,
     courses: CoursesView,
-    analytics: AnalyticsView,
     admin: AdminPanel,
     audit: AuditLogsView,
     'api-keys': ApiKeysView,

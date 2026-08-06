@@ -165,8 +165,8 @@ If you wouldn't post it publicly or email it to a stranger, don't share it with 
                 conversationId = data.conversation_id;
             }
 
-            const reply = response.ok && typeof data?.reply === "string" && data.reply.trim() !== ""
-                ? data.reply
+            const reply = response.ok && typeof data?.output_text === "string" && data.output_text.trim() !== ""
+                ? data.output_text
                 : (typeof data?.error === "string" && data.error.trim() !== ""
                     ? data.error
                     : "Rocky AI did not return a reply.");

@@ -10,7 +10,6 @@
     IconUsers,
     IconBooks,
     IconKey,
-    IconActivityHeartbeat,
     IconShieldCheck,
     IconChartBar,
     IconListDetails
@@ -20,27 +19,34 @@
     { title: "Total Users", value: "—", icon: IconUsers },
     { title: "Active Users", value: "—", icon: IconUsers },
     { title: "Total Courses", value: "—", icon: IconBooks },
-    { title: "API Keys Issued", value: "—", icon: IconKey },
-    { title: "Requests Today", value: "—", icon: IconActivityHeartbeat }
+    { title: "API Keys Issued", value: "—", icon: IconKey }
   ];
+
+  type ServiceHealth = { name: string; ok: boolean; latencyMs: number };
+  type HealthReport = { services?: ServiceHealth[] };
+
+  const serviceLabels: Record<string, string> = {
+    backend: "Backend API",
+    granite: "Granite Bridge",
+    "chat-api": "Chat API",
+    ollama: "Ollama / Model"
+  };
 
   function formatActivityTime(timestamp: string): string {
     const date = new Date(timestamp);
     return Number.isNaN(date.getTime()) ? timestamp : date.toLocaleString();
   }
 
-  onMount(async () => {
+  async function loadAdminData() {
     try {
       const [users, courses] = await Promise.all([fetchUsersForViews(), fetchCourses()]);
       const courseApiKeys = await Promise.all(courses.map((course) => fetchCourseApiKeys(course.id)));
       stats[0] = { ...stats[0], value: String(users.length) };
       stats[1] = { ...stats[1], value: String(users.filter((user) => user.isActive).length) };
       stats[2] = { ...stats[2], value: String(courses.length) };
-      stats[3] = { ...stats[3], value: String(courseApiKeys.reduce((total, keys) => total + keys.length, 0)) };
+      stats[3] = { ...stats[3], value: String(courseApiKeys.reduce((total, keys) => total + keys.filter((key) => key.has_hash !== false).length, 0)) };
       const courseActivity = await Promise.all(courses.map((course) => fetchCourseApiHistory(course.id)));
-      const activityEntries = courseActivity.flat();
-      const today = new Date().toDateString();
-      stats[4] = { ...stats[4], value: String(activityEntries.filter((event) => event.eventType === "request" && new Date(event.created).toDateString() === today).length) };
+      const activityEntries = courseActivity.flat().sort((first, second) => (new Date(second.created).getTime() || 0) - (new Date(first.created).getTime() || 0));
       const peopleByIdentifier = new Map(users.flatMap((user) => [[user.id.toLowerCase(), user], [user.email.toLowerCase(), user]]));
       const displayUser = (identifier: string) => {
         const user = peopleByIdentifier.get(identifier.toLowerCase());
@@ -66,13 +72,32 @@
     } catch (err) {
       console.error("[admin panel] failed to load dashboard totals", err);
     }
+  }
+
+  async function loadServiceHealth() {
+    try {
+      const response = await fetch("/api/server-health");
+      const report = (await response.json()) as HealthReport;
+      if (!Array.isArray(report.services)) throw new Error("Invalid health response.");
+      services = report.services
+        .filter((service) => service.name !== "web")
+        .map((service) => ({ name: serviceLabels[service.name] || service.name, status: service.ok ? "Healthy" : "Unavailable", ok: service.ok }));
+    } catch (err) {
+      console.error("[admin panel] failed to load service health", err);
+      services = services.map((service) => ({ ...service, status: "Unknown", ok: false }));
+    }
+  }
+
+  onMount(() => {
+    void loadAdminData();
+    void loadServiceHealth();
   });
 
-  const services = [
-    { name: "Backend API", status: "Healthy" },
-    { name: "Database", status: "Healthy" },
-    { name: "Chat API", status: "Healthy" },
-    { name: "Granite", status: "Healthy" }
+  let services = [
+    { name: "Backend API", status: "Checking…", ok: false },
+    { name: "Granite Bridge", status: "Checking…", ok: false },
+    { name: "Chat API", status: "Checking…", ok: false },
+    { name: "Ollama / Model", status: "Checking…", ok: false }
   ];
 
   let topCourses: { name: string; requests: number; width: string }[] = [];
@@ -141,7 +166,7 @@
         {#each services as service}
           <div class="status-row">
             <span>{service.name}</span>
-            <span class="healthy">{service.status}</span>
+            <span class:healthy={service.ok} class:unhealthy={!service.ok}>{service.status}</span>
           </div>
         {/each}
       </section>
@@ -149,7 +174,7 @@
       <section class="panel-card">
         <div class="card-header">
           <IconChartBar size={20}/>
-          <h2>Top Active Courses</h2>
+          <h2>Top Courses by Logged Requests</h2>
         </div>
 
         {#each topCourses as course}
@@ -164,6 +189,9 @@
             </div>
           </div>
         {/each}
+        {#if topCourses.length === 0}
+          <p class="panel-empty-state">No course request events have been logged yet.</p>
+        {/if}
       </section>
     </aside>
   </section>

@@ -28,7 +28,8 @@ The Rocky API sends and receives information using JSON (JavaScript Object Notat
 
 ```json
 {
-  "message": "Hello Rocky!"
+  "model": "rocky",
+  "input": "Hello Rocky!"
 }
 ```
 

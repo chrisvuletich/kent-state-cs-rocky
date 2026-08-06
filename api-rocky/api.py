@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import hashlib
 from datetime import datetime, timezone
+from pathlib import Path
 from uuid import uuid4
 import time
 
@@ -10,6 +11,7 @@ from flask import Flask, request, jsonify, Response
 import requests
 import logging
 from mongita import MongitaClientDisk
+from dotenv import load_dotenv
 from telemetry import TelemetryStore, sanitize_model_metrics
 
 # Try PyMongo first (default to localhost). If unavailable, fall back to Mongita.
@@ -21,17 +23,44 @@ except Exception:  # pragma: no cover - optional dependency
     PyMongoError = Exception
 
 
-app = Flask(__name__)
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+SERVICE_ROOT = Path(__file__).resolve().parent
+load_dotenv(REPOSITORY_ROOT / ".env", override=False)
+load_dotenv(REPOSITORY_ROOT / ".env.local", override=True)
+load_dotenv(SERVICE_ROOT / ".env", override=False)
+load_dotenv(SERVICE_ROOT / ".env.local", override=True)
 
+
+app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = int(
+    os.getenv("ROCKY_MAX_REQUEST_BYTES", str(256 * 1024))
+)
+
+APP_ENV = os.getenv("ROCKY_APP_ENV", "development").strip().lower() or "development"
 CHAT_API_KEY_CONFIGURED = "ROCKY_CHAT_API_KEY" in os.environ and bool(os.getenv("ROCKY_CHAT_API_KEY", "").strip())
-CHAT_API_KEY = os.getenv("ROCKY_CHAT_API_KEY", "SOME_API_KEY")
+CHAT_API_KEY = os.getenv("ROCKY_CHAT_API_KEY", "").strip()
 CHAT_SERVICE_OWNER_ID = os.getenv("ROCKY_CHAT_SERVICE_OWNER_ID", "rocky-chat-service@kent.edu").strip() or "rocky-chat-service@kent.edu"
 CHAT_SERVICE_KEY_NAME = "rocky-chat-service"
 GRANITE_URL = os.getenv("ROCKY_GRANITE_URL", "http://127.0.0.1:5002/generate")
-DEFAULT_MODEL = os.getenv("ROCKY_CHAT_MODEL", os.getenv("OLLAMA_MODEL", "gemma4:latest"))
+PUBLIC_MODEL = "rocky"
+INFERENCE_MODEL = os.getenv(
+    "OLLAMA_MODEL",
+    "gemma4:latest",
+).strip() or "gemma4:latest"
 CHAT_API_HOST = os.getenv("ROCKY_CHAT_API_HOST", "127.0.0.1")
 CHAT_API_PORT = int(os.getenv("ROCKY_CHAT_API_PORT", "5003"))
-GRANITE_TIMEOUT_SECONDS = int(os.getenv("ROCKY_GRANITE_TIMEOUT_SECONDS", "195"))
+GRANITE_TIMEOUT_SECONDS = int(os.getenv("ROCKY_GRANITE_TIMEOUT_SECONDS", "170"))
+
+def resolve_mongita_path(value):
+    configured_path = Path(str(value).strip() or ".rocky-data/mongita").expanduser()
+    if not configured_path.is_absolute():
+        configured_path = REPOSITORY_ROOT / configured_path
+    return configured_path.resolve()
+
+
+MONGITA_PATH = resolve_mongita_path(
+    os.getenv("ROCKY_MONGITA_PATH", ".rocky-data/mongita")
+)
 
 
 api_keys_col = None
@@ -40,6 +69,7 @@ messages_col = None
 telemetry_interactions_col = None
 telemetry_current_col = None
 telemetry_store = None
+MONGITA_KEY_READ_REFRESH_ENABLED = False
 
 
 def normalize_api_key_value(key):
@@ -143,10 +173,15 @@ def ensure_chat_indexes():
 
 
 # Database configuration
-DB_BACKEND = os.getenv("ROCKY_DB_BACKEND", "mongodb").strip().lower()
+DEFAULT_DB_BACKEND = (
+    "mongodb"
+    if os.getenv("ROCKY_APP_ENV", "development").strip().lower() == "production"
+    else "mongita"
+)
+DB_BACKEND = os.getenv("ROCKY_DB_BACKEND", DEFAULT_DB_BACKEND).strip().lower()
 MONGODB_URI = os.getenv(
     "ROCKY_MONGODB_URI",
-    "mongodb://127.0.0.1:27017"
+    ""
 ).strip()
 DB_NAME = os.getenv("ROCKY_DB_NAME", "rocky_db").strip() or "rocky_db"
 
@@ -164,8 +199,15 @@ def initialize_database():
     global messages_col
     global telemetry_interactions_col
     global telemetry_current_col
+    global MONGITA_KEY_READ_REFRESH_ENABLED
+
+    MONGITA_KEY_READ_REFRESH_ENABLED = False
 
     if DB_BACKEND == "mongodb":
+        if not MONGODB_URI:
+            raise RuntimeError(
+                "ROCKY_MONGODB_URI is required for the MongoDB backend."
+            )
         if MongoClient is None:
             raise RuntimeError(
                 "ROCKY_DB_BACKEND is set to mongodb, but PyMongo is unavailable."
@@ -221,16 +263,19 @@ def initialize_database():
 
     if DB_BACKEND == "mongita":
         logging.warning(
-            "Using Mongita database at api-rocky/mongitaDB. "
-            "This backend should only be used for local development."
+            "Using Mongita database at %s. "
+            "This backend should only be used for local development.",
+            MONGITA_PATH,
         )
 
-        client = MongitaClientDisk("mongitaDB")
+        MONGITA_PATH.mkdir(parents=True, exist_ok=True)
+        client = MongitaClientDisk(str(MONGITA_PATH))
         database = client[DB_NAME]
 
         api_keys_col = database["api_keys"]
         conversations_col = database["conversations"]
         messages_col = database["messages"]
+        MONGITA_KEY_READ_REFRESH_ENABLED = True
         return
 
     raise RuntimeError(
@@ -334,21 +379,27 @@ def health():
     return jsonify({"ok": True, "service": "api-rocky"}), 200
 
 
+@app.errorhandler(413)
+def request_too_large(_error):
+    return jsonify({"error": "Request body is too large."}), 413
+
+
 @app.route("/v1/responses", methods=["POST"])
 def rocky_api():
-
-    # parse incoming JSON into `apirequest` with keys: `apikey`, `requestbody`
     apirequest = parse_api_request()
     if not apirequest:
         return jsonify({"error": "Bad request: expected JSON payload"}), 400
 
-    #verify and request AI
     key_doc = get_key_doc(apirequest.get("apikey"))
 
     if not key_doc:
         return jsonify({"error": "Invalid API key"}), 401
 
     request_body = apirequest.get("requestbody")
+    validation_error = validate_public_request(request_body)
+    if validation_error:
+        return jsonify({"error": validation_error}), 400
+
     store_history = should_store_history(request_body)
     granite_payload = None
     chat_user_context = None
@@ -431,11 +482,12 @@ def rocky_api():
         raise
 
     finish_telemetry_interaction(interaction, "completed", model_metrics)
-    response_payload = {
-        "reply": assistant_reply,
-        "model": response.get("model"),
-        "metadata": response.get("metadata", {}),
-    }
+    response_payload = build_response_payload(
+        assistant_reply,
+        request_body,
+        response.get("metadata", {}),
+        model_metrics,
+    )
     if conversation_id is not None:
         response_payload["conversation_id"] = conversation_id
     return telemetry_json(response_payload, 200, interaction)
@@ -447,7 +499,7 @@ def export_conversation(conversation_id):
     if not isinstance(payload, dict):
         return jsonify({"error": "Bad request: expected JSON payload"}), 400
 
-    key_doc = get_key_doc(payload.get("api-key"))
+    key_doc = get_key_doc(extract_bearer_api_key())
 
     if not key_doc:
         return jsonify({"error": "Invalid API key"}), 401
@@ -511,7 +563,7 @@ def get_conversation(conversation_id):
     if not isinstance(payload, dict):
         return jsonify({"error": "Bad request: expected JSON payload"}), 400
 
-    key_doc = get_key_doc(payload.get("api-key"))
+    key_doc = get_key_doc(extract_bearer_api_key())
 
     if not key_doc:
         return jsonify({"error": "Invalid API key"}), 401
@@ -550,7 +602,7 @@ def list_conversations():
     if not isinstance(payload, dict):
         return jsonify({"error": "Bad request: expected JSON payload"}), 400
 
-    key_doc = get_key_doc(payload.get("api-key"))
+    key_doc = get_key_doc(extract_bearer_api_key())
 
     if not key_doc:
         return jsonify({"error": "Invalid API key"}), 401
@@ -579,19 +631,44 @@ def list_conversations():
 
 
 def parse_api_request():
-    # Parse JSON payload from request into a dict with keys apikey & requestbody
-    # Returns the dict or None if the payload is invalid.
-    # Unsure if needed. More efficent to just use API key param, but then have to pass it to Rocky. Insecure?
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
         return None
 
-    key = payload.get("api-key")
+    return {
+        "apikey": extract_bearer_api_key(),
+        "requestbody": payload,
+    }
 
-    # build request body as everything except the api-key field
-    requestbody = {k: v for k, v in payload.items() if k != "api-key"}
 
-    return {"apikey": key, "requestbody": requestbody}
+def extract_bearer_api_key():
+    authorization = request.headers.get("Authorization", "")
+    scheme, separator, credentials = authorization.partition(" ")
+    if separator != " " or scheme.lower() != "bearer":
+        return ""
+
+    return credentials.strip()
+
+
+def validate_public_request(request_body):
+    model = request_body.get("model", PUBLIC_MODEL)
+    if not isinstance(model, str) or model != PUBLIC_MODEL:
+        return "Unsupported model. Use 'rocky'."
+
+    if "store" in request_body and not isinstance(request_body["store"], bool):
+        return "store must be a boolean."
+
+    conversation_id = request_body.get("conversation_id")
+    if conversation_id is not None and not isinstance(conversation_id, str):
+        return "conversation_id must be a string."
+
+    instructions = request_body.get("instructions")
+    if instructions is not None and (
+        not isinstance(instructions, str) or not instructions.strip()
+    ):
+        return "instructions must be a non-empty string."
+
+    return None
 
 
 def check_key(key):
@@ -688,6 +765,35 @@ def find_valid_key_doc(collection, query):
         return key_doc
     return None
 
+
+def current_api_keys_collection():
+    """Return a fresh Mongita key view so cross-process writes are visible."""
+    if not MONGITA_KEY_READ_REFRESH_ENABLED:
+        return api_keys_col
+
+    try:
+        database = MongitaClientDisk(str(MONGITA_PATH))[DB_NAME]
+        return database["api_keys"]
+    except Exception as exc:
+        logging.warning(
+            "Could not refresh local API key records. error_type=%s",
+            type(exc).__name__,
+        )
+        return None
+
+
+def development_auth_bypass_enabled():
+    bypass_requested = os.getenv("ROCKY_DEV_AUTH_BYPASS", "false").strip().lower() == "true"
+    if not bypass_requested:
+        return False
+    if APP_ENV != "development":
+        logging.warning(
+            "Ignoring ROCKY_DEV_AUTH_BYPASS outside development. app_env=%s",
+            APP_ENV,
+        )
+        return False
+    return True
+
 def get_key_doc(key):
     """
     Returns the API key document if valid.
@@ -696,7 +802,7 @@ def get_key_doc(key):
     Set ROCKY_DEV_AUTH_BYPASS=true to skip real API key validation locally.
     This is only for local/dev history testing.
     """
-    if os.getenv("ROCKY_DEV_AUTH_BYPASS", "false").lower() == "true":
+    if development_auth_bypass_enabled():
         return {
             "api-key": "dev-bypass",
             "owner_id": "dev-user"
@@ -708,7 +814,7 @@ def get_key_doc(key):
 
     key_hash = hash_api_key(normalized_key)
 
-    return find_valid_key_doc(api_keys_col, {"hash": key_hash})
+    return find_valid_key_doc(current_api_keys_collection(), {"hash": key_hash})
 
 def get_owner_id(key_doc):
     """Gets the user ID to see who owns the conversation"""
@@ -744,8 +850,20 @@ def extract_user_message_text(request_body):
     if not isinstance(request_body, dict):
         return ""
 
-    message = request_body.get("message")
-    return message.strip() if isinstance(message, str) else ""
+    input_value = request_body.get("input")
+    if isinstance(input_value, str):
+        return input_value.strip()
+
+    if not isinstance(input_value, list):
+        return ""
+
+    for message in reversed(input_value):
+        if not isinstance(message, dict) or message.get("role", "user") != "user":
+            continue
+        text = extract_message_content_text(message.get("content"))
+        if text:
+            return text
+    return ""
 
 def get_or_create_conversation(user_id, conversation_id, first_message, user_context=None):
     """
@@ -933,16 +1051,66 @@ def build_history_request_body(original_request_body, granite_input):
     if isinstance(original_request_body, dict):
         request_body = {
             k: v for k, v in original_request_body.items()
-            if k not in {"message", "conversation_id", "store"}
+            if k not in {"input", "conversation_id", "store"}
         }
     else:
         request_body = {}
 
-    request_body["model"] = str(request_body.get("model") or DEFAULT_MODEL)
+    request_body["model"] = PUBLIC_MODEL
     request_body["input"] = granite_input
 
     return request_body
 
+
+
+def extract_message_content_text(content):
+    if isinstance(content, str):
+        return content.strip()
+    if not isinstance(content, list):
+        return ""
+
+    text_parts = []
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") not in {"input_text", "output_text", "text"}:
+            continue
+        text = block.get("text")
+        if isinstance(text, str) and text.strip():
+            text_parts.append(text.strip())
+    return "\n".join(text_parts)
+
+
+def normalize_input_messages(input_value):
+    if isinstance(input_value, str):
+        text = input_value.strip()
+        if not text:
+            return []
+        return [{
+            "role": "user",
+            "content": [{"type": "input_text", "text": text}],
+        }]
+
+    if not isinstance(input_value, list):
+        return []
+
+    normalized_messages = []
+    for message in input_value:
+        if not isinstance(message, dict):
+            continue
+        text = extract_message_content_text(message.get("content"))
+        if not text:
+            continue
+        role = str(message.get("role") or "user").strip().lower()
+        if role not in {"user", "assistant", "system", "developer"}:
+            continue
+        if role == "developer":
+            role = "system"
+        normalized_messages.append({
+            "role": role,
+            "content": [{"type": "input_text", "text": text}],
+        })
+    return normalized_messages
 
 
 def _build_granite_payload(request_body):
@@ -950,53 +1118,87 @@ def _build_granite_payload(request_body):
         return None
 
     if isinstance(request_body, str):
-        message_text = request_body.strip()
-        if not message_text:
-            return None
-        return {
-            "model": DEFAULT_MODEL,
-            "input": [
-                {
-                    "role": "user",
-                    "content": [{"type": "input_text", "text": message_text}],
-                }
-            ],
-        }
+        request_body = {"input": request_body}
 
     if not isinstance(request_body, dict):
         return None
 
-    if isinstance(request_body.get("input"), list):
-        return request_body
+    input_messages = normalize_input_messages(request_body.get("input"))
+    instructions = request_body.get("instructions")
+    if instructions is not None:
+        if not isinstance(instructions, str) or not instructions.strip():
+            return None
+        input_messages.insert(0, {
+            "role": "system",
+            "content": [{"type": "input_text", "text": instructions.strip()}],
+        })
 
-    message_text = request_body.get("message")
-    if not isinstance(message_text, str) or not message_text.strip():
+    if not input_messages:
         return None
-    message_text = message_text.strip()
 
     payload = {
-        "model": str(request_body.get("model") or DEFAULT_MODEL),
-        "input": [
-            {
-                "role": "user",
-                "content": [{"type": "input_text", "text": message_text}],
-            }
-        ],
+        "model": INFERENCE_MODEL,
+        "input": input_messages,
     }
 
-    if "frequency_penalty" in request_body:
-        payload["frequency_penalty"] = request_body["frequency_penalty"]
-    if "max_output_tokens" in request_body:
-        payload["max_output_tokens"] = request_body["max_output_tokens"]
-    if "presence_penalty" in request_body:
-        payload["presence_penalty"] = request_body["presence_penalty"]
-    if "temperature" in request_body:
-        payload["temperature"] = request_body["temperature"]
-    if "top_p" in request_body:
-        payload["top_p"] = request_body["top_p"]
-    if "max_output_tokens" in request_body:
-        payload["max_output_tokens"] = request_body["max_output_tokens"]
+    for option in (
+        "frequency_penalty",
+        "max_output_tokens",
+        "presence_penalty",
+        "reasoning",
+        "temperature",
+        "top_p",
+    ):
+        if option in request_body:
+            payload[option] = request_body[option]
 
+    return payload
+
+
+def build_response_payload(output_text, request_body, metadata, model_metrics):
+    response_id = f"resp_{uuid4().hex}"
+    message_id = f"msg_{uuid4().hex}"
+    prompt_tokens = int((model_metrics or {}).get("prompt_eval_count") or 0)
+    output_tokens = int((model_metrics or {}).get("eval_count") or 0)
+
+    payload = {
+        "id": response_id,
+        "object": "response",
+        "created_at": int(time.time()),
+        "status": "completed",
+        "model": PUBLIC_MODEL,
+        "parallel_tool_calls": False,
+        "tool_choice": "none",
+        "tools": [],
+        "output": [{
+            "id": message_id,
+            "type": "message",
+            "status": "completed",
+            "role": "assistant",
+            "content": [{
+                "type": "output_text",
+                "text": output_text,
+                "annotations": [],
+            }],
+        }],
+        "output_text": output_text,
+        "metadata": metadata if isinstance(metadata, dict) else {},
+        "usage": {
+            "input_tokens": prompt_tokens,
+            "input_tokens_details": {
+                "cached_tokens": 0,
+                "cache_write_tokens": 0,
+            },
+            "output_tokens": output_tokens,
+            "output_tokens_details": {"reasoning_tokens": 0},
+            "total_tokens": prompt_tokens + output_tokens,
+        },
+    }
+
+    if isinstance(request_body, dict):
+        for field in ("max_output_tokens", "temperature", "top_p"):
+            if field in request_body:
+                payload[field] = request_body[field]
     return payload
 
 
@@ -1086,5 +1288,9 @@ def request_ai(request_body):
 
 
 if __name__ == "__main__":
-	# default local dev run
-	app.run(host=CHAT_API_HOST, port=CHAT_API_PORT, debug=True)
+    app.run(
+        host=CHAT_API_HOST,
+        port=CHAT_API_PORT,
+        debug=APP_ENV == "development",
+        use_reloader=False,
+    )

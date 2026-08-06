@@ -10,7 +10,7 @@ Learn how to make your first request to the Rocky API using modern JavaScript.
 
 ## Authentication
 
-Every request to the Rocky API requires an API key. Include it as the `api-key` field in the JSON request body, not as an `Authorization` header.
+Every request to the Rocky API requires an API key. Send it as a Bearer token in the `Authorization` header.
 
 Keep your API key private. Anyone with access to your key can make requests on your behalf.
 
@@ -24,11 +24,12 @@ const response = await fetch(
     {
         method: "POST",
         headers: {
+            "Authorization": `Bearer ${process.env.ROCKY_API_KEY}`,
             "Content-Type": "application/json"
         },
         body: JSON.stringify({
-            "api-key": process.env.ROCKY_API_KEY,
-            message: "Hello Rocky!",
+            model: "rocky",
+            input: "Hello Rocky!",
             store: false
         })
     }
@@ -40,7 +41,7 @@ if (!response.ok) {
 
 const data = await response.json();
 
-console.log(data);
+console.log(data.output_text);
 ```
 
 ## Example Response
@@ -49,7 +50,10 @@ If the request succeeds, Rocky returns a JSON response similar to the example be
 
 ```json
 {
-  "reply": "Hello! How can I help you today?"
+  "object": "response",
+  "status": "completed",
+  "model": "rocky",
+  "output_text": "Hello! How can I help you today?"
 }
 ```
 

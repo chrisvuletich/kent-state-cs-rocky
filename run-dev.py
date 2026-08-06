@@ -153,7 +153,7 @@ def run_frontend_only() -> int:
     )
 
 
-def run_both() -> int:
+def run_both(seed: bool = False) -> int:
     python_exe = get_python_executable(require_backend_deps=True)
     npm_exe = get_npm_executable()
     resolved_backend_url = backend_url()
@@ -162,8 +162,9 @@ def run_both() -> int:
     frontend_host, frontend_port = frontend_bind()
     log(f"Using Python interpreter: {python_exe}")
 
-    log("Seeding backend with fixture data from rocky-backend/seed-data...")
-    subprocess.run([python_exe, str(SEED_SCRIPT)], check=True, cwd=str(REPO_ROOT))
+    if seed:
+        log("Seeding backend with fixture data from rocky-backend/seed-data...")
+        subprocess.run([python_exe, str(SEED_SCRIPT)], check=True, cwd=str(REPO_ROOT))
 
     granite_process = None
     if resolved_granite_url == granite_url():
@@ -240,6 +241,11 @@ def main() -> int:
         default="both",
         help="Which service mode to run",
     )
+    parser.add_argument(
+        "--seed",
+        action="store_true",
+        help="Load fixture data before starting all services",
+    )
     args = parser.parse_args()
 
     try:
@@ -247,7 +253,7 @@ def main() -> int:
             return run_backend_only()
         if args.mode == "frontend":
             return run_frontend_only()
-        return run_both()
+        return run_both(seed=args.seed)
     except KeyboardInterrupt:
         log("Interrupted by user.")
         return 130

@@ -15,7 +15,6 @@
 		dashboard: '/dashboard-icon.svg',
 		users: '/users-icon.svg',
 		courses: '/courses-icon.svg',
-		analytics: '/analytics-icon.svg',
 		admin: '/admin-icon.svg',
 		audit: '/analytics-icon.svg',
 		'api-keys': '/api-key-icon.svg',
@@ -42,7 +41,8 @@
 	);
 	const framesAfterCourses = $derived(coursesFrameIndex >= 0 ? primaryFrames.slice(coursesFrameIndex + 1) : []);
 	const canCreateCourse = $derived(isAdmin);
-	let activeFrame = $derived((browser ? $currentFrame : page.data.initialFrame) as FrameName);
+	let hasMounted = $state(false);
+	let activeFrame = $derived((hasMounted ? $currentFrame : page.data.initialFrame) as FrameName);
 	const SESSION_VALIDATE_TTL_MS = 10_000;
 	let lastSessionValidationAt = 0;
 	let sessionValidationInFlight: Promise<boolean> | null = null;
@@ -151,6 +151,7 @@
 	}
 
 	onMount(() => {
+		hasMounted = true;
 		void loadCourseMenuData();
 		if (browser) {
 			document.addEventListener('pointerdown', handleDocumentPointerDown, true);

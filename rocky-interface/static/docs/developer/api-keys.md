@@ -17,7 +17,13 @@ Generate your API key from an enrolled course.
 
 ## Using Your API Key
 
-Include your API key as the `api-key` field in the JSON request body. Rocky does not use an `Authorization` header.
+Send your key in the HTTP `Authorization` header using the Bearer scheme:
+
+```text
+Authorization: Bearer sk_kent_your_key_here
+```
+
+Do not put the key in the JSON request body or in a URL.
 
 ## Reset an API Key
 

@@ -3,7 +3,7 @@ import os
 import requests
 
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
-OLLAMA_TIMEOUT_SECONDS = int(os.getenv("ROCKY_OLLAMA_TIMEOUT_SECONDS", "180"))
+OLLAMA_TIMEOUT_SECONDS = int(os.getenv("ROCKY_OLLAMA_TIMEOUT_SECONDS", "150"))
 
 # Ollama metadata fields that contain int
 _PROVIDER_INTEGER_FIELDS = (

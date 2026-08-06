@@ -4,20 +4,10 @@
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import Topbar from '$lib/components/Topbar.svelte';
 	import FeedbackPopup from '$lib/components/FeedbackPopup.svelte';
-	import { browser } from '$app/environment';
-	import { currentFrame } from '$lib/stores/frameStore';
-	import type { FrameName } from '$lib/types/frame';
 
 	import { page } from '$app/state';
 	let { children, data } = $props();
 	let isRootRoute = $derived(page.url.pathname === '/');
-	let initialFrame = $derived(data.initialFrame as FrameName);
-
-	$effect(() => {
-		if (browser && initialFrame) {
-			currentFrame.set(initialFrame);
-		}
-	});
 </script>
 
 

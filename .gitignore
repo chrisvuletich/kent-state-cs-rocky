@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 .venv/
 env/
+.rocky-data/
 
 # Node / SvelteKit
 node_modules/

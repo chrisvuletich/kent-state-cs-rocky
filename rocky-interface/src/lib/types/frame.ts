@@ -1,10 +1,9 @@
-export type FrameName = 'dashboard' | 'users' | 'courses' | 'analytics' | 'admin' | 'audit' | 'api-keys' | 'account' | 'chat' | 'help';
+export type FrameName = 'dashboard' | 'users' | 'courses' | 'admin' | 'audit' | 'api-keys' | 'account' | 'chat' | 'help';
 
 const frameLabels: Record<FrameName, string> = {
 	dashboard: 'Dashboard',
 	users: 'Users',
 	courses: 'Courses',
-	analytics: 'Analytics',
 	admin : 'Admin Panel',
 	audit: 'Audit Logs',
 	'api-keys': 'API Keys',
@@ -13,10 +12,8 @@ const frameLabels: Record<FrameName, string> = {
 	help: 'Help'
 };
 
-export const primaryFrames: FrameName[] = ['dashboard', 'users', 'courses', 'analytics', 'chat', 'account'];
+export const primaryFrames: FrameName[] = ['dashboard', 'users', 'courses', 'chat', 'account'];
 
-// const adminFrames: FrameName[] = ['dashboard', 'users', 'courses', 'analytics', 'account', 'help'];
-// const clientFrames: FrameName[] = ['dashboard', 'courses', 'analytics', 'account', 'help'];
 const adminFrames: FrameName[] = ['dashboard', 'users', 'courses', 'admin', 'audit', 'api-keys', 'account', 'chat', 'help'];
 const clientFrames: FrameName[] = ['dashboard', 'courses', 'account','chat', 'help'];
 

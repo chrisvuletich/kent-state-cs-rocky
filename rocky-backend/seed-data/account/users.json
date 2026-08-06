@@ -4,6 +4,7 @@
     "last_name": "Admin",
     "email": "admin.local@kent.edu",
     "is_admin": true,
+    "role": "admin",
     "is_active": true,
     "settings": {
       "themePreference": "light",
@@ -18,6 +19,7 @@
     "last_name": "Cole",
     "email": "instructor.local@kent.edu",
     "is_admin": false,
+    "role": "instructor",
     "is_active": true,
     "settings": {
       "themePreference": "light",
@@ -31,6 +33,7 @@
     "last_name": "Ellis",
     "email": "instructor.alt@kent.edu",
     "is_admin": false,
+    "role": "instructor",
     "is_active": true,
     "settings": {
       "themePreference": "light",
@@ -42,6 +45,7 @@
     "last_name": "Ross",
     "email": "student.local@kent.edu",
     "is_admin": false,
+    "role": "student",
     "is_active": true,
     "settings": {
       "themePreference": "light",
@@ -57,6 +61,7 @@
     "last_name": "Kim",
     "email": "student.alt1@kent.edu",
     "is_admin": false,
+    "role": "student",
     "is_active": true,
     "settings": {
       "themePreference": "light",
@@ -71,6 +76,7 @@
     "last_name": "Chen",
     "email": "student.alt2@kent.edu",
     "is_admin": false,
+    "role": "student",
     "is_active": true,
     "settings": {
       "themePreference": "dark",
@@ -85,6 +91,7 @@
     "last_name": "Patel",
     "email": "student.alt3@kent.edu",
     "is_admin": false,
+    "role": "student",
     "is_active": true,
     "settings": {
       "themePreference": "dark",

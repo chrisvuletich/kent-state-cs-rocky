@@ -16,6 +16,7 @@ class Settings:
     db_backend: str
     mongodb_uri: str
     db_name: str
+    mongita_path: str
     enable_db_inspector: bool
     enable_preview_login: bool
     enable_microsoft_oauth: bool
@@ -31,6 +32,14 @@ def _load_env_files() -> None:
     base_dir = Path(__file__).resolve().parents[1]
     load_dotenv(base_dir / ".env", override=False)
     load_dotenv(base_dir / ".env.local", override=True)
+
+
+def _resolve_mongita_path(value: str) -> str:
+    repository_root = Path(__file__).resolve().parents[2]
+    configured_path = Path(value.strip() or ".rocky-data/mongita").expanduser()
+    if not configured_path.is_absolute():
+        configured_path = repository_root / configured_path
+    return str(configured_path.resolve())
 
 
 def get_settings() -> Settings:
@@ -62,6 +71,9 @@ def get_settings() -> Settings:
         db_backend=db_backend,
         mongodb_uri=mongodb_uri,
         db_name=os.getenv("ROCKY_DB_NAME", "rocky_db").strip() or "rocky_db",
+        mongita_path=_resolve_mongita_path(
+            os.getenv("ROCKY_MONGITA_PATH", ".rocky-data/mongita")
+        ),
         enable_db_inspector=_is_truthy(os.getenv("ROCKY_ENABLE_DB_INSPECTOR", "false" if app_env == "production" else "true")),
         enable_preview_login=not enable_microsoft_oauth,
         enable_microsoft_oauth=enable_microsoft_oauth,

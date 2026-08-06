@@ -1,6 +1,7 @@
+import { dev } from '$app/environment';
 import { env } from '$env/dynamic/public';
 
-const PUBLIC_APP_ENV = (env.PUBLIC_APP_ENV ?? 'production').toString();
+const PUBLIC_APP_ENV = (env.PUBLIC_APP_ENV ?? (dev ? 'development' : 'production')).toString();
 const PUBLIC_API_BASE_URL = (env.PUBLIC_API_BASE_URL ?? 'http://localhost:5001').toString();
 const PUBLIC_ENABLE_DBTEST = (env.PUBLIC_ENABLE_DBTEST ?? 'false').toString();
 const PUBLIC_ENABLE_MICROSOFT_OAUTH = (env.PUBLIC_ENABLE_MICROSOFT_OAUTH ?? 'false').toString();

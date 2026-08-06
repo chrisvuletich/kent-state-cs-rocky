@@ -27,6 +27,13 @@ export function chatIdentityHeaders(user: NonNullable<App.Locals['currentUser']>
 	};
 }
 
+export function chatRequestHeaders(user: NonNullable<App.Locals['currentUser']>): Record<string, string> {
+	return {
+		Authorization: `Bearer ${hiddenApiKeyForUser(user)}`,
+		...chatIdentityHeaders(user)
+	};
+}
+
 export function hiddenApiKeyForUser(user: NonNullable<App.Locals['currentUser']>): string {
 	const ownerId = (user.apiKeyOwnerId || user.id).trim().toLowerCase();
 	if (!ownerId) {
@@ -39,9 +46,6 @@ export function hiddenApiKeyForUser(user: NonNullable<App.Locals['currentUser']>
 	return deriveHiddenApiKey(ownerId, HIDDEN_API_KEY_SECRET);
 }
 
-export function chatApiPayload(user: NonNullable<App.Locals['currentUser']>, extra: Record<string, unknown> = {}): Record<string, unknown> {
-	return {
-		'api-key': hiddenApiKeyForUser(user),
-		...extra
-	};
+export function chatApiPayload(extra: Record<string, unknown> = {}): Record<string, unknown> {
+	return { ...extra };
 }

@@ -44,12 +44,9 @@ npm install
 Pop-Location
 ```
 
-### 5. Create environment files
+### 5. Create the environment file
 
-Copy the examples and edit them for your environment:
-
-- [rocky-backend/.env.example](rocky-backend/.env.example) -> `rocky-backend/.env`
-- [rocky-interface/.env.example](rocky-interface/.env.example) -> `rocky-interface/.env`
+For the complete local stack, copy the root [.env.example](.env.example) to `.env` and replace the example hidden-key secret. The service-level examples are available when a service needs to be run or configured independently.
 
 For production, set `ROCKY_DB_BACKEND=mongodb` and provide `ROCKY_MONGODB_URI`.
 
@@ -57,8 +54,7 @@ For production, set `ROCKY_DB_BACKEND=mongodb` and provide `ROCKY_MONGODB_URI`.
 
 Development minimum:
 
-- [rocky-backend/.env](rocky-backend/.env): `ROCKY_APP_ENV=development`, `ROCKY_DB_BACKEND=mongita`, `ROCKY_API_HOST`, `ROCKY_API_PORT`
-- [rocky-interface/.env](rocky-interface/.env): `PUBLIC_APP_ENV=development`, `PUBLIC_API_BASE_URL`, `PUBLIC_ENABLE_MICROSOFT_OAUTH`, `ROCKY_WEB_HOST`, `ROCKY_WEB_PORT`, `ROCKY_ALLOWED_HOSTS`
+- Root `.env`: keep the development bind, Mongita, Ollama, and shared-path values from [.env.example](.env.example), then replace `ROCKY_HIDDEN_API_KEY_SECRET`.
 
 For development Microsoft OAuth, set:
 
@@ -86,6 +82,12 @@ Run both backend and frontend together:
 
 ```powershell
 python run-dev.py --mode both
+```
+
+Normal startup preserves the existing local database. To load the fixture data explicitly:
+
+```powershell
+python run-dev.py --mode both --seed
 ```
 
 Other modes:
@@ -121,6 +123,12 @@ Useful endpoints:
 - `GET /help/faq`
 
 Admin-only endpoints require the admin headers passed by the Svelte proxy layer.
+
+## Chat API
+
+The student-facing endpoint is `POST /v1/responses` on port `5003` locally. It accepts `Authorization: Bearer sk_kent_...`, public model name `rocky`, and a JSON `input` string or text-message array. The configured Ollama model stays an internal server detail.
+
+The documented Python client uses `requests`; Rocky has no runtime dependency on an external AI-provider SDK.
 
 ## Seed data
 

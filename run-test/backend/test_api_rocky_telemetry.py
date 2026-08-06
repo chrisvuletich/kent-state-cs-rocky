@@ -116,12 +116,11 @@ class ApiTelemetryTests(unittest.TestCase):
 
     def post(self, **values):
         return self.client.post("/v1/responses", json={
-            "api-key": self.key,
-            "message": "Private prompt café ☕",
-            "model": "requested-model",
+            "input": "Private prompt café ☕",
+            "model": "rocky",
             "store": False,
             **values,
-        })
+        }, headers={"Authorization": f"Bearer {self.key}"})
 
     def rows(self):
         return list(rocky.telemetry_interactions_col.find({}))
@@ -184,16 +183,18 @@ class ApiTelemetryTests(unittest.TestCase):
         with patch.object(rocky, "get_or_create_conversation",
                           side_effect=RuntimeError("persistence failed")):
             with self.assertRaises(RuntimeError):
-                self.post(store=True, input=[])
+                self.post(store=True)
         self.assertEqual(self.rows()[-1]["outcome"], "failed")
-        invalid = {"api-key": self.key, "store": True,
-                   "message": ["not a string"], "input": [{
+        invalid = {"store": True, "model": "rocky", "input": [{
                        "role": "user", "content": [{
-                           "type": "input_text", "text": "ignored",
+                           "type": "input_image", "image_url": "ignored",
                        }],
                    }]}
-        self.assertEqual(self.client.post("/v1/responses", json=invalid).status_code,
-                         400)
+        self.assertEqual(self.client.post(
+            "/v1/responses",
+            json=invalid,
+            headers={"Authorization": f"Bearer {self.key}"},
+        ).status_code, 400)
         post.return_value = success(output=None)
         self.assertEqual(self.post().status_code, 502)
         self.assertEqual(self.rows()[-1]["outcome"], "failed")
@@ -311,7 +312,7 @@ class LiveSmokeTests(unittest.TestCase):
             "telemetry_current": Mock(), "users": Mock(),
         }
         response = Mock(ok=True, headers={"X-Rocky-Request-Id": request_id})
-        response.json.return_value = {"reply": "Rocky"}
+        response.json.return_value = {"output_text": "Rocky"}
         environment = {name: "test" for name in live_telemetry_smoke.REQUIRED}
         with (
             patch.dict(os.environ, environment),
@@ -325,6 +326,10 @@ class LiveSmokeTests(unittest.TestCase):
             result = live_telemetry_smoke.run_live_smoke()
             self.assertEqual(result["interactions_completed_total"], 1)
             self.assertEqual(post.call_args.args[0], "test/v1/responses")
+            self.assertEqual(
+                post.call_args.kwargs["headers"],
+                {"Authorization": "Bearer test"},
+            )
             response.headers["X-Rocky-Request-Id"] = str(uuid4())
             with self.assertRaises(live_telemetry_smoke.SmokeFailure):
                 live_telemetry_smoke.run_live_smoke()

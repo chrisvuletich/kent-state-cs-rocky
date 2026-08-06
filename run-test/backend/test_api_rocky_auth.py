@@ -168,7 +168,8 @@ class ApiRockyAuthTests(unittest.TestCase):
 
         response = api_rocky.app.test_client().post(
             "/conversations/list",
-            json={"api-key": plaintext},
+            json={},
+            headers={"Authorization": f"Bearer {plaintext}"},
         )
 
         self.assertEqual(response.status_code, 400)
@@ -208,8 +209,9 @@ class ApiRockyAuthTests(unittest.TestCase):
 
         response = api_rocky.app.test_client().post(
             "/conversations/list",
-            json={"api-key": plaintext},
+            json={},
             headers={
+                "Authorization": f"Bearer {plaintext}",
                 "X-Rocky-User-Id": "user-one",
                 "X-Rocky-User-Email": "one@kent.edu",
             },
@@ -253,8 +255,11 @@ class ApiRockyAuthTests(unittest.TestCase):
 
         response = api_rocky.app.test_client().post(
             "/conversations/list",
-            json={"api-key": plaintext},
-            headers={"X-Rocky-User-Id": "spoofed-user"},
+            json={},
+            headers={
+                "Authorization": f"Bearer {plaintext}",
+                "X-Rocky-User-Id": "spoofed-user",
+            },
         )
 
         self.assertEqual(response.status_code, 200)

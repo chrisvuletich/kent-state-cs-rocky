@@ -73,12 +73,13 @@ class BackendValidationTests(BackendTestCase):
         self.assertIsNotNone(saved)
         self.assertTrue(saved.get("id"))
 
-    def test_update_user_only_accepts_is_active_boolean(self):
-        self._log("Updating user status through /users/<id>. Expecting boolean-only is_active support.")
+    def test_update_user_validates_status_and_protects_current_admin(self):
+        self._log("Updating user status through /users/<id>. Expecting validation and self-lockout protection.")
 
         seeded_admin = main.users.find_one({"email": "admin.local@kent.edu"})
         self.assertIsNotNone(seeded_admin)
-        user_id = seeded_admin.get("id")
+        admin_id = seeded_admin.get("id")
+        user_id = self.seeded_user_ids["student.local@kent.edu"]
         self.assertTrue(isinstance(user_id, str) and user_id)
 
         invalid_payload_response = self.client.put(
@@ -105,6 +106,39 @@ class BackendValidationTests(BackendTestCase):
         updated = main.users.find_one({"id": user_id})
         self.assertIsNotNone(updated)
         self.assertEqual(updated.get("is_active"), False)
+
+        self_deactivate_response = self.client.put(
+            f"/users/{admin_id}",
+            json={"is_active": False},
+            headers=self.admin_headers,
+        )
+        self.assertEqual(self_deactivate_response.status_code, 409)
+
+        self_demote_response = self.client.put(
+            f"/users/{admin_id}",
+            json={"role": "student"},
+            headers=self.admin_headers,
+        )
+        self.assertEqual(self_demote_response.status_code, 409)
+
+        unchanged_admin = main.users.find_one({"id": admin_id})
+        self.assertIsNotNone(unchanged_admin)
+        self.assertTrue(unchanged_admin.get("is_active"))
+        self.assertTrue(unchanged_admin.get("is_admin"))
+
+    def test_bulk_status_rejects_current_admin_deactivation(self):
+        admin_id = self.seeded_user_ids["admin.local@kent.edu"]
+        student_id = self.seeded_user_ids["student.local@kent.edu"]
+
+        response = self.client.patch(
+            "/users/bulk-status",
+            json={"user_ids": [admin_id, student_id], "is_active": False},
+            headers=self.admin_headers,
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertTrue(main.users.find_one({"id": admin_id}).get("is_active"))
+        self.assertTrue(main.users.find_one({"id": student_id}).get("is_active"))
 
     def test_create_course_rejects_bad_payload(self):
         self._log("Posting invalid course term payload. Expecting HTTP 400.")
