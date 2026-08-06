@@ -19,6 +19,7 @@
     { name: 'Dovlet Gurbanov', title: '', variant: 'navy' },
     { name: 'Simran Gautam', title: '', variant: 'gold' },
     { name: 'Tasmia Jannat Shammi', title: '', variant: 'navy' },
+    { name: 'Nicholas Vuletich', title: 'AI/ML Engineering Intern and Backend Developer', variant: 'gold' },
   ];
 
 	const assetCredits: Credit[] = [
