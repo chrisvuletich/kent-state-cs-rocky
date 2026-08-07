@@ -3,6 +3,7 @@ import { getUserByEmail, SESSION_COOKIE_NAME, SESSION_COOKIE_OPTIONS } from '$li
 import { getSettingsForUser } from './lib/server/userSettingsStore';
 import { getDefaultUserSettings } from '$lib/settings/userSettings';
 import { framesForRole, type FrameName } from '$lib/types/frame';
+import { readSessionEmail } from '$lib/server/sessionAuth';
 
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 const FRAME_COOKIE_NAME = 'rocky_current_frame';
@@ -37,10 +38,9 @@ function isRootActionRequest(pathname: string, method: string): boolean {
 	return pathname === '/' && MUTATING_METHODS.has(method.toUpperCase());
 }
 
-// TODO(OAuth): Replace this mock cookie check with real OAuth session validation.
-// The route-gating shape should remain the same: set event.locals.currentUser and redirect unauthenticated users.
 export const handle: Handle = async ({ event, resolve }) => {
-	const sessionEmail = event.cookies.get(SESSION_COOKIE_NAME);
+	const sessionToken = event.cookies.get(SESSION_COOKIE_NAME);
+	const sessionEmail = readSessionEmail(sessionToken);
 	let currentUser = null;
 
 	if (sessionEmail) {
@@ -48,6 +48,8 @@ export const handle: Handle = async ({ event, resolve }) => {
 		if (!currentUser) {
 			event.cookies.delete(SESSION_COOKIE_NAME, SESSION_COOKIE_OPTIONS);
 		}
+	} else if (sessionToken) {
+		event.cookies.delete(SESSION_COOKIE_NAME, SESSION_COOKIE_OPTIONS);
 	}
 
 	event.locals.currentUser = currentUser;

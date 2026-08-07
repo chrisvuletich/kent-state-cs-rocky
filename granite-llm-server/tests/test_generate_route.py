@@ -43,6 +43,10 @@ class TestGenerateRoute(unittest.TestCase):
             "done_reason": "stop",
             "prompt_eval_count": 12,
             "eval_count": 8,
+            "total_duration": 4_200_000_000,
+            "load_duration": 100_000_000,
+            "prompt_eval_duration": 300_000_000,
+            "eval_duration": 3_700_000_000,
             "prompt": "must not be telemetry",
             "response": "must not be telemetry",
             "user_id": "must not be telemetry",
@@ -146,6 +150,10 @@ class TestGenerateRoute(unittest.TestCase):
                 "stop_reason": "stop",
                 "prompt_eval_count": 12,
                 "eval_count": 8,
+                "total_duration": 4_200_000_000,
+                "load_duration": 100_000_000,
+                "prompt_eval_duration": 300_000_000,
+                "eval_duration": 3_700_000_000,
             },
         )
 

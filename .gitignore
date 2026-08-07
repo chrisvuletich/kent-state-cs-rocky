@@ -23,6 +23,7 @@ granite-llm-server/input_example.txt
 
 # OS
 .DS_Store
+*/**/.DS_Store
 
 # Deployment templates are intentionally tracked.
 !deploy/

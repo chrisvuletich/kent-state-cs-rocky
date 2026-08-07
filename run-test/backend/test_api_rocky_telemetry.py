@@ -90,6 +90,10 @@ def success(output="Private model reply"):
             "provider": {
                 "actual_model": "actual-model", "stop_reason": "stop",
                 "prompt_eval_count": 13, "eval_count": 8,
+                "total_duration": 4_200_000_000,
+                "load_duration": 100_000_000,
+                "prompt_eval_duration": 300_000_000,
+                "eval_duration": 3_700_000_000,
                 "private": "must not be stored",
             },
         },
@@ -110,7 +114,10 @@ class ApiTelemetryTests(unittest.TestCase):
         self.key = "private-test-api-key"
         rocky.api_keys_col.insert_one(
             {"hash": rocky.hash_api_key(self.key),
+             "key_id": "akid_test_person",
              "owner_id": "private-user-id", "email": "private.user@kent.edu",
+             "owner_type": "person", "course_id": 44001,
+             "key_name": "key-1",
              "is_active": True})
         self.client = rocky.app.test_client()
 
@@ -126,9 +133,12 @@ class ApiTelemetryTests(unittest.TestCase):
         return list(rocky.telemetry_interactions_col.find({}))
 
     @patch.object(rocky.requests, "post")
-    def test_completed_is_permanent_deduplicated_and_private(self, post):
+    def test_completed_is_permanent_deduplicated_and_fully_attributed(self, post):
         post.return_value = success()
-        response = self.post()
+        response = self.post(metadata={
+            "assignment": "lab-one",
+            "token": self.key,
+        })
         row = self.rows()[0]
         current = rocky.telemetry_current_col.find_one({})
         self.assertEqual((response.status_code, row["outcome"]), (200, "completed"))
@@ -149,12 +159,39 @@ class ApiTelemetryTests(unittest.TestCase):
                          expected)
         self.assertEqual(current["request_latency_ms_total"],
                          row["request_latency_ms"])
+        self.assertEqual(row["schema_version"], 2)
+        self.assertNotIn("expires_at", row)
+        self.assertEqual(row["request"]["input_text"],
+                         "Private prompt café ☕")
+        self.assertEqual(row["response"]["output_text"],
+                         "Private model reply")
+        self.assertEqual(row["actor"], {
+            "user_id": "private-user-id",
+            "email": "private.user@kent.edu",
+            "name": None,
+            "attribution": "personal-key-owner",
+        })
+        self.assertEqual(row["credential"]["key_id"], "akid_test_person")
+        self.assertEqual(row["course"]["course_id"], 44001)
+        self.assertEqual(row["usage"]["total_tokens"], 21)
+        self.assertEqual(
+            row["request"]["body"]["metadata"],
+            {"assignment": "lab-one", "token": "[REDACTED]"},
+        )
+        self.assertEqual(
+            row["performance"]["generation_duration_ns"],
+            3_700_000_000,
+        )
         stored = repr(row) + repr(current)
-        for secret in ("Private prompt", "Private model reply", self.key,
-                       "private-user-id", "private.user@kent.edu", "must not"):
+        for secret in (self.key, rocky.hash_api_key(self.key), "must not"):
             self.assertNotIn(secret, stored)
 
-        duplicate = {"request_id": row["_id"], "current_counted": True}
+        duplicate = {
+            "request_id": row["_id"],
+            "current_counted": True,
+            "persisted": True,
+            "started_monotonic_ns": 0,
+        }
         self.assertFalse(rocky.telemetry_store.record_terminal(
             duplicate, "failed", request_latency_ms=99))
         self.assertEqual(rocky.telemetry_current_col.find_one({}), current)
@@ -182,8 +219,7 @@ class ApiTelemetryTests(unittest.TestCase):
 
         with patch.object(rocky, "get_or_create_conversation",
                           side_effect=RuntimeError("persistence failed")):
-            with self.assertRaises(RuntimeError):
-                self.post(store=True)
+            self.assertEqual(self.post(store=True).status_code, 500)
         self.assertEqual(self.rows()[-1]["outcome"], "failed")
         invalid = {"store": True, "model": "rocky", "input": [{
                        "role": "user", "content": [{
@@ -195,6 +231,8 @@ class ApiTelemetryTests(unittest.TestCase):
             json=invalid,
             headers={"Authorization": f"Bearer {self.key}"},
         ).status_code, 400)
+        self.assertEqual(self.rows()[-1]["outcome"], "rejected")
+        self.assertEqual(self.rows()[-1]["error_stage"], "validation")
         post.return_value = success(output=None)
         self.assertEqual(self.post().status_code, 502)
         self.assertEqual(self.rows()[-1]["outcome"], "failed")
@@ -210,6 +248,123 @@ class ApiTelemetryTests(unittest.TestCase):
         output = "\n".join(logs.output)
         for secret in ("password", "mongodb://", "private"):
             self.assertNotIn(secret, output)
+
+    def test_invalid_json_and_invalid_key_are_permanent_rejections(self):
+        malformed = self.client.post(
+            "/v1/responses",
+            data='{"model":"rocky","input":',
+            content_type="application/json",
+        )
+        invalid_key = self.client.post(
+            "/v1/responses",
+            json={"model": "rocky", "input": "record this", "store": False},
+            headers={
+                "Authorization": "Bearer should-never-be-stored",
+                "X-Forwarded-For": "203.0.113.1, 198.51.100.7",
+            },
+        )
+
+        self.assertEqual((malformed.status_code, invalid_key.status_code),
+                         (400, 401))
+        rows = self.rows()
+        self.assertEqual([row["error_type"] for row in rows],
+                         ["invalid_json", "invalid_api_key"])
+        self.assertTrue(all(row["outcome"] == "rejected" for row in rows))
+        self.assertTrue(all(
+            response.headers.get("X-Rocky-Request-Id") == row["_id"]
+            for response, row in zip((malformed, invalid_key), rows)
+        ))
+        self.assertEqual(
+            rows[1]["client"]["remote_address"],
+            "198.51.100.7",
+        )
+        self.assertNotIn("should-never-be-stored", repr(rows))
+
+    def test_oversized_request_records_metadata_without_reading_full_body(self):
+        original_limit = rocky.app.config["MAX_CONTENT_LENGTH"]
+        rocky.app.config["MAX_CONTENT_LENGTH"] = 32
+        try:
+            response = self.client.post(
+                "/v1/responses",
+                data="x" * 128,
+                content_type="application/json",
+            )
+        finally:
+            rocky.app.config["MAX_CONTENT_LENGTH"] = original_limit
+
+        row = self.rows()[0]
+        self.assertEqual(response.status_code, 413)
+        self.assertEqual(row["error_type"], "request_too_large")
+        self.assertEqual(row["client"]["content_length"], 128)
+        self.assertNotIn("request", row)
+
+    @patch.object(rocky.requests, "post")
+    def test_web_and_group_key_attribution_is_not_guessed(self, post):
+        post.return_value = success()
+        service_key = "service-key"
+        group_key = "group-key"
+        rocky.api_keys_col.insert_many([
+            {
+                "hash": rocky.hash_api_key(service_key),
+                "key_id": "akid_hidden_user",
+                "owner_type": "person",
+                "owner_id": "database-user-id",
+                "key_scope": "user-default",
+                "is_active": True,
+            },
+            {
+                "hash": rocky.hash_api_key(group_key),
+                "key_id": "akid_group",
+                "owner_type": "group",
+                "owner_id": "group-a",
+                "course_id": 44001,
+                "is_active": True,
+            },
+        ])
+
+        service_response = self.client.post(
+            "/v1/responses",
+            json={"model": "rocky", "input": "web", "store": False},
+            headers={
+                "Authorization": f"Bearer {service_key}",
+                "X-Rocky-User-Id": "student-one",
+                "X-Rocky-User-Email": "one@kent.edu",
+                "X-Rocky-User-Name": "Student One",
+            },
+        )
+        group_response = self.client.post(
+            "/v1/responses",
+            json={"model": "rocky", "input": "group", "store": False},
+            headers={
+                "Authorization": f"Bearer {group_key}",
+                "X-Rocky-User-Id": "spoofed-student",
+            },
+        )
+
+        self.assertEqual((service_response.status_code,
+                          group_response.status_code), (200, 200))
+        service_row, group_row = self.rows()
+        self.assertEqual(service_row["source"], "web_chat")
+        self.assertEqual(service_row["actor"]["user_id"], "student-one")
+        self.assertEqual(service_row["actor"]["attribution"],
+                         "trusted-web-session")
+        self.assertEqual(group_row["actor"]["user_id"], None)
+        self.assertEqual(group_row["actor"]["attribution"],
+                         "group-key-only")
+        self.assertEqual(group_row["course"]["group_id"], "group-a")
+
+    @patch.object(rocky.requests, "post")
+    def test_required_logging_fails_closed_before_inference(self, post):
+        failing = Mock()
+        failing.insert_one.side_effect = RuntimeError("database unavailable")
+        rocky.telemetry_store = rocky.TelemetryStore(
+            failing, failing, logger=rocky.app.logger)
+        with patch.object(rocky, "REQUIRE_REQUEST_LOGGING", True):
+            response = self.post()
+
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("X-Rocky-Request-Id", response.headers)
+        post.assert_not_called()
 
 
 class ProjectionTests(unittest.TestCase):
@@ -291,6 +446,9 @@ class LiveSmokeTests(unittest.TestCase):
         request_id = str(uuid4())
         interaction = {
             "_id": request_id, "state": "terminal", "outcome": "completed",
+            "schema_version": 2, "content_available": True,
+            "request": {"input_text": live_telemetry_smoke.PROMPT},
+            "response": {"output_text": "Rocky"},
             "model_input_bytes": 10, "model_output_bytes": 20,
             "request_latency_ms": 5,
         }

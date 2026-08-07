@@ -1,8 +1,27 @@
 from __future__ import annotations
 
 from typing import Any
+import os
+import secrets
 
 from flask import request
+
+
+INTERNAL_PROXY_HEADER = "X-Rocky-Internal-Secret"
+
+
+def has_trusted_proxy() -> bool:
+    configured = os.getenv("ROCKY_INTERNAL_PROXY_SECRET", "").strip()
+    if not configured:
+        return os.getenv("ROCKY_APP_ENV", "development").strip().lower() != "production"
+    provided = request.headers.get(INTERNAL_PROXY_HEADER, "")
+    return secrets.compare_digest(provided, configured)
+
+
+def require_internal_proxy() -> tuple[bool, tuple[dict[str, Any], int] | None]:
+    if not has_trusted_proxy():
+        return False, ({"error": "Trusted proxy access is required."}, 403)
+    return True, None
 
 
 def _parse_bool(value: str | None) -> bool:
@@ -12,6 +31,8 @@ def _parse_bool(value: str | None) -> bool:
 
 
 def get_requester() -> tuple[str | None, bool]:
+    if not has_trusted_proxy():
+        return None, False
     email = request.headers.get("X-Rocky-User-Email", "").strip().lower() or None
     is_admin = _parse_bool(request.headers.get("X-Rocky-User-Is-Admin"))
     return email, is_admin

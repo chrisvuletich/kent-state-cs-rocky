@@ -1,6 +1,7 @@
 import { API_BASE_URL } from '$lib/config/env';
 import { sanitizeUserSettings, type UserSettingKey, type UserSettings } from '$lib/settings/userSettings';
 import type { User } from '$lib/types/user';
+import { internalProxyHeaders } from '$lib/server/backendSecurity';
 
 function buildIdentity(user: User): { userId: string; email: string } {
 	return {
@@ -14,7 +15,8 @@ function buildHeaders(user: User): HeadersInit {
 		Accept: 'application/json',
 		'Content-Type': 'application/json',
 		'X-Rocky-User-Email': user.email,
-		'X-Rocky-User-Is-Admin': String(user.isAdmin)
+		'X-Rocky-User-Is-Admin': String(user.isAdmin),
+		...internalProxyHeaders()
 	};
 }
 

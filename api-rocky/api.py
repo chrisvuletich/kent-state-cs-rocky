@@ -7,7 +7,7 @@ from pathlib import Path
 from uuid import uuid4
 import time
 
-from flask import Flask, request, jsonify, Response
+from flask import Flask, g, request, jsonify, Response
 import requests
 import logging
 from mongita import MongitaClientDisk
@@ -50,6 +50,10 @@ INFERENCE_MODEL = os.getenv(
 CHAT_API_HOST = os.getenv("ROCKY_CHAT_API_HOST", "127.0.0.1")
 CHAT_API_PORT = int(os.getenv("ROCKY_CHAT_API_PORT", "5003"))
 GRANITE_TIMEOUT_SECONDS = int(os.getenv("ROCKY_GRANITE_TIMEOUT_SECONDS", "170"))
+REQUIRE_REQUEST_LOGGING = os.getenv(
+    "ROCKY_REQUIRE_REQUEST_LOGGING",
+    "true" if APP_ENV == "production" else "false",
+).strip().lower() in {"1", "true", "yes", "on"}
 
 def resolve_mongita_path(value):
     configured_path = Path(str(value).strip() or ".rocky-data/mongita").expanduser()
@@ -275,6 +279,8 @@ def initialize_database():
         api_keys_col = database["api_keys"]
         conversations_col = database["conversations"]
         messages_col = database["messages"]
+        telemetry_interactions_col = database["telemetry_interactions"]
+        telemetry_current_col = database["telemetry_current"]
         MONGITA_KEY_READ_REFRESH_ENABLED = True
         return
 
@@ -307,7 +313,7 @@ if not should_skip_database_initialization_for_tests():
     ensure_chat_indexes()
     ensure_chat_service_api_key()
 
-    if DB_BACKEND == "mongodb" and telemetry_enabled:
+    if telemetry_enabled:
         telemetry_store = TelemetryStore(
             telemetry_interactions_col,
             telemetry_current_col,
@@ -334,25 +340,262 @@ def has_effective_user_prompt(payload):
     return False
 
 
-def begin_telemetry_interaction():
-    if telemetry_store is None:
+SENSITIVE_FIELD_NAMES = {
+    "api-key",
+    "api_key",
+    "apikey",
+    "authorization",
+    "cookie",
+    "password",
+    "secret",
+    "token",
+}
+
+
+def is_sensitive_field_name(value):
+    name = str(value).strip().lower().replace("-", "_")
+    compact_name = name.replace("_", "")
+    if name in {field.replace("-", "_") for field in SENSITIVE_FIELD_NAMES}:
+        return True
+    if name in {
+        "access_token",
+        "bearer_token",
+        "client_secret",
+        "current_password",
+        "id_token",
+        "new_password",
+        "password_confirmation",
+        "private_key",
+        "proxy_authorization",
+        "refresh_token",
+        "set_cookie",
+    }:
+        return True
+    if compact_name in {
+        "accesstoken",
+        "bearertoken",
+        "clientsecret",
+        "currentpassword",
+        "idtoken",
+        "newpassword",
+        "passwordconfirmation",
+        "privatekey",
+        "proxyauthorization",
+        "refreshtoken",
+        "setcookie",
+    }:
+        return True
+    return (
+        name.endswith("_password")
+        or name.startswith("password_")
+        or name.endswith("_secret")
+        or name.startswith("secret_")
+        or name.endswith("_api_key")
+        or name.endswith("_token")
+        or compact_name.endswith("password")
+        or compact_name.endswith("secret")
+        or compact_name.endswith("apikey")
+        or compact_name.endswith("token")
+    )
+
+
+def redact_structured_secrets(value):
+    if isinstance(value, dict):
+        return {
+            str(key): (
+                "[REDACTED]"
+                if is_sensitive_field_name(key)
+                else redact_structured_secrets(item)
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [redact_structured_secrets(item) for item in value]
+    return value
+
+
+def optional_text(value, limit=512):
+    if value is None:
         return None
+    text = str(value).strip()
+    return text[:limit] if text else None
+
+
+def telemetry_client_record():
+    forwarded_for = request.headers.get("X-Forwarded-For", "")
+    # nginx appends the connection address to any client-supplied chain.
+    remote_address = forwarded_for.rsplit(",", 1)[-1].strip() or request.remote_addr
+    return {
+        "remote_address": optional_text(remote_address, 128),
+        "user_agent": optional_text(request.headers.get("User-Agent"), 512),
+        "content_type": optional_text(request.content_type, 128),
+        "content_length": request.content_length,
+    }
+
+
+def telemetry_request_record(payload=None, raw_body=None):
+    body = redact_structured_secrets(payload) if isinstance(payload, dict) else None
+    malformed_body = None
+    if body is None and isinstance(raw_body, str):
+        encoded = raw_body.encode("utf-8")
+        malformed_body = {
+            "omitted": True,
+            "byte_length": len(encoded),
+            "sha256": hashlib.sha256(encoded).hexdigest(),
+        }
+    record = {
+        "body": body,
+        "raw_body": None,
+        "malformed_body": malformed_body,
+        "model": optional_text(payload.get("model"), 256) if isinstance(payload, dict) else None,
+        "store": payload.get("store") if isinstance(payload, dict) and isinstance(payload.get("store"), bool) else None,
+        "conversation_id": optional_text(payload.get("conversation_id"), 256) if isinstance(payload, dict) else None,
+        "instructions_text": payload.get("instructions") if isinstance(payload, dict) and isinstance(payload.get("instructions"), str) else None,
+        "input_text": extract_user_message_text(payload) if isinstance(payload, dict) else None,
+        "parameters": {
+            field: redact_structured_secrets(payload[field])
+            for field in (
+                "frequency_penalty",
+                "max_output_tokens",
+                "metadata",
+                "presence_penalty",
+                "reasoning",
+                "temperature",
+                "top_p",
+            )
+            if isinstance(payload, dict) and field in payload
+        },
+    }
+    return record
+
+
+def telemetry_identity_record(key_doc):
+    owner_type = optional_text(key_doc.get("owner_type"), 64) or "person"
+    owner_type = owner_type.lower()
+    owner_id = optional_text(
+        key_doc.get("owner_id") or key_doc.get("user_id") or key_doc.get("email"),
+        512,
+    )
+    actor = {
+        "user_id": None,
+        "email": None,
+        "name": None,
+        "attribution": "group-key-only" if owner_type == "group" else "personal-key-owner",
+    }
+    source = "public_api"
+    if is_trusted_web_key_doc(key_doc):
+        context = get_forwarded_user_context()
+        actor.update({
+            "user_id": context.get("user_id"),
+            "email": context.get("user_email"),
+            "name": context.get("user_name"),
+            "attribution": "trusted-web-session" if context.get("user_id") else "service-key-only",
+        })
+        source = "web_chat"
+    elif owner_type != "group":
+        actor.update({
+            "user_id": optional_text(
+                key_doc.get("user_id") or key_doc.get("owner_id") or key_doc.get("email"),
+                512,
+            ),
+            "email": optional_text(key_doc.get("email"), 512),
+        })
+
+    return {
+        "source": source,
+        "actor": actor,
+        "credential": {
+            "key_id": optional_text(key_doc.get("key_id"), 256),
+            "owner_type": owner_type,
+            "owner_id": owner_id,
+            "key_name": optional_text(key_doc.get("key_name"), 128),
+        },
+        "course": {
+            "course_id": key_doc.get("course_id") if isinstance(key_doc.get("course_id"), int) else None,
+            "course_code": optional_text(key_doc.get("c_id"), 128),
+            "group_id": owner_id if owner_type == "group" else None,
+        },
+    }
+
+
+def begin_telemetry_interaction():
+    request_id = f"req_{uuid4().hex}"
+    started_monotonic_ns = time.monotonic_ns()
+    fallback = {
+        "request_id": request_id,
+        "started_monotonic_ns": started_monotonic_ns,
+        "current_counted": False,
+        "persisted": False,
+    }
+    initial_record = {
+        "source": "unknown",
+        "client": telemetry_client_record(),
+        "content_available": True,
+    }
+    if telemetry_store is None:
+        g.rocky_telemetry_interaction = fallback
+        return fallback
     try:
-        return telemetry_store.record_accepted()
+        interaction = telemetry_store.record_received(
+            request_id,
+            record=initial_record,
+            started_monotonic_ns=started_monotonic_ns,
+        )
     except Exception as error:
         app.logger.warning(
-            "telemetry.accept_unexpected_failure error_type=%s",
+            "telemetry.receive_unexpected_failure error_type=%s",
             type(error).__name__,
         )
-        return None
+        interaction = fallback
+    g.rocky_telemetry_interaction = interaction
+    return interaction
 
 
-def finish_telemetry_interaction(interaction, outcome, model_metrics=None):
-    if telemetry_store is None or interaction is None:
+def enrich_telemetry_interaction(interaction, fields):
+    if telemetry_store is None or not isinstance(interaction, dict):
         return False
     try:
+        return telemetry_store.update_interaction(interaction, fields)
+    except Exception as error:
+        app.logger.warning(
+            "telemetry.enrich_unexpected_failure error_type=%s",
+            type(error).__name__,
+        )
+        return False
+
+
+def finish_telemetry_interaction(
+    interaction,
+    outcome,
+    model_metrics=None,
+    *,
+    response_payload=None,
+    http_status=None,
+    error_stage=None,
+    error_type=None,
+    additional_fields=None,
+):
+    if telemetry_store is None or not isinstance(interaction, dict):
+        return False
+    response_record = {
+        "body": redact_structured_secrets(response_payload) if isinstance(response_payload, dict) else None,
+        "output_text": response_payload.get("output_text") if isinstance(response_payload, dict) and isinstance(response_payload.get("output_text"), str) else None,
+        "stop_reason": (model_metrics or {}).get("stop_reason"),
+    }
+    terminal_record = {
+        "http_status": http_status,
+        "error_stage": error_stage,
+        "error_type": error_type,
+        "response": response_record,
+    }
+    if isinstance(additional_fields, dict):
+        terminal_record.update(additional_fields)
+    try:
         return telemetry_store.record_terminal(
-            interaction, outcome, model_metrics=model_metrics
+            interaction,
+            outcome,
+            model_metrics=model_metrics,
+            terminal_record=terminal_record,
         )
     except Exception as error:
         app.logger.warning(
@@ -373,6 +616,36 @@ def telemetry_json(payload, status, interaction):
     return response, status
 
 
+def terminal_telemetry_json(
+    interaction,
+    payload,
+    status,
+    outcome,
+    *,
+    model_metrics=None,
+    error_stage=None,
+    error_type=None,
+    additional_fields=None,
+):
+    persisted = finish_telemetry_interaction(
+        interaction,
+        outcome,
+        model_metrics,
+        response_payload=payload,
+        http_status=status,
+        error_stage=error_stage,
+        error_type=error_type,
+        additional_fields=additional_fields,
+    )
+    if REQUIRE_REQUEST_LOGGING and not persisted:
+        return telemetry_json(
+            {"error": "Request logging is unavailable."},
+            503,
+            interaction,
+        )
+    return telemetry_json(payload, status, interaction)
+
+
 
 @app.route("/health", methods=["GET"])
 def health():
@@ -381,24 +654,135 @@ def health():
 
 @app.errorhandler(413)
 def request_too_large(_error):
-    return jsonify({"error": "Request body is too large."}), 413
+    interaction = getattr(g, "rocky_telemetry_interaction", None)
+    if not isinstance(interaction, dict):
+        interaction = begin_telemetry_interaction()
+    payload = {"error": "Request body is too large."}
+    return terminal_telemetry_json(
+        interaction,
+        payload,
+        413,
+        "rejected",
+        error_stage="body",
+        error_type="request_too_large",
+    )
+
+
+def telemetry_model_fields(request_body, model_metrics):
+    metrics = sanitize_model_metrics(model_metrics)
+    input_tokens = metrics.get("prompt_eval_count", 0)
+    output_tokens = metrics.get("eval_count", 0)
+    performance = {
+        "model_total_duration_ns": metrics.get("total_duration"),
+        "model_load_duration_ns": metrics.get("load_duration"),
+        "prompt_eval_duration_ns": metrics.get("prompt_eval_duration"),
+        "generation_duration_ns": metrics.get("eval_duration"),
+    }
+    return {
+        "usage": {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": input_tokens + output_tokens,
+            "input_bytes": metrics.get("model_input_bytes"),
+            "output_bytes": metrics.get("model_output_bytes"),
+        },
+        "performance": performance,
+        "model": {
+            "public_model": PUBLIC_MODEL,
+            "actual_model": metrics.get("actual_model") or INFERENCE_MODEL,
+            "reasoning_requested": (
+                isinstance(request_body, dict)
+                and request_body.get("reasoning") is not None
+            ),
+        },
+    }
 
 
 @app.route("/v1/responses", methods=["POST"])
 def rocky_api():
+    interaction = begin_telemetry_interaction()
+    if REQUIRE_REQUEST_LOGGING and not interaction.get("persisted"):
+        return telemetry_json(
+            {"error": "Request logging is unavailable."},
+            503,
+            interaction,
+        )
+
+    raw_body = request.get_data(cache=True, as_text=True)
     apirequest = parse_api_request()
     if not apirequest:
-        return jsonify({"error": "Bad request: expected JSON payload"}), 400
-
-    key_doc = get_key_doc(apirequest.get("apikey"))
-
-    if not key_doc:
-        return jsonify({"error": "Invalid API key"}), 401
+        malformed_logged = enrich_telemetry_interaction(
+            interaction,
+            {"request": telemetry_request_record(raw_body=raw_body)},
+        )
+        if REQUIRE_REQUEST_LOGGING and not malformed_logged:
+            return terminal_telemetry_json(
+                interaction,
+                {"error": "Request logging is unavailable."},
+                503,
+                "failed",
+                error_stage="telemetry",
+                error_type="request_persistence_failed",
+            )
+        return terminal_telemetry_json(
+            interaction,
+            {"error": "Bad request: expected JSON payload"},
+            400,
+            "rejected",
+            error_stage="body",
+            error_type="invalid_json",
+        )
 
     request_body = apirequest.get("requestbody")
+    request_record = telemetry_request_record(request_body, raw_body=raw_body)
+    request_logged = enrich_telemetry_interaction(
+        interaction, {"request": request_record}
+    )
+    if REQUIRE_REQUEST_LOGGING and not request_logged:
+        return terminal_telemetry_json(
+            interaction,
+            {"error": "Request logging is unavailable."},
+            503,
+            "failed",
+            error_stage="telemetry",
+            error_type="request_persistence_failed",
+        )
+
+    key_doc = get_key_doc(apirequest.get("apikey"))
+    if not key_doc:
+        return terminal_telemetry_json(
+            interaction,
+            {"error": "Invalid API key"},
+            401,
+            "rejected",
+            error_stage="authentication",
+            error_type="invalid_api_key",
+        )
+
+    identity_logged = enrich_telemetry_interaction(
+        interaction,
+        telemetry_identity_record(key_doc),
+    )
+    if REQUIRE_REQUEST_LOGGING and not identity_logged:
+        return terminal_telemetry_json(
+            interaction,
+            {"error": "Request logging is unavailable."},
+            503,
+            "failed",
+            error_stage="telemetry",
+            error_type="identity_persistence_failed",
+        )
+
     validation_error = validate_public_request(request_body)
     if validation_error:
-        return jsonify({"error": validation_error}), 400
+        return terminal_telemetry_json(
+            interaction,
+            {"error": validation_error},
+            400,
+            "rejected",
+            error_stage="validation",
+            error_type="invalid_request",
+        )
 
     store_history = should_store_history(request_body)
     granite_payload = None
@@ -410,20 +794,40 @@ def rocky_api():
     if store_history:
         chat_user_context = get_chat_user_context(key_doc)
         if not chat_user_context:
-            return jsonify({"error": "Missing chat user context."}), 400
+            return terminal_telemetry_json(
+                interaction,
+                {"error": "Missing chat user context."},
+                400,
+                "rejected",
+                error_stage="authentication",
+                error_type="missing_chat_user_context",
+            )
 
         user_id = chat_user_context["user_id"]
         user_message = extract_user_message_text(request_body)
         if not user_message:
-            return jsonify({"error": "Missing message."}), 400
+            return terminal_telemetry_json(
+                interaction,
+                {"error": "Missing message."},
+                400,
+                "rejected",
+                error_stage="validation",
+                error_type="missing_message",
+            )
         if isinstance(request_body, dict):
             requested_conversation_id = request_body.get("conversation_id")
     else:
         granite_payload = _build_granite_payload(request_body)
         if not has_effective_user_prompt(granite_payload):
-            return jsonify({"error": "Missing message."}), 400
+            return terminal_telemetry_json(
+                interaction,
+                {"error": "Missing message."},
+                400,
+                "rejected",
+                error_stage="validation",
+                error_type="missing_message",
+            )
 
-    interaction = begin_telemetry_interaction()
     model_metrics = None
     conversation_id = None
     try:
@@ -436,6 +840,39 @@ def rocky_api():
                 user_context=chat_user_context
             )
 
+            recent_messages = load_recent_messages(conversation_id, user_id)
+            granite_input = messages_to_granite_input(recent_messages)
+            granite_input.append({
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": user_message,
+                    }
+                ],
+            })
+            history_request_body = build_history_request_body(
+                request_body,
+                granite_input,
+            )
+            model_request = history_request_body
+
+        request_record["model_input"] = redact_structured_secrets(model_request)
+        model_input_logged = enrich_telemetry_interaction(interaction, {
+            "request": request_record,
+            "inference_started_at": datetime.now(timezone.utc),
+        })
+        if REQUIRE_REQUEST_LOGGING and not model_input_logged:
+            return terminal_telemetry_json(
+                interaction,
+                {"error": "Request logging is unavailable."},
+                503,
+                "failed",
+                error_stage="telemetry",
+                error_type="model_input_persistence_failed",
+            )
+
+        if store_history:
             save_message(
                 conversation_id=conversation_id,
                 user_id=user_id,
@@ -443,14 +880,6 @@ def rocky_api():
                 content=user_message,
                 user_context=chat_user_context
             )
-
-            recent_messages = load_recent_messages(conversation_id, user_id)
-            granite_input = messages_to_granite_input(recent_messages)
-            history_request_body = build_history_request_body(
-                request_body,
-                granite_input,
-            )
-            model_request = history_request_body
 
         response = request_ai(model_request)
         model_metrics = response.get("_telemetry")
@@ -460,11 +889,23 @@ def rocky_api():
                 if response.get("error_type") == "timeout"
                 else "failed"
             )
-            finish_telemetry_interaction(interaction, outcome, model_metrics)
-            return telemetry_json(
-                {"error": response["error"]},
-                model_error_status(response.get("error_type")),
+            status = model_error_status(response.get("error_type"))
+            return terminal_telemetry_json(
                 interaction,
+                {"error": response["error"]},
+                status,
+                outcome,
+                model_metrics=model_metrics,
+                error_stage=(
+                    "ollama"
+                    if response.get("error_type") in {"timeout", "network", "bad_response"}
+                    else "granite"
+                ),
+                error_type=response.get("error_type") or "model_error",
+                additional_fields=telemetry_model_fields(
+                    request_body,
+                    model_metrics,
+                ),
             )
 
         assistant_reply = response["output_text"]
@@ -477,11 +918,26 @@ def rocky_api():
                 model=response.get("model"),
                 user_context=chat_user_context
             )
-    except Exception:
-        finish_telemetry_interaction(interaction, "failed", model_metrics)
-        raise
+    except Exception as error:
+        app.logger.error(
+            "chat.request_failed request_id=%s error_type=%s",
+            interaction.get("request_id"),
+            type(error).__name__,
+        )
+        return terminal_telemetry_json(
+            interaction,
+            {"error": "Internal server error."},
+            500,
+            "failed",
+            model_metrics=model_metrics,
+            error_stage="internal",
+            error_type=type(error).__name__,
+            additional_fields=telemetry_model_fields(
+                request_body,
+                model_metrics,
+            ),
+        )
 
-    finish_telemetry_interaction(interaction, "completed", model_metrics)
     response_payload = build_response_payload(
         assistant_reply,
         request_body,
@@ -490,7 +946,17 @@ def rocky_api():
     )
     if conversation_id is not None:
         response_payload["conversation_id"] = conversation_id
-    return telemetry_json(response_payload, 200, interaction)
+    return terminal_telemetry_json(
+        interaction,
+        response_payload,
+        200,
+        "completed",
+        model_metrics=model_metrics,
+        additional_fields=telemetry_model_fields(
+            request_body,
+            model_metrics,
+        ),
+    )
 
 @app.route("/conversations/<conversation_id>/export", methods=["POST"])
 def export_conversation(conversation_id):
@@ -718,6 +1184,16 @@ def is_service_key_doc(key_doc):
     return (
         str(key_doc.get("owner_type") or "").strip().lower() == "service"
         or str(key_doc.get("key_scope") or "").strip().lower() == "service"
+    )
+
+
+def is_trusted_web_key_doc(key_doc):
+    if not isinstance(key_doc, dict):
+        return False
+    return (
+        is_service_key_doc(key_doc)
+        or str(key_doc.get("key_scope") or "").strip().lower()
+        == "user-default"
     )
 
 

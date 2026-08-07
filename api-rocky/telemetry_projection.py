@@ -37,6 +37,7 @@ def refresh_current(interactions, current, users, as_of=None,
     accepted = counter(prior, "interactions_accepted_total")
     terminal = sum(counter(prior, field) for field in (
         "interactions_completed_total",
+        "interactions_rejected_total",
         "interactions_failed_total",
         "interactions_timed_out_total",
     ))
@@ -44,10 +45,12 @@ def refresh_current(interactions, current, users, as_of=None,
         raise ValueError("Telemetry terminal totals exceed accepted total.")
     active = accepted - terminal
     unresolved = 0
-    for row in interactions.find({"state": "accepted"}):
-        accepted_at = row.get("accepted_at")
+    for row in interactions.find({
+        "state": {"$in": ["accepted", "received"]},
+    }):
+        accepted_at = row.get("received_at") or row.get("accepted_at")
         if not isinstance(accepted_at, datetime):
-            raise ValueError("Accepted telemetry is missing accepted_at.")
+            raise ValueError("Active telemetry is missing its received time.")
         age = (projection_time - utc(accepted_at)).total_seconds()
         if age < 0:
             continue

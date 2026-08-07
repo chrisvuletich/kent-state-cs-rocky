@@ -74,6 +74,19 @@ def run_live_smoke():
                 or interaction.get("state") != "terminal"
                 or interaction.get("outcome") != "completed"):
             raise SmokeFailure("CORRELATED_INTERACTION_MISSING")
+        if (interaction.get("schema_version") != 2
+                or interaction.get("content_available") is not True
+                or interaction.get("expires_at") is not None):
+            raise SmokeFailure("PERMANENT_RECORD_MISSING")
+        stored_request = interaction.get("request")
+        stored_response = interaction.get("response")
+        if (not isinstance(stored_request, dict)
+                or stored_request.get("input_text") != PROMPT
+                or not isinstance(stored_response, dict)
+                or stored_response.get("output_text") != payload["output_text"]):
+            raise SmokeFailure("REQUEST_CONTENT_MISSING")
+        if values["ROCKY_LIVE_API_KEY"] in repr(interaction):
+            raise SmokeFailure("PLAINTEXT_KEY_STORED")
 
         after = refresh_current(interactions, current, users)
 

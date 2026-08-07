@@ -33,7 +33,7 @@ Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 ### 3. Install backend dependencies
 
 ```powershell
-pip install -r rocky-backend\requirements.txt
+pip install -r rocky-backend\requirements.txt -r granite-llm-server\requirements.txt
 ```
 
 ### 4. Install frontend dependencies
@@ -58,13 +58,13 @@ Development minimum:
 
 For development Microsoft OAuth, set:
 
-- [rocky-interface/.env](rocky-interface/.env): `PUBLIC_ENABLE_MICROSOFT_OAUTH=true`, `PUBLIC_MICROSOFT_CLIENT_ID`, optional `PUBLIC_MICROSOFT_TENANT_ID`, optional `PUBLIC_MICROSOFT_REDIRECT_URI`
-- [rocky-backend/.env](rocky-backend/.env): `ROCKY_ENABLE_MICROSOFT_OAUTH=true`
+- [rocky-interface/.env](rocky-interface/.env): `PUBLIC_ENABLE_MICROSOFT_OAUTH=true`, `PUBLIC_MICROSOFT_CLIENT_ID`, the specific `PUBLIC_MICROSOFT_TENANT_ID`, `ROCKY_SESSION_SECRET`, and `ROCKY_INTERNAL_PROXY_SECRET`
+- [rocky-backend/.env](rocky-backend/.env): `ROCKY_ENABLE_MICROSOFT_OAUTH=true` and the same `ROCKY_INTERNAL_PROXY_SECRET`
 
 Production minimum:
 
-- [rocky-backend/.env](rocky-backend/.env): `ROCKY_APP_ENV=production`, `ROCKY_DB_BACKEND=mongodb`, `ROCKY_MONGODB_URI`, `ROCKY_ENABLE_DB_INSPECTOR=false`, `ROCKY_API_HOST`, `ROCKY_API_PORT`
-- [rocky-interface/.env](rocky-interface/.env): `PUBLIC_APP_ENV=production`, `PUBLIC_API_BASE_URL`, `PUBLIC_MICROSOFT_CLIENT_ID`, optional `PUBLIC_MICROSOFT_TENANT_ID`, optional `PUBLIC_MICROSOFT_REDIRECT_URI`, `ROCKY_WEB_HOST`, `ROCKY_WEB_PORT`, `ROCKY_ALLOWED_HOSTS`
+- [rocky-backend/.env](rocky-backend/.env): `ROCKY_APP_ENV=production`, `ROCKY_DB_BACKEND=mongodb`, `ROCKY_MONGODB_URI`, `ROCKY_INTERNAL_PROXY_SECRET`, `ROCKY_ENABLE_DB_INSPECTOR=false`, `ROCKY_API_HOST`, `ROCKY_API_PORT`
+- [rocky-interface/.env](rocky-interface/.env): `PUBLIC_APP_ENV=production`, `PUBLIC_API_BASE_URL`, `PUBLIC_MICROSOFT_CLIENT_ID`, the specific `PUBLIC_MICROSOFT_TENANT_ID`, `ROCKY_SESSION_SECRET`, the same `ROCKY_INTERNAL_PROXY_SECRET`, `ROCKY_WEB_HOST`, `ROCKY_WEB_PORT`, `ROCKY_ALLOWED_HOSTS`
 
 Auth mode behavior:
 
@@ -118,11 +118,19 @@ Useful endpoints:
 - `GET /health`
 - `GET /users`
 - `GET /courses`
-- `GET /analytics/kpis`
+- `GET /analytics/current`
+- `GET /analytics/summary`
+- `GET /analytics/timeseries`
+- `GET /analytics/hardware`
+- `GET /analytics/breakdown`
+- `GET /analytics/requests`
 - `GET /widgets/default`
 - `GET /help/faq`
 
 Admin-only endpoints require the admin headers passed by the Svelte proxy layer.
+The frontend `Analytics` frame consumes these endpoints as a responsive
+monitoring workspace with throughput trends, bounded Granite hardware history,
+attribution breakdowns, and sanitized request inspection.
 
 ## Chat API
 

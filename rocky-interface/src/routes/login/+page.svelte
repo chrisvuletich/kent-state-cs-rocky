@@ -2,75 +2,21 @@
   import { browser } from '$app/environment';
   import { replaceState } from '$app/navigation';
   import { onMount } from 'svelte';
-  import { ENABLE_MICROSOFT_OAUTH, ENABLE_PREVIEW_AUTH, MICROSOFT_OAUTH } from '$lib/config/env';
+  import { ENABLE_MICROSOFT_OAUTH, ENABLE_PREVIEW_AUTH } from '$lib/config/env';
+  import { getMicrosoftAuthClient } from '$lib/auth/microsoftClient';
   import '$lib/styles/routes/modules/login-view.css';
-
-  type MsalClaims = Record<string, unknown>;
 
   let error: string | null = null;
   let isSigningInWithMicrosoft = false;
   let isProcessingMicrosoftRedirect = false;
 
   type MicrosoftAuthResponse = {
-    idTokenClaims?: MsalClaims;
-    account?: {
-      username?: string;
-    };
+    idToken?: string;
   };
 
-  let msalAppPromise: Promise<any> | null = null;
-
-  function readClaim(claims: MsalClaims | undefined, ...keys: string[]): string {
-    if (!claims) {
-      return '';
-    }
-
-    for (const key of keys) {
-      const value = claims[key];
-      if (typeof value === 'string' && value.trim()) {
-        return value.trim();
-      }
-    }
-
-    return '';
-  }
-
-  async function getMsalApp() {
-    if (!msalAppPromise) {
-      msalAppPromise = (async () => {
-        const { PublicClientApplication } = await import('@azure/msal-browser');
-        const app = new PublicClientApplication({
-          auth: {
-            clientId: MICROSOFT_OAUTH.clientId,
-            authority: MICROSOFT_OAUTH.authority,
-            redirectUri: new URL('/login', window.location.origin).toString()
-          },
-          cache: {
-            cacheLocation: 'localStorage'
-          }
-        });
-
-        await app.initialize();
-        return app;
-      })();
-    }
-
-    return msalAppPromise!;
-  }
-
   async function establishSessionFromMicrosoftLogin(loginResponse: MicrosoftAuthResponse): Promise<void> {
-    const claims = (loginResponse.idTokenClaims ?? {}) as MsalClaims;
-    console.log('[oauth] microsoft id token claims', claims);
-
-    const email =
-      readClaim(claims, 'preferred_username', 'email', 'upn', 'unique_name') ||
-      (loginResponse.account?.username ?? '').trim();
-    const firstName = readClaim(claims, 'given_name', 'name');
-    const lastName = readClaim(claims, 'family_name');
-    const id = readClaim(claims, 'id', 'ksuid', 'employeeId', 'extension_KSUID', 'extension_ksuid');
-
-    if (!email) {
-      throw new Error('Microsoft login returned no usable email claim.');
+    if (!loginResponse.idToken) {
+      throw new Error('Microsoft login returned no identity token.');
     }
 
     const sessionResponse = await fetch('/auth/microsoft/login', {
@@ -78,12 +24,7 @@
       headers: {
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({
-        firstName,
-        lastName,
-        email,
-        id
-      })
+      body: JSON.stringify({ idToken: loginResponse.idToken })
     });
 
     if (!sessionResponse.ok) {
@@ -93,7 +34,6 @@
       throw new Error(payload.error || 'Unable to sign in with Microsoft.');
     }
 
-    console.log('[oauth] frontend session established', { email });
     window.location.href = '/';
   }
 
@@ -105,7 +45,7 @@
     isProcessingMicrosoftRedirect = true;
 
     try {
-      const app = await getMsalApp();
+      const app = await getMicrosoftAuthClient();
       const redirectResponse = await app.handleRedirectPromise();
 
       if (!redirectResponse) {
@@ -147,7 +87,7 @@
     isSigningInWithMicrosoft = true;
 
     try {
-      const app = await getMsalApp();
+      const app = await getMicrosoftAuthClient();
       await app.loginRedirect({
         scopes: ['openid', 'profile', 'email', 'User.Read'],
         prompt: 'select_account'

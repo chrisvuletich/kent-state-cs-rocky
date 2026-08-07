@@ -160,6 +160,14 @@ def run_both(seed: bool = False) -> int:
     resolved_granite_url = os.getenv("ROCKY_GRANITE_URL", "").strip() or granite_url()
     resolved_chat_api_url = os.getenv("ROCKY_CHAT_API_URL", "").strip() or chat_api_url()
     frontend_host, frontend_port = frontend_bind()
+    hardware_enabled = os.getenv(
+        "ROCKY_HARDWARE_TELEMETRY_ENABLED", ""
+    ).strip().lower() in {"1", "true", "yes", "on"}
+    backend_env = os.environ.copy()
+    if hardware_enabled and not backend_env.get("ROCKY_HARDWARE_METRICS_URL", "").strip():
+        backend_env["ROCKY_HARDWARE_METRICS_URL"] = resolved_granite_url.replace(
+            "/generate", "/hardware"
+        )
     log(f"Using Python interpreter: {python_exe}")
 
     if seed:
@@ -167,6 +175,7 @@ def run_both(seed: bool = False) -> int:
         subprocess.run([python_exe, str(SEED_SCRIPT)], check=True, cwd=str(REPO_ROOT))
 
     granite_process = None
+    hardware_sampler_process = None
     if resolved_granite_url == granite_url():
         granite_host, granite_port = granite_bind()
         granite_env = os.environ.copy()
@@ -184,7 +193,7 @@ def run_both(seed: bool = False) -> int:
     chat_api_process = subprocess.Popen([python_exe, "api.py"], cwd=str(CHAT_API_DIR), env=chat_env)
 
     log(f"Launching backend API on {resolved_backend_url}")
-    backend_process = subprocess.Popen([python_exe, "main.py"], cwd=str(BACKEND_DIR), env=os.environ.copy())
+    backend_process = subprocess.Popen([python_exe, "main.py"], cwd=str(BACKEND_DIR), env=backend_env)
 
     try:
         if granite_process is not None and not wait_for_http(resolved_granite_url.replace("/generate", "/health")):
@@ -196,6 +205,14 @@ def run_both(seed: bool = False) -> int:
         if not wait_for_http(f"{resolved_backend_url}/health"):
             raise RuntimeError(f"Backend did not become ready on {resolved_backend_url}")
 
+        if hardware_enabled:
+            log("Launching bounded hardware telemetry sampler.")
+            hardware_sampler_process = subprocess.Popen(
+                [python_exe, "sample_hardware.py"],
+                cwd=str(BACKEND_DIR),
+                env=backend_env,
+            )
+
         log("Backend services are ready. Starting frontend against backend API...")
 
         env = _build_frontend_env(api_base_url=resolved_backend_url, chat_api_url_value=resolved_chat_api_url)
@@ -206,6 +223,14 @@ def run_both(seed: bool = False) -> int:
             env=env,
         )
     finally:
+        if hardware_sampler_process is not None and hardware_sampler_process.poll() is None:
+            log("Stopping hardware telemetry sampler...")
+            hardware_sampler_process.terminate()
+            try:
+                hardware_sampler_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                hardware_sampler_process.kill()
+
         if granite_process is not None and granite_process.poll() is None:
             log("Stopping Granite service...")
             granite_process.terminate()

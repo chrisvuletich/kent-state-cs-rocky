@@ -27,7 +27,29 @@ Top Active Courses ranks up to five courses by recorded request events. Its prog
 
 ## 5. Continue administration
 
-Administrators can use the sidebar to open Users, Courses, Admin Panel, Audit Logs, API Keys, Account, Chat, and Help. Use the dashboard for an overview, then open the specific page needed for detail.
+Administrators can use the sidebar to open Analytics, Users, Courses, Admin Panel, Audit Logs, API Keys, Account, Chat, and Help. Use the dashboard for an overview, then open the specific page needed for detail.
+
+## 6. Inspect AI usage analytics
+
+Open **Analytics** to review live AI request telemetry. Choose a time window to compare request and token throughput, model speed, outcomes, and latency. Use **Breakdown** to group the same metrics by user, course, API key, group, model, request source, or outcome.
+
+The **Review queue** opens a sanitized request detail view containing the recorded prompt and response. Filter it by request outcome, flagged state, or review status to focus on requests that need attention. Analytics and review controls are restricted to administrators.
+
+For a request that needs follow-up, mark it **Flagged**, choose at least one structured reason, set its status to **Unreviewed**, **In review**, or **Resolved**, and add concise administrative notes. Saving records the reviewing administrator and time. Removing the flag also removes its flag reasons, while notes and workflow status remain available for documenting the decision.
+
+Every saved review appends the previous and updated review values to the request's history and creates a metadata-only audit event. The audit event identifies the request and review transition; it does not create another copy of the prompt or response. The request detail does not expose plaintext API keys, authorization headers, cookies, or stored key hashes.
+
+If another administrator saves the same review first, Rocky preserves your
+draft and asks you to reload the newer review instead of overwriting it.
+
+The **Hardware & model correlation** section aligns Granite GPU utilization,
+VRAM use, generation speed, and p95 request latency over the selected window.
+Its latest strip also shows GPU temperature, CPU/RAM use, and Rocky's current
+active-request count. Requests that never reached a terminal state and are more
+than four minutes old are shown separately as unresolved rather than active. A
+**Partial**, **Stale**, or **Unavailable** state means the dashboard
+does not have a complete recent Granite snapshot; it must not be interpreted as
+zero utilization. The source hostname identifies which machine was measured.
 
 ## Recommended practices
 

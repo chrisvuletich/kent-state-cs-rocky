@@ -127,6 +127,9 @@ def get_preview_users(deps: dict[str, Any]):
 
 
 def get_session_user(deps: dict[str, Any]):
+    ok, _ = deps["require_internal_proxy"]()
+    if not ok:
+        return jsonify({"error": "Trusted proxy access is required."}), 403
     normalize_str = deps["normalize_str"]
     is_valid_email = deps["is_valid_email"]
     _bad_request = deps["_bad_request"]
@@ -152,6 +155,9 @@ def get_session_user(deps: dict[str, Any]):
 
 
 def microsoft_login(deps: dict[str, Any]):
+    ok, _ = deps["require_internal_proxy"]()
+    if not ok:
+        return jsonify({"error": "Trusted proxy access is required."}), 403
     settings = deps["settings"]
     _normalize_oauth_payload = deps["_normalize_oauth_payload"]
     _bad_request = deps["_bad_request"]

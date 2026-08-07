@@ -16,6 +16,9 @@ class Collections:
     courses: any
     api_keys: any
     api_history: any
+    telemetry_interactions: any
+    telemetry_current: any
+    telemetry_hardware: any
     analytics_kpis: any
     analytics_activity: any
     widgets_default: any
@@ -29,6 +32,9 @@ def _from_db(db) -> Collections:
         courses=db["courses"],
         api_keys=db["api_keys"],
         api_history=db["api_history"],
+        telemetry_interactions=db["telemetry_interactions"],
+        telemetry_current=db["telemetry_current"],
+        telemetry_hardware=db["telemetry_hardware"],
         analytics_kpis=db["analytics_kpis"],
         analytics_activity=db["analytics_activity"],
         widgets_default=db["widgets_default"],
@@ -45,6 +51,47 @@ def _create_index(collection, keys, **kwargs) -> None:
 
 
 def ensure_indexes(collections: Collections) -> None:
+    _create_index(
+        collections.telemetry_interactions,
+        [("received_at", -1)],
+        name="telemetry_received_at",
+    )
+    _create_index(
+        collections.telemetry_interactions,
+        [("actor.user_id", 1), ("received_at", -1)],
+        name="telemetry_actor_received_at",
+    )
+    _create_index(
+        collections.telemetry_interactions,
+        [("course.course_id", 1), ("received_at", -1)],
+        name="telemetry_course_received_at",
+    )
+    _create_index(
+        collections.telemetry_interactions,
+        [("outcome", 1), ("received_at", -1)],
+        name="telemetry_outcome_received_at",
+    )
+    _create_index(
+        collections.telemetry_interactions,
+        [("review.status", 1), ("received_at", -1)],
+        name="telemetry_review_status_received_at",
+    )
+    _create_index(
+        collections.telemetry_interactions,
+        [("review.flagged", 1), ("received_at", -1)],
+        name="telemetry_review_received_at",
+    )
+    _create_index(
+        collections.telemetry_hardware,
+        [("sampled_at", -1)],
+        name="telemetry_hardware_sampled_at",
+    )
+    _create_index(
+        collections.telemetry_hardware,
+        [("expires_at", 1)],
+        name="telemetry_hardware_expiry",
+        expireAfterSeconds=0,
+    )
     _create_index(
         collections.api_keys,
         [("course_id", 1), ("owner_type", 1), ("owner_id", 1), ("slot_index", 1)],

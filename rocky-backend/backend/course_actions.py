@@ -481,6 +481,18 @@ def update_course_instructor_handout_limit(course: dict[str, Any], handout_limit
         raise ValueError("instructor_handout_limit must be an integer >= 0.")
 
     course["instructor_handout_limit"] = handout_limit
+    for member in course.get("members", []):
+        if not isinstance(member, dict):
+            continue
+        current_limit = member.get("key_limit")
+        if isinstance(current_limit, int) and current_limit >= 0:
+            member["key_limit"] = min(current_limit, handout_limit)
+    for group in course.get("groups", []):
+        if not isinstance(group, dict):
+            continue
+        current_limit = group.get("key_limit")
+        if isinstance(current_limit, int) and current_limit >= 0:
+            group["key_limit"] = min(current_limit, handout_limit)
     _set_course_member_lists(course)
     return course
 
@@ -735,7 +747,16 @@ def set_course_active_state(course: dict[str, Any], api_keys_collection, is_acti
                 continue
             seen_ids.add(key_entry_id)
             updated_entry = dict(key_entry)
-            updated_entry["is_active"] = is_active
+            if is_active:
+                if updated_entry.get("disabled_reason") != "course":
+                    continue
+                updated_entry["is_active"] = True
+                updated_entry.pop("disabled_reason", None)
+            elif updated_entry.get("is_active", True) is not False:
+                updated_entry["is_active"] = False
+                updated_entry["disabled_reason"] = "course"
+            else:
+                continue
             api_keys_collection.replace_one({"_id": key_entry_id}, updated_entry)
 
     return course
@@ -790,5 +811,9 @@ def set_course_api_key_active_state(
 
     updated_key = dict(target_key)
     updated_key["is_active"] = is_active
+    if is_active:
+        updated_key.pop("disabled_reason", None)
+    else:
+        updated_key["disabled_reason"] = "manual"
     api_keys_collection.replace_one({"_id": target_key.get("_id")}, updated_key)
     return updated_key

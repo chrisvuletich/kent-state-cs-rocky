@@ -9,6 +9,10 @@ OLLAMA_TIMEOUT_SECONDS = int(os.getenv("ROCKY_OLLAMA_TIMEOUT_SECONDS", "150"))
 _PROVIDER_INTEGER_FIELDS = (
     "prompt_eval_count",
     "eval_count",
+    "total_duration",
+    "load_duration",
+    "prompt_eval_duration",
+    "eval_duration",
 )
 # Max string length for Metadata fields
 _MAX_PROVIDER_STRING_LENGTH = 256

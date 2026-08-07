@@ -1,5 +1,6 @@
 import { error, json, type RequestHandler } from '@sveltejs/kit';
 import { API_BASE_URL } from '$lib/config/env';
+import { internalProxyHeaders } from '$lib/server/backendSecurity';
 
 function joinApiUrl(path: string, search: string): string {
 	const normalizedPath = path.replace(/^\/+/, '');
@@ -9,6 +10,7 @@ function joinApiUrl(path: string, search: string): string {
 async function forward(request: Request, locals: App.Locals, path: string): Promise<Response> {
 	const headers = new Headers();
 	headers.set('Accept', 'application/json');
+	for (const [name, value] of Object.entries(internalProxyHeaders())) headers.set(name, value);
 
 	const contentType = request.headers.get('content-type');
 	if (contentType) {
@@ -35,7 +37,7 @@ async function forward(request: Request, locals: App.Locals, path: string): Prom
 }
 
 function ensureAuthorized(path: string, currentUser: App.Locals['currentUser']): void {
-	if (path === 'auth/preview-users' || path === 'auth/microsoft/login' || path === 'auth/session-user') {
+	if (path === 'auth/preview-users') {
 		return;
 	}
 

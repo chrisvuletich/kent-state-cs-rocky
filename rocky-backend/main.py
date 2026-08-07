@@ -13,7 +13,7 @@ from bson.errors import InvalidId
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 
-from backend.authz import require_admin, require_requester_identity
+from backend.authz import require_admin, require_internal_proxy, require_requester_identity
 from backend.course_actions import (
     add_course_members,
     add_group_member,
@@ -85,6 +85,9 @@ whitelist_users = collections.whitelist_users
 courses = collections.courses
 api_keys = collections.api_keys
 api_history = collections.api_history
+telemetry_interactions = collections.telemetry_interactions
+telemetry_current = collections.telemetry_current
+telemetry_hardware = collections.telemetry_hardware
 analytics_kpis = collections.analytics_kpis
 analytics_activity = collections.analytics_activity
 widgets_default = collections.widgets_default
@@ -684,6 +687,9 @@ def _route_deps() -> dict[str, Any]:
         "courses": courses,
         "api_keys": api_keys,
         "api_history": api_history,
+        "telemetry_interactions": telemetry_interactions,
+        "telemetry_current": telemetry_current,
+        "telemetry_hardware": telemetry_hardware,
         "analytics_kpis": analytics_kpis,
         "analytics_activity": analytics_activity,
         "widgets_default": widgets_default,
@@ -691,6 +697,7 @@ def _route_deps() -> dict[str, Any]:
         "is_valid_email": is_valid_email,
         "logger": logger,
         "require_admin": require_admin,
+        "require_internal_proxy": require_internal_proxy,
         "require_requester_identity": require_requester_identity,
         "normalize_str": normalize_str,
         "_bad_request": _bad_request,
@@ -949,6 +956,48 @@ def get_analytics_kpis():
 @app.route("/analytics/activity", methods=["GET"])
 def get_analytics_activity():
     return content_handlers.get_analytics_activity(_route_deps())
+
+
+@app.route("/analytics/summary", methods=["GET"])
+def get_analytics_summary():
+    return content_handlers.get_analytics_summary(_route_deps())
+
+
+@app.route("/analytics/current", methods=["GET"])
+def get_analytics_current():
+    return content_handlers.get_analytics_current(_route_deps())
+
+
+@app.route("/analytics/timeseries", methods=["GET"])
+def get_analytics_timeseries():
+    return content_handlers.get_analytics_timeseries(_route_deps())
+
+
+@app.route("/analytics/hardware", methods=["GET"])
+def get_analytics_hardware():
+    return content_handlers.get_analytics_hardware(_route_deps())
+
+
+@app.route("/analytics/breakdown", methods=["GET"])
+def get_analytics_breakdown():
+    return content_handlers.get_analytics_breakdown(_route_deps())
+
+
+@app.route("/analytics/requests", methods=["GET"])
+def get_analytics_requests():
+    return content_handlers.get_analytics_requests(_route_deps())
+
+
+@app.route("/analytics/requests/<request_id>", methods=["GET"])
+def get_analytics_request(request_id):
+    return content_handlers.get_analytics_request(_route_deps(), request_id)
+
+
+@app.route("/analytics/requests/<request_id>/review", methods=["PATCH"])
+def patch_analytics_request_review(request_id):
+    return content_handlers.patch_analytics_request_review(
+        _route_deps(), request_id
+    )
 
 
 @app.route("/widgets/default", methods=["GET"])

@@ -1,18 +1,29 @@
+import copy
 import logging
 import time
-from datetime import datetime, timedelta, timezone
-from uuid import uuid4
+from datetime import datetime, timezone
 
 
 CURRENT_DOCUMENT_ID = "rocky:model-runtime"
-OUTCOMES = {"completed", "failed", "timed_out"}
+SCHEMA_VERSION = 2
+OUTCOMES = {"completed", "rejected", "failed", "timed_out"}
 BYTE_FIELDS = ("model_input_bytes", "model_output_bytes")
-INTEGER_FIELDS = ("prompt_eval_count", "eval_count")
+INTEGER_FIELDS = (
+    "prompt_eval_count",
+    "eval_count",
+    "total_duration",
+    "load_duration",
+    "prompt_eval_duration",
+    "eval_duration",
+)
 STRING_FIELDS = ("actual_model", "stop_reason")
 CURRENT_COUNTER_DEFAULTS = {
     "counter_revision": 0,
+    "interactions_received_total": 0,
+    # Retained for compatibility with the original telemetry projection.
     "interactions_accepted_total": 0,
     "interactions_completed_total": 0,
+    "interactions_rejected_total": 0,
     "interactions_failed_total": 0,
     "interactions_timed_out_total": 0,
     "active_requests": 0,
@@ -69,11 +80,20 @@ class TelemetryStore:
     def ensure_indexes(self):
         ok = True
         indexes = (
-            ([("state", 1), ("accepted_at", 1)],
-             {"name": "telemetry_state_accepted_at"}),
-            ([("expires_at", 1)], {
-                "name": "telemetry_terminal_expiry", "expireAfterSeconds": 0,
-            }),
+            ([('state', 1), ('received_at', 1)],
+             {"name": "telemetry_state_received_at"}),
+            ([('actor.user_id', 1), ('received_at', -1)],
+             {"name": "telemetry_actor_received_at"}),
+            ([('credential.key_id', 1), ('received_at', -1)],
+             {"name": "telemetry_key_received_at"}),
+            ([('course.course_id', 1), ('received_at', -1)],
+             {"name": "telemetry_course_received_at"}),
+            ([('outcome', 1), ('received_at', -1)],
+             {"name": "telemetry_outcome_received_at"}),
+            ([('review.flagged', 1), ('received_at', -1)],
+             {"name": "telemetry_review_received_at"}),
+            ([('review.status', 1), ('received_at', -1)],
+             {"name": "telemetry_review_status_received_at"}),
         )
         for keys, options in indexes:
             try:
@@ -90,43 +110,90 @@ class TelemetryStore:
             safe_log(self.logger, "telemetry.current_init_failed", error)
         return ok
 
-    def record_accepted(self):
-        request_id = str(uuid4())
-        accepted_at = utc_now()
+    def record_received(self, request_id, record=None, received_at=None,
+                        started_monotonic_ns=None):
+        if not isinstance(request_id, str) or not request_id.strip():
+            raise ValueError("Telemetry request_id must be a non-empty string.")
+        received_at = utc(received_at or utc_now())
         interaction = {
             "request_id": request_id,
-            "started_monotonic_ns": time.monotonic_ns(),
+            "started_monotonic_ns": (
+                started_monotonic_ns
+                if isinstance(started_monotonic_ns, int)
+                else time.monotonic_ns()
+            ),
             "current_counted": False,
+            "persisted": False,
         }
+        document = copy.deepcopy(record) if isinstance(record, dict) else {}
+        document.update({
+            "_id": request_id,
+            "schema_version": SCHEMA_VERSION,
+            "state": "received",
+            "received_at": received_at,
+            # Keep this alias while the projection and older tooling migrate.
+            "accepted_at": received_at,
+            "review": document.get("review") if isinstance(document.get("review"), dict) else {
+                "version": 0,
+                "flagged": False,
+                "flag_reasons": [],
+                "status": "unreviewed",
+                "reviewed_by": None,
+                "reviewed_at": None,
+                "notes": None,
+            },
+        })
         try:
-            self.interactions.insert_one({
-                "_id": request_id,
-                "accepted_at": accepted_at,
-                "state": "accepted",
-            })
+            self.interactions.insert_one(document)
+            interaction["persisted"] = True
         except Exception as error:
-            safe_log(self.logger, "telemetry.accept_write_failed", error)
-            return None
+            safe_log(self.logger, "telemetry.receive_write_failed", error)
+            return interaction
         try:
             result = self.current.update_one({"_id": CURRENT_DOCUMENT_ID}, {
                 "$inc": {
                     "counter_revision": 1,
+                    "interactions_received_total": 1,
                     "interactions_accepted_total": 1,
                     "active_requests": 1,
                 },
-                "$max": {"last_interaction_at": accepted_at},
+                "$max": {"last_interaction_at": received_at},
             })
             interaction["current_counted"] = (
                 getattr(result, "modified_count", 0) == 1)
         except Exception as error:
-            safe_log(self.logger, "telemetry.accept_counter_failed", error)
+            safe_log(self.logger, "telemetry.receive_counter_failed", error)
         return interaction
 
+    def record_accepted(self, request_id=None, record=None):
+        """Compatibility wrapper for callers using the original method name."""
+        if request_id is None:
+            from uuid import uuid4
+            request_id = str(uuid4())
+        return self.record_received(request_id, record=record)
+
+    def update_interaction(self, interaction, fields):
+        if (not isinstance(interaction, dict)
+                or not interaction.get("persisted")
+                or not isinstance(fields, dict)
+                or not fields):
+            return False
+        try:
+            result = self.interactions.update_one(
+                {"_id": interaction["request_id"], "state": "received"},
+                {"$set": copy.deepcopy(fields)},
+            )
+        except Exception as error:
+            safe_log(self.logger, "telemetry.enrich_write_failed", error)
+            return False
+        return getattr(result, "matched_count", 1) == 1
+
     def record_terminal(self, interaction, outcome, model_metrics=None,
-                        terminal_at=None, request_latency_ms=None):
+                        terminal_at=None, request_latency_ms=None,
+                        terminal_record=None):
         if outcome not in OUTCOMES:
             raise ValueError(f"Unsupported telemetry outcome: {outcome!r}")
-        if not isinstance(interaction, dict):
+        if not isinstance(interaction, dict) or not interaction.get("persisted"):
             return False
         terminal_at = utc(terminal_at or utc_now())
         if request_latency_ms is None:
@@ -138,24 +205,36 @@ class TelemetryStore:
             return False
 
         metrics = sanitize_model_metrics(model_metrics)
+        terminal_fields = (
+            copy.deepcopy(terminal_record)
+            if isinstance(terminal_record, dict)
+            else {}
+        )
+        terminal_fields.update({
+            "state": "terminal",
+            "outcome": outcome,
+            "terminal_at": terminal_at,
+            "request_latency_ms": request_latency_ms,
+            **metrics,
+        })
+        performance = terminal_fields.get("performance")
+        if not isinstance(performance, dict):
+            performance = {}
+        performance["request_latency_ms"] = request_latency_ms
+        terminal_fields["performance"] = performance
+
         try:
             result = self.interactions.update_one(
-                {"_id": interaction["request_id"], "state": "accepted"},
-                {"$set": {
-                    "state": "terminal",
-                    "outcome": outcome,
-                    "terminal_at": terminal_at,
-                    "expires_at": terminal_at + timedelta(days=7),
-                    "request_latency_ms": request_latency_ms,
-                    **metrics,
-                }},
+                {"_id": interaction["request_id"], "state": "received"},
+                {"$set": terminal_fields},
             )
         except Exception as error:
             safe_log(self.logger, "telemetry.terminal_write_failed", error)
             return False
-        if (getattr(result, "modified_count", 0) != 1
-                or not interaction["current_counted"]):
+        if getattr(result, "modified_count", 0) != 1:
             return False
+        if not interaction["current_counted"]:
+            return True
 
         increments = {
             "counter_revision": 1,
@@ -201,5 +280,5 @@ class TelemetryStore:
             )
         except Exception as error:
             safe_log(self.logger, "telemetry.terminal_counter_failed", error)
-            return False
-        return getattr(result, "modified_count", 0) == 1
+            return True
+        return True

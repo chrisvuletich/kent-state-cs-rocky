@@ -35,7 +35,13 @@ Create env file:
 Microsoft OAuth (optional in development, required in production):
 
 - `PUBLIC_MICROSOFT_CLIENT_ID=<entra-app-client-id>`
-- `PUBLIC_MICROSOFT_TENANT_ID=common` (or your tenant id)
+- `PUBLIC_MICROSOFT_TENANT_ID=<kent-tenant-id>` (a specific tenant is required)
+- `ROCKY_SESSION_SECRET=<independent-random-secret-at-least-32-characters>`
+- `ROCKY_INTERNAL_PROXY_SECRET=<random-secret-at-least-32-characters-shared-with-backend>`
+
+MSAL uses browser session storage. Rocky logout clears the signed application
+session and Rocky's MSAL cache without globally signing the user out of other
+Kent Microsoft applications.
 
 Redirect callback behavior:
 
@@ -70,8 +76,35 @@ npm run preview
 ## Backend integration expectations
 
 - Frontend should call local proxy routes under `src/routes/api/backend/[...path]/+server.ts`.
-- Proxy adds authenticated user headers for backend authorization checks.
+- Proxy adds authenticated user headers and the private internal proxy secret
+  used by the backend to trust those headers.
+- Web sessions contain a signed, expiring identity value; the browser cannot
+  create or alter a valid session without `ROCKY_SESSION_SECRET`.
 - Do not add direct local JSON data reads for protected data.
+
+## Administrator analytics workspace
+
+Administrators have an `Analytics` frame backed by the Flask Phase 2 telemetry
+endpoints. It provides:
+
+- selectable `15m`, `1h`, `6h`, `24h`, `7d`, and `30d` windows;
+- request/token throughput, model timing, token throughput, outcomes, and latency;
+- breakdowns by user, course, API key, group, model, source, and outcome;
+- a filterable administrative review queue and complete sanitized
+  request/response inspection;
+- review controls for flags, structured reasons, workflow status, and notes;
+- bounded Granite GPU, VRAM, temperature, CPU, and RAM history synchronized
+  with model speed, latency, token load, and model-load duration;
+- automatic 30-second refresh while the tab is visible, retaining the last good
+  data when a refresh fails;
+- responsive desktop and mobile layouts, with request detail presented as a
+  mobile bottom sheet.
+
+The selected window, breakdown dimension, request ID, outcome filter, and review
+filter are reflected in the URL as `analytics_window`, `analytics_dimension`,
+`analytics_request`, `analytics_outcome`, and `analytics_review`, so a reload
+restores the same analytical view. These values contain identifiers and view
+choices only; request content and review notes are never placed in the URL.
 
 ## Key folders
 

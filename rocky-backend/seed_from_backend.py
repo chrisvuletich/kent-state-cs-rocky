@@ -372,6 +372,9 @@ def use_in_memory_db() -> None:
     main.courses = test_collections.courses
     main.api_keys = test_collections.api_keys
     main.api_history = test_collections.api_history
+    main.telemetry_interactions = test_collections.telemetry_interactions
+    main.telemetry_current = test_collections.telemetry_current
+    main.telemetry_hardware = test_collections.telemetry_hardware
     main.analytics_kpis = test_collections.analytics_kpis
     main.analytics_activity = test_collections.analytics_activity
     main.widgets_default = test_collections.widgets_default

@@ -13,6 +13,7 @@
 
 	const frameIcons: Record<FrameName, string> = {
 		dashboard: '/dashboard-icon.svg',
+		analytics: '/analytics-icon.svg',
 		users: '/users-icon.svg',
 		courses: '/courses-icon.svg',
 		admin: '/admin-icon.svg',

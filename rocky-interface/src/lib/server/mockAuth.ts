@@ -1,4 +1,5 @@
 import { API_BASE_URL, APP_ENV, ENABLE_PREVIEW_AUTH } from '$lib/config/env';
+import { internalProxyHeaders } from '$lib/server/backendSecurity';
 import { normalizeUsers, type ApiUser, type User } from '$lib/types/user';
 
 export const SESSION_COOKIE_NAME = 'rocky_session';
@@ -44,7 +45,8 @@ export async function getUserByEmail(email: string): Promise<User | null> {
 	const sessionResponse = await fetch(lookupUrl, {
 		method: 'GET',
 		headers: {
-			Accept: 'application/json'
+			Accept: 'application/json',
+			...internalProxyHeaders()
 		},
 		cache: 'no-store'
 	});

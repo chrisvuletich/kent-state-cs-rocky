@@ -1,4 +1,5 @@
 import os
+import secrets
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -13,17 +14,34 @@ load_dotenv(SERVICE_ROOT / ".env", override=False)
 load_dotenv(SERVICE_ROOT / ".env.local", override=True)
 
 from app.ollama_client import OllamaCallError, call_ollama_chat
+from app.hardware_metrics import collect_hardware_snapshot
+from app.runtime_state import begin_inference, end_inference
 from app.request_parser import extract_model, extract_messages, extract_reasoning, extract_generation_options
 
 
 app = Flask(__name__)
 GRANITE_HOST = os.getenv("ROCKY_GRANITE_HOST", "127.0.0.1")
 GRANITE_PORT = int(os.getenv("ROCKY_GRANITE_PORT", "5002"))
+APP_ENV = os.getenv("ROCKY_APP_ENV", "development").strip().lower()
+HARDWARE_METRICS_TOKEN = os.getenv("ROCKY_HARDWARE_METRICS_TOKEN", "").strip()
 
 
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"ok": True, "service": "granite-llm-server"}), 200
+
+
+@app.route("/hardware", methods=["GET"])
+def hardware():
+    provided_token = request.headers.get("X-Rocky-Metrics-Token", "")
+    if HARDWARE_METRICS_TOKEN:
+        if not secrets.compare_digest(provided_token, HARDWARE_METRICS_TOKEN):
+            return jsonify({"error": "Hardware metrics authentication failed."}), 401
+    elif APP_ENV == "production":
+        return jsonify({"error": "Hardware metrics are not configured."}), 503
+    elif request.remote_addr not in {"127.0.0.1", "::1"}:
+        return jsonify({"error": "Hardware metrics are available locally only."}), 403
+    return jsonify(collect_hardware_snapshot()), 200
 
 
 @app.route("/generate", methods=["POST"])
@@ -54,6 +72,7 @@ def generate():
 
     think = reasoning["effort"] if reasoning is not None else None
 
+    begin_inference()
     try:
         ollama_result = call_ollama_chat(model, messages, options, think)
     except OllamaCallError as error:
@@ -77,6 +96,8 @@ def generate():
                 "message": "Model service request failed.",
             }
         }), 502
+    finally:
+        end_inference()
     
     if reasoning is not None and not ollama_result["thinking_present"]:
         return jsonify({
@@ -116,10 +137,9 @@ def generate():
 
 
 if __name__ == "__main__":
-    app_env = os.getenv("ROCKY_APP_ENV", "development").strip().lower()
     app.run(
         host=GRANITE_HOST,
         port=GRANITE_PORT,
-        debug=app_env == "development",
+        debug=APP_ENV == "development",
         use_reloader=False,
     )

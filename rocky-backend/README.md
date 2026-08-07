@@ -42,6 +42,8 @@ Core variables:
 - `ROCKY_DB_NAME`: database name
 - `ROCKY_MONGITA_PATH`: local data directory shared with `api-rocky`
 - `ROCKY_API_HOST` and `ROCKY_API_PORT`: backend bind settings
+- `ROCKY_INTERNAL_PROXY_SECRET`: private secret shared with the Svelte server;
+  production requires at least 32 characters
 
 Security-related toggles:
 
@@ -60,6 +62,7 @@ Production baseline:
 - `ROCKY_DB_BACKEND=mongodb`
 - `ROCKY_MONGODB_URI` set to valid credentials
 - `ROCKY_ENABLE_DB_INSPECTOR=false`
+- `ROCKY_INTERNAL_PROXY_SECRET` set to the same value as the Svelte server
 
 ## Run backend
 
@@ -72,6 +75,72 @@ Default URL: `http://127.0.0.1:5001`
 The canonical widget catalog lives in `seed-data/widgets/widgets.json` and is exposed through the widget endpoint.
 
 Health check: `GET /health`
+
+## Telemetry analytics
+
+Analytics are calculated from the permanent `telemetry_interactions` records
+written by `api-rocky`. The Svelte server proxy supplies the authenticated user
+headers together with the private proxy secret, and every analytics endpoint
+enforces administrator access in Flask.
+
+Available endpoints:
+
+- `GET /analytics/current`: active requests and lifetime counters.
+- `GET /analytics/summary?window=24h`: outcomes, token usage, RPM/TPM,
+  latency percentiles, and model timing/throughput.
+- `GET /analytics/timeseries?window=24h&bucket=hour`: zero-filled time buckets.
+- `GET /analytics/hardware?window=24h&bucket=hour`: bounded Granite hardware
+  history aligned with workload, latency, model-load time, and generation speed.
+- `GET /analytics/breakdown?window=24h&dimension=user`: grouped metrics for
+  `user`, `course`, `key`, `group`, `model`, `source`, or `outcome`.
+- `GET /analytics/requests?window=24h&limit=50`: filtered recent-request index.
+- `GET /analytics/requests/<request_id>`: the complete sanitized stored record.
+- `PATCH /analytics/requests/<request_id>/review`: update an administrative
+  review and append its change history.
+
+The request index accepts `outcome`, `user_id`, `course_id`, `flagged`, and
+`review_status` filters. Review status is one of `unreviewed`, `in_review`, or
+`resolved`. A review update accepts `flagged`, `flag_reasons`, `status`, and
+`notes`; flagged requests require at least one reason. Supported reasons are
+`academic_integrity`, `harmful_content`, `security_abuse`, `policy_violation`,
+`system_quality`, and `other`, and notes are limited to 4,000 characters.
+
+Each update records the administrator and timestamp, appends the previous and
+new values to the telemetry record's `review_history`, and writes a metadata-only
+`telemetry-review` audit event. The audit event records the review transition
+but does not make another copy of the stored prompt or response.
+
+Review updates use a version number. If another administrator saves the same
+review first, the stale update receives `409 Conflict` and must be reloaded
+instead of silently overwriting the newer review.
+
+The current snapshot derives active and unresolved request counts from open
+interaction records. Requests older than four minutes are reported as
+unresolved rather than remaining active after an interrupted service process.
+Aggregate and request-list queries exclude stored prompt and response content;
+full content is retrieved only by the individual request-detail endpoint.
+
+Supported windows are `15m`, `1h`, `6h`, `24h`, `7d`, and `30d`. Time-series
+buckets are `minute`, `hour`, and `day`; combinations producing more than 1,000
+rows are rejected. Breakdown results are capped at 100 rows and request indexes
+at 200 rows. The older `/analytics/kpis` and `/analytics/activity` endpoints now
+return live compatibility views rather than fixture values.
+
+### Hardware sampler
+
+Hardware history uses one small standalone pull sampler rather than a scheduler
+inside each Gunicorn worker. Enable it with the `ROCKY_HARDWARE_*` variables in
+`.env.example`, then run:
+
+```sh
+python sample_hardware.py
+```
+
+`run-dev.py --mode both` starts it automatically when enabled. Production uses
+`rocky-hardware-sampler.service`. Snapshots expire independently after 90 days
+by default; permanent request records are unaffected. The configured metrics
+URL must point to the endpoint running on Granite if Granite is the host being
+measured. Production requires a shared metrics token.
 
 ## Seed data and seeding flow
 
@@ -94,6 +163,9 @@ Run seeding:
 ```powershell
 python seed_from_backend.py
 ```
+
+The analytics JSON files remain only as legacy fixture data. They are not used
+by the live telemetry endpoints.
 
 ## Tests
 

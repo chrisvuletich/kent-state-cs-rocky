@@ -88,3 +88,6 @@ export const MICROSOFT_OAUTH = {
 if (ENABLE_MICROSOFT_OAUTH && !MICROSOFT_OAUTH.clientId) {
 	throw new Error('Missing required public environment variable: PUBLIC_MICROSOFT_CLIENT_ID');
 }
+if (ENABLE_MICROSOFT_OAUTH && (!MICROSOFT_OAUTH.tenantId || ['common', 'organizations', 'consumers'].includes(MICROSOFT_OAUTH.tenantId))) {
+	throw new Error('PUBLIC_MICROSOFT_TENANT_ID must be the specific Kent tenant ID when Microsoft OAuth is active.');
+}

@@ -1,0 +1,18 @@
+[Unit]
+Description=Granite private hardware metrics endpoint
+After=network-online.target ollama.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{GRANITE_USER}}
+Group={{GRANITE_GROUP}}
+WorkingDirectory={{ROCKY_APP_DIR}}/granite-llm-server
+EnvironmentFile=/etc/rocky/hardware.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart={{ROCKY_APP_DIR}}/.venv/bin/gunicorn --workers 1 --bind {{GRANITE_PRIVATE_IP}}:5010 --access-logfile - --error-logfile - app.hardware_main:app
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

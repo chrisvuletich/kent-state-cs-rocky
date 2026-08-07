@@ -798,7 +798,7 @@
 	$: currentUserMember = (selectedDetail?.members || []).find((member) => memberMatchesCurrentUser(member)) || null;
 	$: studentPersonalKeyOwnerId = normalizeIdentifier(currentUserId) || currentUserEmail;
 	$: personalKeyLimit = currentUserMatchesCourseManager()
-		? Math.max(0, selectedCourse?.instructorHandoutLimit ?? 2)
+		? Math.max(0, selectedCourse?.instructorKeyLimit ?? 2)
 		: currentUserMember?.keyLimit ?? 0;
 	$: personalKeySlots = buildKeySlots(personalKeyLimit, personalOwnedKeys);
 	$: studentGroupTabs = studentVisibleGroups.map((group) => `group:${group.id}` as CourseTab);
@@ -1366,7 +1366,7 @@
 		if (!Number.isInteger(keyLimit) || keyLimit < 0) {
 			return;
 		}
-		const courseKeyLimit = Math.max(0, selectedCourse.instructorKeyLimit ?? 2);
+		const courseKeyLimit = Math.max(0, selectedCourse.instructorHandoutLimit ?? 2);
 		if (keyLimit > courseKeyLimit) {
 			showErrorFeedback(`Group key limit cannot exceed the course key limit (${courseKeyLimit}).`);
 			pendingGroupKeyLimitById = {
@@ -1992,7 +1992,7 @@
 					{#if isCurrentUserAdmin}
 						<div class="course-panel">
 							<h3>Max Student Keys</h3>
-							<p class="section-text">Applies to all instructors in this course.</p>
+							<p class="section-text">Caps the key allowance for each student and group in this course.</p>
 							<div class="course-group-add-row">
 								{#if isSelectedCourseClosed}
 									<div class="text-input course-locked-field">{pendingInstructorHandoutLimit}</div>

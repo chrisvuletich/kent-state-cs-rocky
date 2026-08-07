@@ -2,6 +2,7 @@ import { writable } from 'svelte/store';
 import type { Component } from 'svelte';
 import { browser } from '$app/environment';
 import DashboardView from '$lib/components/views/DashboardView.svelte';
+import AnalyticsView from '$lib/components/views/AnalyticsView.svelte';
 import UsersView from '$lib/components/views/UsersView.svelte';
 import CoursesView from '$lib/components/views/CoursesView.svelte';
 import AdminPanel from '$lib/components/views/AdminPanel.svelte';
@@ -23,6 +24,7 @@ const FRAME_COOKIE_MAX_AGE_SECONDS = 60 * 60;
 
 export const frameMap: Record<FrameName, FrameComponent> = {
     dashboard: DashboardView,
+    analytics: AnalyticsView,
     users: UsersView,
     courses: CoursesView,
     admin: AdminPanel,
