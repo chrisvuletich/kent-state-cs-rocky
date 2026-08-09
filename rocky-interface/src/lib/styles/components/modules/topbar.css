@@ -63,7 +63,8 @@
 
 @media (max-width: 768px) {
 	.topbar {
-		padding: 0 var(--space-lg);
+		padding: 0 var(--space-md);
+		gap: var(--space-sm);
 	}
 
 	.hamburger {
@@ -75,11 +76,13 @@
 	}
 
 	.brand-name {
-		font-size: 24px;
+		font-size: 22px;
 	}
 
 	.ksu-logo {
-		height: 42px;
+		height: auto;
+		max-width: 34%;
+		margin-right: 0;
 	}
 }
 

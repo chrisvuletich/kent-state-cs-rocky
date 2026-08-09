@@ -10,7 +10,6 @@
 	let isRootRoute = $derived(page.url.pathname === '/');
 </script>
 
-
 <main>
 	<FeedbackPopup />
 	{#if isRootRoute}

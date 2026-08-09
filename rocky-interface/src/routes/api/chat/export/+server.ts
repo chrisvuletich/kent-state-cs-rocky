@@ -1,5 +1,10 @@
 import { json, type RequestHandler } from '@sveltejs/kit';
-import { CHAT_API_BASE_URL, chatApiPayload, chatRequestHeaders, requireChatUser } from '$lib/server/chatProxy';
+import {
+	CHAT_API_BASE_URL,
+	chatApiPayload,
+	chatRequestHeaders,
+	requireChatUser
+} from '$lib/server/chatProxy';
 
 export const POST: RequestHandler = async ({ request, fetch, locals }) => {
 	const user = requireChatUser(locals);
@@ -22,9 +27,11 @@ export const POST: RequestHandler = async ({ request, fetch, locals }) => {
 				Accept: format === 'json' ? 'application/json' : 'text/markdown',
 				...chatRequestHeaders(user)
 			},
-			body: JSON.stringify(chatApiPayload({
-				format
-			}))
+			body: JSON.stringify(
+				chatApiPayload({
+					format
+				})
+			)
 		});
 
 		const text = await response.text();

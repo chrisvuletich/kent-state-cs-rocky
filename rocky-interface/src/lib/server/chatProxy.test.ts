@@ -94,10 +94,7 @@ describe('hiddenApiKeyForUser', () => {
 			id: 'synthetic-valid-fallback'
 		});
 
-		expectServerError(
-			() => hiddenApiKeyForUser(user),
-			'Unable to resolve chat API key owner.'
-		);
+		expectServerError(() => hiddenApiKeyForUser(user), 'Unable to resolve chat API key owner.');
 		expect(deriveHiddenApiKey).not.toHaveBeenCalled();
 	});
 
@@ -126,14 +123,29 @@ describe('hiddenApiKeyForUser', () => {
 
 	it('sends the derived key as a Bearer credential', async () => {
 		const { chatRequestHeaders } = await loadChatProxy({
-			ROCKY_HIDDEN_API_KEY_SECRET: 'synthetic-primary-secret'
+			ROCKY_HIDDEN_API_KEY_SECRET: 'synthetic-primary-secret',
+			ROCKY_INTERNAL_PROXY_SECRET: 'synthetic-internal-proxy-secret'
 		});
 		const user = syntheticUser();
 
 		expect(chatRequestHeaders(user)).toMatchObject({
 			Authorization: `Bearer ${SYNTHETIC_DERIVED_KEY}`,
+			'X-Rocky-Internal-Secret': 'synthetic-internal-proxy-secret',
 			'X-Rocky-User-Id': user.id,
 			'X-Rocky-User-Email': user.email
 		});
+	});
+
+	it('does not forward unsigned user identity headers in development', async () => {
+		const { chatRequestHeaders } = await loadChatProxy({
+			ROCKY_HIDDEN_API_KEY_SECRET: 'synthetic-primary-secret'
+		});
+		const headers = chatRequestHeaders(syntheticUser());
+
+		expect(headers.Authorization).toBe(`Bearer ${SYNTHETIC_DERIVED_KEY}`);
+		expect(headers).not.toHaveProperty('X-Rocky-User-Id');
+		expect(headers).not.toHaveProperty('X-Rocky-User-Email');
+		expect(headers).not.toHaveProperty('X-Rocky-User-Name');
+		expect(headers).not.toHaveProperty('X-Rocky-User-Is-Admin');
 	});
 });

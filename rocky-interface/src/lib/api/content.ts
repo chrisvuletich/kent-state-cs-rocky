@@ -1,9 +1,4 @@
-import {
-	toActivityRow,
-	toKpiMetric,
-	type ActivityRow,
-	type KpiMetric
-} from '$lib/types/analytics';
+import { toActivityRow, toKpiMetric, type ActivityRow, type KpiMetric } from '$lib/types/analytics';
 import {
 	normalizeCourseDetails,
 	normalizeCourseGroups,
@@ -94,7 +89,9 @@ export function getUserAssignedCourseIds(userId: string, courseDetails: CourseDe
 	const normalizedEmail = userId.trim().toLowerCase();
 	return courseDetails
 		.filter((course) => {
-			return course.members.some((member) => member.id === normalizedId || member.email.toLowerCase() === normalizedEmail);
+			return course.members.some(
+				(member) => member.id === normalizedId || member.email.toLowerCase() === normalizedEmail
+			);
 		})
 		.map((course) => course.id)
 		.filter((id): id is number => typeof id === 'number');

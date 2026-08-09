@@ -13,7 +13,7 @@ function isPathAllowedForDeactivated(pathname: string): boolean {
 		return true;
 	}
 
-	if (pathname.startsWith('/auth/') || pathname.startsWith('/api/')) {
+	if (pathname.startsWith('/auth/')) {
 		return true;
 	}
 
@@ -55,7 +55,10 @@ export const handle: Handle = async ({ event, resolve }) => {
 	event.locals.currentUser = currentUser;
 	event.locals.themePreference = 'light';
 	event.locals.userSettings = getDefaultUserSettings();
-	event.locals.initialFrame = readInitialFrameFromCookie(event.cookies.get(FRAME_COOKIE_NAME), currentUser?.isAdmin ?? false);
+	event.locals.initialFrame = readInitialFrameFromCookie(
+		event.cookies.get(FRAME_COOKIE_NAME),
+		currentUser?.isAdmin ?? false
+	);
 
 	if (currentUser) {
 		const settings = await getSettingsForUser(currentUser);
@@ -71,6 +74,21 @@ export const handle: Handle = async ({ event, resolve }) => {
 	}
 
 	if (currentUser && !currentUser.isActive && !isPathAllowedForDeactivated(event.url.pathname)) {
+		if (event.url.pathname.startsWith('/api/')) {
+			return new Response(
+				JSON.stringify({
+					error: {
+						message: 'This account is inactive.',
+						type: 'permission_error',
+						code: 'account_inactive'
+					}
+				}),
+				{
+					status: 403,
+					headers: { 'Content-Type': 'application/json' }
+				}
+			);
+		}
 		throw redirect(303, '/deactivated');
 	}
 
@@ -83,6 +101,10 @@ export const handle: Handle = async ({ event, resolve }) => {
 	}
 
 	return resolve(event, {
-		transformPageChunk: ({ html }) => html.replace('<html lang="en">', `<html lang="en" data-theme="${event.locals.themePreference}">`)
+		transformPageChunk: ({ html }) =>
+			html.replace(
+				'<html lang="en">',
+				`<html lang="en" data-theme="${event.locals.themePreference}">`
+			)
 	});
 };

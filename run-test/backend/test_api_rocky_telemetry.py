@@ -106,10 +106,13 @@ class ApiTelemetryTests(unittest.TestCase):
         rocky.api_keys_col = database["keys"]
         rocky.conversations_col = database["conversations"]
         rocky.messages_col = database["messages"]
+        rocky.responses_col = database["responses"]
         rocky.telemetry_interactions_col = database["interactions"]
         rocky.telemetry_current_col = Current()
         rocky.telemetry_store = rocky.TelemetryStore(
             rocky.telemetry_interactions_col, rocky.telemetry_current_col)
+        self.original_proxy_secret = rocky.INTERNAL_PROXY_SECRET
+        rocky.INTERNAL_PROXY_SECRET = "synthetic-proxy-secret"
         rocky.app.config["TESTING"] = True
         self.key = "private-test-api-key"
         rocky.api_keys_col.insert_one(
@@ -121,16 +124,39 @@ class ApiTelemetryTests(unittest.TestCase):
              "is_active": True})
         self.client = rocky.app.test_client()
 
+    def tearDown(self):
+        rocky.INTERNAL_PROXY_SECRET = self.original_proxy_secret
+
     def post(self, **values):
         return self.client.post("/v1/responses", json={
             "input": "Private prompt café ☕",
-            "model": "rocky",
+            "model": rocky.PUBLIC_MODEL,
             "store": False,
             **values,
         }, headers={"Authorization": f"Bearer {self.key}"})
 
     def rows(self):
         return list(rocky.telemetry_interactions_col.find({}))
+
+    def post_web(self):
+        rocky.api_keys_col.update_one(
+            {"hash": rocky.hash_api_key(self.key)},
+            {"$set": {"key_scope": "user-default"}},
+        )
+        return self.client.post(
+            "/v1/responses",
+            json={
+                "input": "Private web prompt",
+                "model": rocky.PUBLIC_MODEL,
+                "store": True,
+            },
+            headers={
+                "Authorization": f"Bearer {self.key}",
+                "X-Rocky-Internal-Secret": rocky.INTERNAL_PROXY_SECRET,
+                "X-Rocky-User-Id": "private-user-id",
+                "X-Rocky-User-Email": "private.user@kent.edu",
+            },
+        )
 
     @patch.object(rocky.requests, "post")
     def test_completed_is_permanent_deduplicated_and_fully_attributed(self, post):
@@ -160,6 +186,8 @@ class ApiTelemetryTests(unittest.TestCase):
         self.assertEqual(current["request_latency_ms_total"],
                          row["request_latency_ms"])
         self.assertEqual(row["schema_version"], 2)
+        self.assertEqual(row["operation"], "responses.create")
+        self.assertIsNotNone(row.get("inference_dispatched_at"))
         self.assertNotIn("expires_at", row)
         self.assertEqual(row["request"]["input_text"],
                          "Private prompt café ☕")
@@ -197,6 +225,20 @@ class ApiTelemetryTests(unittest.TestCase):
         self.assertEqual(rocky.telemetry_current_col.find_one({}), current)
 
     @patch.object(rocky.requests, "post")
+    def test_prompt_and_response_text_are_stored_verbatim(self, post):
+        prompt = "  Discuss password, token, and api_key variables.\nKeep spacing.  "
+        output = "  Password, token, and api_key are ordinary words here.\nDone.  "
+        post.return_value = success(output=output)
+
+        response = self.post(input=prompt)
+
+        self.assertEqual(response.status_code, 200)
+        row = self.rows()[0]
+        self.assertEqual(row["request"]["input_text"], prompt)
+        self.assertEqual(row["request"]["body"]["input"], prompt)
+        self.assertEqual(row["response"]["output_text"], output)
+
+    @patch.object(rocky.requests, "post")
     def test_failure_timeout_validation_and_latency(self, post):
         post.return_value = granite({
             "error": {"type": "model_error"},
@@ -219,9 +261,9 @@ class ApiTelemetryTests(unittest.TestCase):
 
         with patch.object(rocky, "get_or_create_conversation",
                           side_effect=RuntimeError("persistence failed")):
-            self.assertEqual(self.post(store=True).status_code, 500)
+            self.assertEqual(self.post_web().status_code, 500)
         self.assertEqual(self.rows()[-1]["outcome"], "failed")
-        invalid = {"store": True, "model": "rocky", "input": [{
+        invalid = {"store": True, "model": rocky.PUBLIC_MODEL, "input": [{
                        "role": "user", "content": [{
                            "type": "input_image", "image_url": "ignored",
                        }],
@@ -249,15 +291,42 @@ class ApiTelemetryTests(unittest.TestCase):
         for secret in ("password", "mongodb://", "private"):
             self.assertNotIn(secret, output)
 
+    @patch.object(rocky.requests, "post")
+    def test_failed_stored_chat_keeps_durable_failure_state(self, post):
+        post.return_value = granite({
+            "error": {"type": "model_error"},
+            "telemetry": {},
+        }, 502)
+
+        response = self.post_web()
+        payload = response.get_json()
+
+        self.assertEqual(response.status_code, 502)
+        self.assertTrue(payload["conversation_id"])
+        self.assertTrue(payload["message_stored"])
+        stored_messages = list(rocky.messages_col.find({
+            "conversation_id": payload["conversation_id"],
+        }))
+        self.assertEqual(len(stored_messages), 1)
+        self.assertEqual(stored_messages[0]["role"], "user")
+        self.assertEqual(stored_messages[0]["status"], "failed")
+        self.assertEqual(
+            rocky.load_recent_messages(
+                payload["conversation_id"],
+                stored_messages[0]["user_id"],
+            ),
+            [],
+        )
+
     def test_invalid_json_and_invalid_key_are_permanent_rejections(self):
         malformed = self.client.post(
             "/v1/responses",
-            data='{"model":"rocky","input":',
+            data=f'{{"model":"{rocky.PUBLIC_MODEL}","input":',
             content_type="application/json",
         )
         invalid_key = self.client.post(
             "/v1/responses",
-            json={"model": "rocky", "input": "record this", "store": False},
+            json={"model": rocky.PUBLIC_MODEL, "input": "record this", "store": False},
             headers={
                 "Authorization": "Bearer should-never-be-stored",
                 "X-Forwarded-For": "203.0.113.1, 198.51.100.7",
@@ -324,17 +393,18 @@ class ApiTelemetryTests(unittest.TestCase):
 
         service_response = self.client.post(
             "/v1/responses",
-            json={"model": "rocky", "input": "web", "store": False},
+            json={"model": rocky.PUBLIC_MODEL, "input": "web", "store": False},
             headers={
                 "Authorization": f"Bearer {service_key}",
                 "X-Rocky-User-Id": "student-one",
                 "X-Rocky-User-Email": "one@kent.edu",
                 "X-Rocky-User-Name": "Student One",
+                "X-Rocky-Internal-Secret": "synthetic-proxy-secret",
             },
         )
         group_response = self.client.post(
             "/v1/responses",
-            json={"model": "rocky", "input": "group", "store": False},
+            json={"model": rocky.PUBLIC_MODEL, "input": "group", "store": False},
             headers={
                 "Authorization": f"Bearer {group_key}",
                 "X-Rocky-User-Id": "spoofed-student",

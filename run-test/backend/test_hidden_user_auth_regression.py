@@ -45,7 +45,14 @@ SYNTHETIC_OWNER_INPUT = " Synthetic-Owner "
 SYNTHETIC_OWNER_NORMALIZED = "synthetic-owner"
 SYNTHETIC_SECRET_A = "phase-one-synthetic-secret-a"
 SYNTHETIC_SECRET_B = "phase-one-synthetic-secret-b"
-INVALID_API_KEY_RESPONSE = {"error": "Invalid API key"}
+INVALID_API_KEY_RESPONSE = {
+    "error": {
+        "message": "Invalid API key",
+        "type": "authentication_error",
+        "param": None,
+        "code": "invalid_api_key",
+    }
+}
 
 
 class FakeCollection:
@@ -98,6 +105,7 @@ class HiddenUserAuthRegressionTests(unittest.TestCase):
         api_rocky.api_keys_col = FakeCollection()
         api_rocky.conversations_col = FakeCollection()
         api_rocky.messages_col = FakeCollection()
+        api_rocky.responses_col = FakeCollection()
         api_rocky.telemetry_store = None
         api_rocky.app.config["TESTING"] = True
         self.client = api_rocky.app.test_client()
@@ -133,7 +141,9 @@ class HiddenUserAuthRegressionTests(unittest.TestCase):
 
     def _assert_invalid(self, response):
         self.assertEqual(response.status_code, 401)
-        self.assertEqual(response.get_json(), INVALID_API_KEY_RESPONSE)
+        error = response.get_json().get("error")
+        message = error.get("message") if isinstance(error, dict) else error
+        self.assertEqual(message, "Invalid API key")
 
     def _matching_key_document(self, key: str, **overrides):
         document = {
@@ -211,6 +221,41 @@ class HiddenUserAuthRegressionTests(unittest.TestCase):
 
         self._assert_invalid(self._post_conversation_list(key))
 
+    def test_revoked_and_closed_course_keys_fail_on_all_public_api_routes(self):
+        key = derive_hidden_api_key(
+            SYNTHETIC_OWNER_NORMALIZED,
+            SYNTHETIC_SECRET_A,
+        )
+        routes = (
+            ("GET", "/v1/models", None),
+            (
+                "POST",
+                "/v1/responses",
+                {
+                    "model": api_rocky.PUBLIC_MODEL,
+                    "input": "This request must not reach the model.",
+                    "store": False,
+                },
+            ),
+        )
+
+        for disabled_state in (
+            {"revoked_at": "synthetic-revocation"},
+            {"is_active": False, "disabled_reason": "course-closed"},
+        ):
+            for method, path, payload in routes:
+                with self.subTest(disabled_state=disabled_state, method=method, path=path):
+                    api_rocky.api_keys_col = FakeCollection(
+                        [self._matching_key_document(key, **disabled_state)]
+                    )
+                    response = self.client.open(
+                        path,
+                        method=method,
+                        json=payload,
+                        headers={"Authorization": f"Bearer {key}"},
+                    )
+                    self._assert_invalid(response)
+
     def test_deleted_key_returns_exact_401(self):
         key = derive_hidden_api_key(
             SYNTHETIC_OWNER_NORMALIZED,
@@ -249,7 +294,7 @@ class HiddenUserAuthRegressionTests(unittest.TestCase):
             response = self.client.post(
                 "/v1/responses",
                 json={
-                    "model": "rocky",
+                    "model": api_rocky.PUBLIC_MODEL,
                     "input": "synthetic prompt",
                     "store": False,
                 },
@@ -326,7 +371,7 @@ class HiddenUserAuthRegressionTests(unittest.TestCase):
             "is_active": True,
         }])
         request_body = {
-            "model": "rocky",
+            "model": api_rocky.PUBLIC_MODEL,
             "input": "Say hello.",
             "store": False,
         }
@@ -360,7 +405,7 @@ class HiddenUserAuthRegressionTests(unittest.TestCase):
         try:
             response = self.client.post(
                 "/v1/responses",
-                json={"model": "rocky", "input": "x" * 512},
+                json={"model": api_rocky.PUBLIC_MODEL, "input": "x" * 512},
                 headers={"Authorization": "Bearer any-key"},
             )
         finally:
@@ -368,8 +413,8 @@ class HiddenUserAuthRegressionTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 413)
         self.assertEqual(
-            response.get_json(),
-            {"error": "Request body is too large."},
+            response.get_json()["error"]["code"],
+            "request_too_large",
         )
 
 

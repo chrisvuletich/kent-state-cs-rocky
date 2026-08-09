@@ -140,7 +140,13 @@
 			{#if readOnly}
 				<div class="text-input course-locked-field">{form.name || 'N/A'}</div>
 			{:else}
-				<input id={`${idPrefix}-name-input`} class="text-input" type="text" bind:value={form.name} required />
+				<input
+					id={`${idPrefix}-name-input`}
+					class="text-input"
+					type="text"
+					bind:value={form.name}
+					required
+				/>
 			{/if}
 		</div>
 		<div class="form-group">
@@ -148,7 +154,13 @@
 			{#if readOnly}
 				<div class="text-input course-locked-field">{form.code || 'N/A'}</div>
 			{:else}
-				<input id={`${idPrefix}-code-input`} class="text-input" type="text" bind:value={form.code} placeholder="Optional" />
+				<input
+					id={`${idPrefix}-code-input`}
+					class="text-input"
+					type="text"
+					bind:value={form.code}
+					placeholder="Optional"
+				/>
 			{/if}
 		</div>
 		{#if useSemesterPicker}
@@ -188,7 +200,12 @@
 				{#if readOnly}
 					<div class="text-input course-locked-field">{form.semester || 'None'}</div>
 				{:else}
-					<input id={`${idPrefix}-semester-input`} class="text-input" type="text" bind:value={form.semester} />
+					<input
+						id={`${idPrefix}-semester-input`}
+						class="text-input"
+						type="text"
+						bind:value={form.semester}
+					/>
 				{/if}
 			</div>
 		{/if}
@@ -199,7 +216,11 @@
 					{users.find((user) => user.id === form.instructorId)?.displayName || 'None'}
 				</div>
 			{:else}
-				<select id={`${idPrefix}-instructor-select`} class="text-input" bind:value={form.instructorId}>
+				<select
+					id={`${idPrefix}-instructor-select`}
+					class="text-input"
+					bind:value={form.instructorId}
+				>
 					<option value="">None</option>
 					{#each users as user}
 						<option value={user.id}>{user.displayName}</option>

@@ -4,26 +4,19 @@ from backend.test_support import BackendTestCase, main, seed_backend
 
 
 class CourseApiHistoryTests(BackendTestCase):
-    def test_api_history_tracks_group_membership(self):
-        self._log("Recording API history for grouped and ungrouped users.")
+    def test_api_history_write_endpoint_is_not_public(self):
+        self._log("Attempting to forge course API history as a student. Expecting HTTP 405.")
 
-        grouped_response = self.client.post(
+        response = self.client.post(
             "/courses/1/api-history",
-            json={"eventType": "request", "meta": {"path": "/v1/ask"}},
+            json={"eventType": "request", "ownerId": "someone-else", "meta": {"forged": True}},
             headers=self.student_headers,
         )
-        self.assertEqual(grouped_response.status_code, 201)
-        grouped_payload = grouped_response.get_json()
-        self.assertEqual(grouped_payload["is_group_member"], True)
-
-        ungrouped_response = self.client.post(
-            "/courses/3/api-history",
-            json={"eventType": "request", "meta": {"path": "/v1/ask"}},
-            headers=self.admin_headers,
-        )
-        self.assertEqual(ungrouped_response.status_code, 201)
-        ungrouped_payload = ungrouped_response.get_json()
-        self.assertEqual(ungrouped_payload["is_group_member"], False)
+        self.assertEqual(response.status_code, 405)
+        self.assertFalse(any(
+            isinstance(entry.get("meta"), dict) and entry["meta"].get("forged")
+            for entry in main.api_history.find({})
+        ))
 
     def test_course_api_history_can_be_read_back(self):
         self._log("Reading seeded API history for course 1.")

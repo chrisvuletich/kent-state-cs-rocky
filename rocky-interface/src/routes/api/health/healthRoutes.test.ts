@@ -13,4 +13,3 @@ describe('public Rocky health routes', () => {
 		});
 	});
 });
-

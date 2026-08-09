@@ -1,7 +1,8 @@
-	<script lang="ts">
+<script lang="ts">
 	import '$lib/styles/components/modules/sidebar.css';
 	import { page } from '$app/state';
 	import { browser } from '$app/environment';
+	import { goto } from '$app/navigation';
 	import { onDestroy, onMount } from 'svelte';
 	import { fetchCourses } from '$lib/api/content';
 	import type { Course } from '$lib/types/course';
@@ -9,7 +10,7 @@
 	import { selectedCourseId } from '$lib/stores/courseStore';
 	import { openCourseComposer } from '$lib/stores/courseComposerStore';
 	import { framesForRole, toFrameLabel, type FrameName } from '$lib/types/frame';
-	import {sidebarOpen} from '$lib/stores/sidebarStore';
+	import { sidebarOpen } from '$lib/stores/sidebarStore';
 
 	const frameIcons: Record<FrameName, string> = {
 		dashboard: '/dashboard-icon.svg',
@@ -31,16 +32,23 @@
 	const currentUserLastName = $derived(page.data.currentUser?.lastName?.trim() || '');
 	const currentUserId = $derived(page.data.currentUser?.id?.trim().toLowerCase() || '');
 	const currentUserFullName = $derived(
-		[currentUserFirstName, currentUserLastName].filter((value) => value.length > 0).join(' ').trim()
+		[currentUserFirstName, currentUserLastName]
+			.filter((value) => value.length > 0)
+			.join(' ')
+			.trim()
 	);
 	const currentUserEmail = $derived(page.data.currentUser?.email?.trim().toLowerCase() || '');
 	const allowedFrames = $derived(framesForRole(isAdmin));
 	const primaryFrames = $derived(allowedFrames.filter((frame) => frame !== 'help'));
 	const coursesFrameIndex = $derived(primaryFrames.indexOf('courses'));
 	const framesBeforeCourses = $derived(
-		coursesFrameIndex >= 0 ? primaryFrames.slice(0, coursesFrameIndex) : primaryFrames.filter((frame) => frame !== 'courses')
+		coursesFrameIndex >= 0
+			? primaryFrames.slice(0, coursesFrameIndex)
+			: primaryFrames.filter((frame) => frame !== 'courses')
 	);
-	const framesAfterCourses = $derived(coursesFrameIndex >= 0 ? primaryFrames.slice(coursesFrameIndex + 1) : []);
+	const framesAfterCourses = $derived(
+		coursesFrameIndex >= 0 ? primaryFrames.slice(coursesFrameIndex + 1) : []
+	);
 	const canCreateCourse = $derived(isAdmin);
 	let hasMounted = $state(false);
 	let activeFrame = $derived((hasMounted ? $currentFrame : page.data.initialFrame) as FrameName);
@@ -52,6 +60,15 @@
 	let courseMenuError = $state<string | null>(null);
 	let visibleCourses = $state<Course[]>([]);
 	let courseTabGroupElement: HTMLDivElement | null = null;
+	let isMobile = $state(false);
+	let mobileMediaQuery: MediaQueryList | null = null;
+
+	function handleViewportChange(event: MediaQueryListEvent | MediaQueryList) {
+		isMobile = event.matches;
+		if (!isMobile) {
+			sidebarOpen.set(false);
+		}
+	}
 
 	function scrollToTopOfApp() {
 		if (!browser) {
@@ -119,7 +136,7 @@
 			return;
 		}
 
-		if ($currentFrame === frame) {
+		if ($currentFrame === frame && !(frame === 'help' && page.url.searchParams.has('doc'))) {
 			return;
 		}
 
@@ -129,6 +146,13 @@
 				window.location.href = '/login';
 				return;
 			}
+
+			const nextUrl = new URL(page.url);
+			nextUrl.searchParams.set('frame', frame);
+			if (nextUrl.searchParams.has('doc')) {
+				nextUrl.searchParams.delete('doc');
+			}
+			await goto(nextUrl, { noScroll: true, keepFocus: true });
 
 			currentFrame.set(frame);
 			sidebarOpen.set(false);
@@ -145,7 +169,8 @@
 		try {
 			visibleCourses = await fetchCourses();
 		} catch (error) {
-			courseMenuError = error instanceof Error ? error.message : 'Unable to load your courses right now.';
+			courseMenuError =
+				error instanceof Error ? error.message : 'Unable to load your courses right now.';
 		} finally {
 			courseMenuLoading = false;
 		}
@@ -155,12 +180,16 @@
 		hasMounted = true;
 		void loadCourseMenuData();
 		if (browser) {
+			mobileMediaQuery = window.matchMedia('(max-width: 768px)');
+			handleViewportChange(mobileMediaQuery);
+			mobileMediaQuery.addEventListener('change', handleViewportChange);
 			document.addEventListener('pointerdown', handleDocumentPointerDown, true);
 		}
 	});
 
 	onDestroy(() => {
 		if (browser) {
+			mobileMediaQuery?.removeEventListener('change', handleViewportChange);
 			document.removeEventListener('pointerdown', handleDocumentPointerDown, true);
 		}
 	});
@@ -205,7 +234,9 @@
 			.map((value) => value?.trim().toLowerCase() || '')
 			.filter((value) => value.length > 0);
 
-		const currentIdentifiers = [currentUserId, currentUserEmail].filter((value) => value.length > 0);
+		const currentIdentifiers = [currentUserId, currentUserEmail].filter(
+			(value) => value.length > 0
+		);
 		if (currentIdentifiers.some((identifier) => instructorIdentifiers.includes(identifier))) {
 			return 'Instructor';
 		}
@@ -217,79 +248,111 @@
 </script>
 
 {#if $sidebarOpen}
-    <div class="sidebar-backdrop" onclick={() => sidebarOpen.set(false)} aria-hidden="true"></div>
+	<div class="sidebar-backdrop" onclick={() => sidebarOpen.set(false)} aria-hidden="true"></div>
 {/if}
 
-<nav class="sidebar" class:open={$sidebarOpen}>
+<nav
+	class="sidebar"
+	class:open={$sidebarOpen}
+	inert={isMobile && !$sidebarOpen}
+	aria-hidden={isMobile && !$sidebarOpen ? 'true' : undefined}
+>
 	<div class="sidebar-navigation">
-	{#each framesBeforeCourses as frame}
-		<button class="nav-link" class:active={activeFrame === frame} onclick={() => handleFrameChange(frame)}>
-			<img class="nav-link-icon" src={iconForFrame(frame)} alt="" aria-hidden="true" />
-			<span class="nav-link-label">{toFrameLabel(frame)}</span>
-		</button>
-	{/each}
+		{#each framesBeforeCourses as frame}
+			<button
+				class="nav-link"
+				class:active={activeFrame === frame}
+				onclick={() => handleFrameChange(frame)}
+			>
+				<img class="nav-link-icon" src={iconForFrame(frame)} alt="" aria-hidden="true" />
+				<span class="nav-link-label">{toFrameLabel(frame)}</span>
+			</button>
+		{/each}
 
-	<div class="course-tab-group" bind:this={courseTabGroupElement}>
-		<button class="nav-link" class:active={activeFrame === 'courses'} onclick={toggleCourseMenu}>
-			<img class="nav-link-icon" src={iconForFrame('courses')} alt="" aria-hidden="true" />
-			<span class="nav-link-label">{toFrameLabel('courses')}</span>
-		</button>
-		{#if courseMenuOpen}
-			<div class="course-popout" role="menu" aria-label="Course list">
-				<div class="course-popout-header">
-					<span>Courses</span>
-					{#if canCreateCourse}
-						<button type="button" class="list-go-btn course-popout-create-btn" onclick={openCreateCourseComposer}>Create</button>
+		<div class="course-tab-group" bind:this={courseTabGroupElement}>
+			<button class="nav-link" class:active={activeFrame === 'courses'} onclick={toggleCourseMenu}>
+				<img class="nav-link-icon" src={iconForFrame('courses')} alt="" aria-hidden="true" />
+				<span class="nav-link-label">{toFrameLabel('courses')}</span>
+			</button>
+			{#if courseMenuOpen}
+				<div class="course-popout" role="menu" aria-label="Course list">
+					<div class="course-popout-header">
+						<span>Courses</span>
+						{#if canCreateCourse}
+							<button
+								type="button"
+								class="list-go-btn course-popout-create-btn"
+								onclick={openCreateCourseComposer}>Create</button
+							>
+						{/if}
+					</div>
+					{#if courseMenuLoading}
+						<p class="course-popout-state">Loading courses...</p>
+					{:else if courseMenuError}
+						<p class="course-popout-state">{courseMenuError}</p>
+					{:else if visibleCourses.length === 0}
+						<p class="course-popout-state">No courses found in the database.</p>
+					{:else}
+						<div class="course-popout-list">
+							{#each visibleCourses as course}
+								<button
+									type="button"
+									class="course-popout-item"
+									class:active={$selectedCourseId === course.id}
+									onclick={() => openCourse(course.id)}
+								>
+									<span class="course-dot" style={`background-color: ${course.color};`}></span>
+									<span class="course-item-text">
+										<span class="course-item-name">{course.name}</span>
+										{#if course.code?.trim()}
+											<span class="course-item-meta">{course.code}</span>
+										{/if}
+										{#if getCourseRoleTag(course)}
+											<span class="course-role-tag course-role-tag-popout"
+												>{getCourseRoleTag(course)}</span
+											>
+										{/if}
+									</span>
+								</button>
+							{/each}
+						</div>
 					{/if}
 				</div>
-				{#if courseMenuLoading}
-					<p class="course-popout-state">Loading courses...</p>
-				{:else if courseMenuError}
-					<p class="course-popout-state">{courseMenuError}</p>
-				{:else if visibleCourses.length === 0}
-					<p class="course-popout-state">No courses found in the database.</p>
-				{:else}
-					<div class="course-popout-list">
-						{#each visibleCourses as course}
-							<button type="button" class="course-popout-item" class:active={$selectedCourseId === course.id} onclick={() => openCourse(course.id)}>
-								<span class="course-dot" style={`background-color: ${course.color};`}></span>
-								<span class="course-item-text">
-									<span class="course-item-name">{course.name}</span>
-									{#if course.code?.trim()}
-										<span class="course-item-meta">{course.code}</span>
-									{/if}
-									{#if getCourseRoleTag(course)}
-										<span class="course-role-tag course-role-tag-popout">{getCourseRoleTag(course)}</span>
-									{/if}
-								</span>
-							</button>
-						{/each}
-					</div>
-				{/if}
-			</div>
-		{/if}
-	</div>
+			{/if}
+		</div>
 
-	{#each framesAfterCourses as frame}
-		<button class="nav-link" class:active={activeFrame === frame} onclick={() => handleFrameChange(frame)}>
-			<img class="nav-link-icon" src={iconForFrame(frame)} alt="" aria-hidden="true" />
-			<span class="nav-link-label">{toFrameLabel(frame)}</span>
-		</button>
-		{#if frame === 'chat' && allowedFrames.includes('help')}
-			<button class="nav-link mobile-help-link" class:active={activeFrame === 'help'} onclick={() => handleFrameChange('help')}>
-				<img class="nav-link-icon" src={iconForFrame('help')} alt="" aria-hidden="true" />
-				<span class="nav-link-label">{toFrameLabel('help')}</span>
+		{#each framesAfterCourses as frame}
+			<button
+				class="nav-link"
+				class:active={activeFrame === frame}
+				onclick={() => handleFrameChange(frame)}
+			>
+				<img class="nav-link-icon" src={iconForFrame(frame)} alt="" aria-hidden="true" />
+				<span class="nav-link-label">{toFrameLabel(frame)}</span>
 			</button>
-		{/if}
-	{/each}
+			{#if frame === 'chat' && allowedFrames.includes('help')}
+				<button
+					class="nav-link mobile-help-link"
+					class:active={activeFrame === 'help'}
+					onclick={() => handleFrameChange('help')}
+				>
+					<img class="nav-link-icon" src={iconForFrame('help')} alt="" aria-hidden="true" />
+					<span class="nav-link-label">{toFrameLabel('help')}</span>
+				</button>
+			{/if}
+		{/each}
 	</div>
 
 	{#if allowedFrames.includes('help')}
 		<div class="sidebar-footer desktop-help-footer">
-		<button class="nav-link" class:active={activeFrame === 'help'} onclick={() => handleFrameChange('help')}>
-			<img class="nav-link-icon" src={iconForFrame('help')} alt="" aria-hidden="true" />
-			<span class="nav-link-label">{toFrameLabel('help')}</span>
-		</button>
+			<button
+				class="nav-link"
+				class:active={activeFrame === 'help'}
+				onclick={() => handleFrameChange('help')}
+			>
+				<img class="nav-link-icon" src={iconForFrame('help')} alt="" aria-hidden="true" />
+				<span class="nav-link-label">{toFrameLabel('help')}</span>
+			</button>
 		</div>
 	{/if}
 </nav>

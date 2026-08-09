@@ -22,7 +22,7 @@ jobs:
       - name: Install backend dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r rocky-backend/requirements.txt
+          pip install -r rocky-backend/requirements.txt -r run-test/requirements-compat.txt
 
       - name: Seed backend from backend fixtures
         run: python rocky-backend/seed_from_backend.py
@@ -63,6 +63,28 @@ jobs:
         working-directory: rocky-interface
         run: npm run test:unit
 
+      - name: Check frontend formatting
+        working-directory: rocky-interface
+        run: npm run lint
+
+      - name: Run frontend type checks
+        working-directory: rocky-interface
+        env:
+          PUBLIC_APP_ENV: testing
+          PUBLIC_API_BASE_URL: http://127.0.0.1:5001
+          PUBLIC_ENABLE_DBTEST: "false"
+          PUBLIC_ENABLE_MICROSOFT_OAUTH: "false"
+        run: npm run check
+
+      - name: Build frontend
+        working-directory: rocky-interface
+        env:
+          PUBLIC_APP_ENV: testing
+          PUBLIC_API_BASE_URL: http://127.0.0.1:5001
+          PUBLIC_ENABLE_DBTEST: "false"
+          PUBLIC_ENABLE_MICROSOFT_OAUTH: "false"
+        run: npm run build
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -76,9 +98,14 @@ jobs:
 
       - name: Run frontend browser tests
         env:
+          PYTHONPATH: run-test:rocky-backend
           PUBLIC_APP_ENV: testing
           PUBLIC_API_BASE_URL: http://127.0.0.1:5001
           PUBLIC_ENABLE_DBTEST: "false"
+          PUBLIC_ENABLE_MICROSOFT_OAUTH: "false"
+          ROCKY_WEB_HOST: 127.0.0.1
+          ROCKY_WEB_PORT: "4173"
+          ROCKY_ALLOWED_HOSTS: 127.0.0.1,localhost
         run: |
           mkdir -p run-test/logs
           python -m unittest discover -s run-test/frontend -p "test_*.py" -v | tee run-test/logs/frontend-tests.log
@@ -89,3 +116,24 @@ jobs:
         with:
           name: frontend-test-log
           path: run-test/logs/frontend-tests.log
+
+  granite-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Granite bridge dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r granite-llm-server/requirements.txt
+
+      - name: Run Granite bridge tests
+        working-directory: granite-llm-server
+        run: python -m unittest discover -s tests -p "test_*.py" -v

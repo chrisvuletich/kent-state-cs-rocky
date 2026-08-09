@@ -197,7 +197,10 @@ export async function createCourse(input: CreateCourseInput): Promise<Course> {
 	}
 }
 
-export async function updateCourseMetadata(courseId: string | number, input: UpdateCourseMetadataInput): Promise<Course> {
+export async function updateCourseMetadata(
+	courseId: string | number,
+	input: UpdateCourseMetadataInput
+): Promise<Course> {
 	try {
 		const rawCourse = await fetchJson<ApiCourse>(`/api/backend/courses/${courseId}/metadata`, {
 			method: 'PATCH',
@@ -221,7 +224,10 @@ export async function updateCourseMetadata(courseId: string | number, input: Upd
 	}
 }
 
-export async function addCourseMembers(courseId: string | number, members: CourseMemberInput[]): Promise<void> {
+export async function addCourseMembers(
+	courseId: string | number,
+	members: CourseMemberInput[]
+): Promise<void> {
 	try {
 		await fetchJson<ApiCourse>(`/api/backend/courses/${courseId}/members`, {
 			method: 'POST',
@@ -269,7 +275,11 @@ export async function createCourseGroup(courseId: string | number, name: string)
 	}
 }
 
-export async function addGroupMember(courseId: string | number, groupId: string, id: string): Promise<void> {
+export async function addGroupMember(
+	courseId: string | number,
+	groupId: string,
+	id: string
+): Promise<void> {
 	try {
 		await fetchJson<ApiCourse>(`/api/backend/courses/${courseId}/groups/${groupId}/members`, {
 			method: 'POST',
@@ -285,7 +295,11 @@ export async function addGroupMember(courseId: string | number, groupId: string,
 	}
 }
 
-export async function removeGroupMember(courseId: string | number, groupId: string, id: string): Promise<void> {
+export async function removeGroupMember(
+	courseId: string | number,
+	groupId: string,
+	id: string
+): Promise<void> {
 	try {
 		await fetchJson<ApiCourse>(`/api/backend/courses/${courseId}/groups/${groupId}/members`, {
 			method: 'DELETE',
@@ -306,11 +320,14 @@ export async function regenerateCourseApiKey(
 	input: RegenerateCourseApiKeyInput = {}
 ): Promise<RegenerateCourseApiKeyResponse> {
 	try {
-		const response = await fetchJson<RegenerateCourseApiKeyResponse>(`/api/backend/courses/${courseId}/api-key/regenerate`, {
-			method: 'POST',
-			headers: jsonHeaders(),
-			body: JSON.stringify(input)
-		});
+		const response = await fetchJson<RegenerateCourseApiKeyResponse>(
+			`/api/backend/courses/${courseId}/api-key/regenerate`,
+			{
+				method: 'POST',
+				headers: jsonHeaders(),
+				body: JSON.stringify(input)
+			}
+		);
 
 		showSuccessFeedback('API key generated successfully.');
 		return response;
@@ -349,11 +366,14 @@ export async function deleteCourseApiKey(
 	input: DeleteCourseApiKeyInput = {}
 ): Promise<DeleteCourseApiKeyResponse> {
 	try {
-		const response = await fetchJson<DeleteCourseApiKeyResponse>(`/api/backend/courses/${courseId}/api-key`, {
-			method: 'DELETE',
-			headers: jsonHeaders(),
-			body: JSON.stringify(input)
-		});
+		const response = await fetchJson<DeleteCourseApiKeyResponse>(
+			`/api/backend/courses/${courseId}/api-key`,
+			{
+				method: 'DELETE',
+				headers: jsonHeaders(),
+				body: JSON.stringify(input)
+			}
+		);
 
 		showSuccessFeedback('API key deleted successfully.');
 		return response;
@@ -364,12 +384,19 @@ export async function deleteCourseApiKey(
 	}
 }
 
-export async function fetchCourseApiHistory(courseId: string | number): Promise<CourseApiHistoryEntry[]> {
-	const rawHistory = await fetchJson<ApiCourseHistoryEntry[]>(`/api/backend/courses/${courseId}/api-history`);
+export async function fetchCourseApiHistory(
+	courseId: string | number
+): Promise<CourseApiHistoryEntry[]> {
+	const rawHistory = await fetchJson<ApiCourseHistoryEntry[]>(
+		`/api/backend/courses/${courseId}/api-history`
+	);
 	return rawHistory.map((entry) => ({
 		userId: entry.u_id?.trim() || 'unknown',
 		courseCode: entry.c_id?.trim() || 'Unknown Course',
-		courseId: typeof entry.course_id === 'number' && Number.isFinite(entry.course_id) ? entry.course_id : Number(courseId),
+		courseId:
+			typeof entry.course_id === 'number' && Number.isFinite(entry.course_id)
+				? entry.course_id
+				: Number(courseId),
 		eventType: entry.event_type?.trim() || 'request',
 		groupId: entry.group_id?.trim() || null,
 		groupName: entry.group_name?.trim() || null,
@@ -379,11 +406,16 @@ export async function fetchCourseApiHistory(courseId: string | number): Promise<
 	}));
 }
 
-export async function fetchCourseApiKeys(courseId: string | number): Promise<CourseApiKeySummaryResponse[]> {
+export async function fetchCourseApiKeys(
+	courseId: string | number
+): Promise<CourseApiKeySummaryResponse[]> {
 	return fetchJson<CourseApiKeySummaryResponse[]>(`/api/backend/courses/${courseId}/api-keys`);
 }
 
-export async function updateCourseActiveStatus(courseId: string | number, isActive: boolean): Promise<Course> {
+export async function updateCourseActiveStatus(
+	courseId: string | number,
+	isActive: boolean
+): Promise<Course> {
 	try {
 		const rawCourse = await fetchJson<ApiCourse>(`/api/backend/courses/${courseId}/status`, {
 			method: 'PATCH',
@@ -411,7 +443,9 @@ export async function updateCourseApiKeyStatus(
 			body: JSON.stringify(input)
 		});
 
-		showSuccessFeedback(input.isActive ? 'API key activated successfully.' : 'API key deactivated successfully.');
+		showSuccessFeedback(
+			input.isActive ? 'API key activated successfully.' : 'API key deactivated successfully.'
+		);
 	} catch (err) {
 		const message = getErrorMessage(err, 'Unable to update API key status.');
 		showErrorFeedback(message);
@@ -419,7 +453,11 @@ export async function updateCourseApiKeyStatus(
 	}
 }
 
-export async function updateCourseMemberKeyLimit(courseId: string | number, memberId: string, keyLimit: number): Promise<void> {
+export async function updateCourseMemberKeyLimit(
+	courseId: string | number,
+	memberId: string,
+	keyLimit: number
+): Promise<void> {
 	try {
 		await fetchJson<ApiCourse>(`/api/backend/courses/${courseId}/members/${memberId}/key-limit`, {
 			method: 'PATCH',
@@ -454,7 +492,10 @@ export async function updateCourseInstructorHandoutLimit(
 	}
 }
 
-export async function updateCourseInstructorKeyLimit(courseId: string | number, instructorKeyLimit: number): Promise<void> {
+export async function updateCourseInstructorKeyLimit(
+	courseId: string | number,
+	instructorKeyLimit: number
+): Promise<void> {
 	try {
 		await fetchJson<ApiCourse>(`/api/backend/courses/${courseId}/instructor-key-limit`, {
 			method: 'PATCH',
@@ -470,7 +511,11 @@ export async function updateCourseInstructorKeyLimit(courseId: string | number, 
 	}
 }
 
-export async function updateCourseGroupKeyLimit(courseId: string | number, groupId: string, keyLimit: number): Promise<void> {
+export async function updateCourseGroupKeyLimit(
+	courseId: string | number,
+	groupId: string,
+	keyLimit: number
+): Promise<void> {
 	try {
 		await fetchJson<ApiCourse>(`/api/backend/courses/${courseId}/groups/${groupId}/key-limit`, {
 			method: 'PATCH',

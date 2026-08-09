@@ -1,4 +1,4 @@
-import { createPublicKey, verify as verifySignature, type JsonWebKey } from 'node:crypto';
+import { createPublicKey, verify as verifySignature, type JsonWebKeyInput } from 'node:crypto';
 import { MICROSOFT_OAUTH } from '$lib/config/env';
 
 const CLOCK_SKEW_SECONDS = 60;
@@ -12,7 +12,7 @@ type JwtClaims = Record<string, unknown> & {
 	nbf?: unknown;
 	tid?: unknown;
 };
-type MicrosoftJwk = JsonWebKey & { kid?: string; use?: string };
+type MicrosoftJwk = JsonWebKeyInput['key'] & { kid?: string; use?: string };
 
 let cachedKeys: MicrosoftJwk[] = [];
 let keysExpireAt = 0;
@@ -30,7 +30,9 @@ async function signingKey(kid: string): Promise<MicrosoftJwk> {
 		if (!response.ok) throw new Error('Microsoft signing keys are unavailable.');
 		const payload = (await response.json()) as { keys?: unknown };
 		if (!Array.isArray(payload.keys)) throw new Error('Microsoft signing keys are invalid.');
-		cachedKeys = payload.keys.filter((key): key is MicrosoftJwk => Boolean(key && typeof key === 'object'));
+		cachedKeys = payload.keys.filter((key): key is MicrosoftJwk =>
+			Boolean(key && typeof key === 'object')
+		);
 		keysExpireAt = Date.now() + JWKS_CACHE_MILLISECONDS;
 	}
 	const key = cachedKeys.find((candidate) => candidate.kid === kid && candidate.use !== 'enc');
@@ -81,12 +83,19 @@ export async function verifyMicrosoftIdToken(token: string): Promise<{
 	if (!verified) throw new Error('Microsoft identity token verification failed.');
 
 	const now = Math.floor(Date.now() / 1000);
-	const expectedIssuer = `https://login.microsoftonline.com/${MICROSOFT_OAUTH.tenantId}/v2.0`.toLowerCase();
+	const expectedIssuer =
+		`https://login.microsoftonline.com/${MICROSOFT_OAUTH.tenantId}/v2.0`.toLowerCase();
 	const clientId = MICROSOFT_OAUTH.clientId.toLowerCase();
-	const audienceValid = typeof claims.aud === 'string'
-		? claims.aud.toLowerCase() === clientId
-		: Array.isArray(claims.aud) && claims.aud.some((value) => typeof value === 'string' && value.toLowerCase() === clientId);
-	if (!audienceValid || String(claims.iss || '').toLowerCase() !== expectedIssuer || String(claims.tid || '').toLowerCase() !== MICROSOFT_OAUTH.tenantId.toLowerCase()) {
+	const audienceValid =
+		typeof claims.aud === 'string'
+			? claims.aud.toLowerCase() === clientId
+			: Array.isArray(claims.aud) &&
+				claims.aud.some((value) => typeof value === 'string' && value.toLowerCase() === clientId);
+	if (
+		!audienceValid ||
+		String(claims.iss || '').toLowerCase() !== expectedIssuer ||
+		String(claims.tid || '').toLowerCase() !== MICROSOFT_OAUTH.tenantId.toLowerCase()
+	) {
 		throw new Error('Microsoft identity token is not for this Rocky application.');
 	}
 	if (typeof claims.exp !== 'number' || claims.exp <= now - CLOCK_SKEW_SECONDS) {

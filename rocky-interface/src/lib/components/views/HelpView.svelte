@@ -1,9 +1,14 @@
 <script lang="ts">
 	import ViewShell from '$lib/components/ViewShell.svelte';
 	import MarkdownDocumentation from '$lib/components/help/MarkdownDocumentation.svelte';
+	import { goto } from '$app/navigation';
 	import { currentFrame } from '$lib/stores/frameStore';
-	import { documentation, documentsForCategory, type DocumentationCategory } from '$lib/documentation/registry';
-	import { page } from '$app/state';
+	import {
+		documentation,
+		documentsForCategory,
+		type DocumentationCategory
+	} from '$lib/documentation/registry';
+	import { page } from '$app/stores';
 	import type { HelpResource } from '$lib/types/help';
 	import {
 		IconHelpCircle,
@@ -69,28 +74,49 @@
 	const exampleCode = documentsForCategory('examples');
 	const administrationGuides = documentsForCategory('administration');
 
-	let selectedDocumentation: string | null = null;
-	$: canViewAdministrationGuides = page.data.currentUser?.isAdmin || page.data.currentUser?.role === 'instructor';
-	$: currentDocumentation = documentation.find((document) => document.id === selectedDocumentation) ?? null;
-	$: documentationSequence = currentDocumentation ? documentsForCategory(currentDocumentation.category) : [];
-	$: currentIndex = currentDocumentation ? documentationSequence.findIndex((document) => document.id === currentDocumentation.id) : -1;
+	$: canViewAdministrationGuides =
+		$page.data.currentUser?.isAdmin || $page.data.currentUser?.role === 'instructor';
+	$: selectedDocumentation = $page.url.searchParams.get('doc')?.trim() || null;
+	$: requestedDocumentation =
+		documentation.find((document) => document.id === selectedDocumentation) ?? null;
+	$: currentDocumentation =
+		requestedDocumentation &&
+		(requestedDocumentation.audience === 'all' || canViewAdministrationGuides)
+			? requestedDocumentation
+			: null;
+	$: documentationSequence = currentDocumentation
+		? documentsForCategory(currentDocumentation.category)
+		: [];
+	$: currentIndex = currentDocumentation
+		? documentationSequence.findIndex((document) => document.id === currentDocumentation.id)
+		: -1;
 	$: previousDocumentation = currentIndex > 0 ? documentationSequence[currentIndex - 1] : null;
-	$: nextDocumentation = currentIndex >= 0 && currentIndex < documentationSequence.length - 1 ? documentationSequence[currentIndex + 1] : null;
+	$: nextDocumentation =
+		currentIndex >= 0 && currentIndex < documentationSequence.length - 1
+			? documentationSequence[currentIndex + 1]
+			: null;
 
-	function handleResourceClick(event: MouseEvent, isInternal: boolean) {
+	async function handleResourceClick(event: MouseEvent, isInternal: boolean) {
 		if (isInternal) {
 			event.preventDefault();
+			const nextUrl = new URL($page.url);
+			nextUrl.searchParams.delete('doc');
+			await goto(nextUrl, { noScroll: true, keepFocus: true });
 			$currentFrame = 'dashboard';
 		}
 	}
 
-	function openDocumentation(id: string) {
-		selectedDocumentation = id;
+	async function openDocumentation(id: string) {
+		const nextUrl = new URL($page.url);
+		nextUrl.searchParams.set('doc', id);
+		await goto(nextUrl, { noScroll: true, keepFocus: true });
 		document.querySelector('.app-content')?.scrollTo({ top: 0, behavior: 'smooth' });
 	}
 
-	function backToDocumentation() {
-		selectedDocumentation = null;
+	async function backToDocumentation() {
+		const nextUrl = new URL($page.url);
+		nextUrl.searchParams.delete('doc');
+		await goto(nextUrl, { noScroll: true, keepFocus: true });
 		document.querySelector('.app-content')?.scrollTo({ top: 0, behavior: 'smooth' });
 	}
 
@@ -101,15 +127,29 @@
 	}
 </script>
 
-<ViewShell title="Help Center">
+<svelte:head>
+	<title
+		>{currentDocumentation
+			? `${currentDocumentation.title} | Rocky Help`
+			: 'Help Center | Rocky'}</title
+	>
+</svelte:head>
+
+<ViewShell title={currentDocumentation?.title ?? 'Help Center'}>
 	{#if !currentDocumentation}
 		<section class="section">
 			<div class="section-header"><h2>Other Resources</h2></div>
 			<div class="section-content">
-				<p class="section-text">Quick links to our most commonly used support channels and training materials.</p>
+				<p class="section-text">
+					Quick links to our most commonly used support channels and training materials.
+				</p>
 				<div class="help-resource-grid">
 					{#each resources as resource}
-						<a href={resource.href} on:click={(event) => handleResourceClick(event, resource.isInternalRoute)} class="help-resource-card">
+						<a
+							href={resource.href}
+							on:click={(event) => handleResourceClick(event, resource.isInternalRoute)}
+							class="help-resource-card"
+						>
 							<p class="help-resource-label">{resource.label}</p>
 							<strong class="help-resource-description">{resource.description}</strong>
 							<span class="help-resource-action">{resource.action} →</span>
@@ -121,58 +161,128 @@
 
 		<section class="section help-section">
 			<div class="api-docs">
-				<h3>Developer Resources</h3>
+				<h2>Developer Resources</h2>
 				<p>Learn how to integrate Rocky into your applications and use the API.</p>
 				<div class="api-card-grid">
 					{#each developerResources as document}
 						<button type="button" class="api-card" on:click={() => openDocumentation(document.id)}>
-							<div class="api-card-icon"><svelte:component this={icons[document.id]} size={40} stroke={1.75} /></div>
-							<h4>{document.title}</h4><p>{document.description}</p><span class="api-card-link">{document.id === 'reference' ? 'View Reference' : document.id === 'best-practices' ? 'Read Tips' : document.id === 'intro' ? 'Read Guide' : 'View Guide'} →</span>
+							<div class="api-card-icon">
+								<svelte:component this={icons[document.id]} size={40} stroke={1.75} />
+							</div>
+							<h3>{document.title}</h3>
+							<p>{document.description}</p>
+							<span class="api-card-link"
+								>{document.id === 'reference'
+									? 'View Reference'
+									: document.id === 'best-practices'
+										? 'Read Tips'
+										: document.id === 'intro'
+											? 'Read Guide'
+											: 'View Guide'} →</span
+							>
 						</button>
 					{/each}
 				</div>
 				<div class="api-callout">
 					<div class="api-callout-icon"><IconInfoCircle size={30} stroke={2} /></div>
-					<div class="api-callout-content"><h3>New to APIs?</h3><p>Start with <strong>Getting Started</strong> to learn the basics, then continue to <strong>API Keys</strong> before trying an example.</p></div>
-					<button class="support-btn support-btn-primary" on:click={() => openDocumentation('intro')}>Start Here</button>
+					<div class="api-callout-content">
+						<h3>New to APIs?</h3>
+						<p>
+							Start with <strong>Getting Started</strong> to learn the basics, then continue to
+							<strong>API Keys</strong> before trying an example.
+						</p>
+					</div>
+					<button
+						class="support-btn support-btn-primary"
+						on:click={() => openDocumentation('intro')}>Start Here</button
+					>
 				</div>
 			</div>
 		</section>
 
 		<section class="section help-section">
 			<div class="section-header"><h2>Example Code</h2></div>
-			<div class="section-content"><div class="api-card-grid">
-				{#each exampleCode as document}
-					<button type="button" class="api-card" on:click={() => openDocumentation(document.id)}>
-						<div class="api-card-icon"><svelte:component this={icons[document.id]} size={40} stroke={1.75} /></div>
-						<h4>{document.title}</h4><p>{document.description}</p><span class="api-card-link">View Example →</span>
-					</button>
-				{/each}
-			</div></div>
+			<div class="section-content">
+				<div class="api-card-grid">
+					{#each exampleCode as document}
+						<button type="button" class="api-card" on:click={() => openDocumentation(document.id)}>
+							<div class="api-card-icon">
+								<svelte:component this={icons[document.id]} size={40} stroke={1.75} />
+							</div>
+							<h3>{document.title}</h3>
+							<p>{document.description}</p>
+							<span class="api-card-link">View Example →</span>
+						</button>
+					{/each}
+				</div>
+			</div>
 		</section>
 
 		{#if canViewAdministrationGuides}
 			<section class="section help-section">
 				<div class="section-header"><h2>Administration Guides</h2></div>
-				<div class="section-content"><div class="api-card-grid">
-					{#each administrationGuides as document}
-						<button type="button" class="api-card" on:click={() => openDocumentation(document.id)}>
-							<div class="api-card-icon"><svelte:component this={icons[document.id]} size={40} stroke={1.75} /></div>
-							<h4>{document.title}</h4><p>{document.description}</p><span class="api-card-link">View Guide →</span>
-						</button>
-					{/each}
-				</div></div>
+				<div class="section-content">
+					<div class="api-card-grid">
+						{#each administrationGuides as document}
+							<button
+								type="button"
+								class="api-card"
+								on:click={() => openDocumentation(document.id)}
+							>
+								<div class="api-card-icon">
+									<svelte:component this={icons[document.id]} size={40} stroke={1.75} />
+								</div>
+								<h3>{document.title}</h3>
+								<p>{document.description}</p>
+								<span class="api-card-link">View Guide →</span>
+							</button>
+						{/each}
+					</div>
+				</div>
 			</section>
 		{/if}
+
+		<section class="section help-section" id="release-notes">
+			<div class="section-header"><h2>Release Notes</h2></div>
+			<div class="section-content">
+				<article class="release-note-card">
+					<h3>Current release</h3>
+					<ul>
+						<li>Responses and model-list endpoints for student projects.</li>
+						<li>Course-scoped API key creation and management.</li>
+						<li>Built-in chat, administrative analytics, and audit history.</li>
+					</ul>
+				</article>
+			</div>
+		</section>
 	{:else}
 		<section class="section">
-			<div class="documentation-header"><button class="support-btn support-btn-secondary" on:click={backToDocumentation}>← Back to {backLabel(currentDocumentation.category)}</button></div>
+			<div class="documentation-header">
+				<button class="support-btn support-btn-secondary" on:click={backToDocumentation}
+					>← Back to {backLabel(currentDocumentation.category)}</button
+				>
+			</div>
 			<div class="section-content">
-				{#key currentDocumentation.id}<MarkdownDocumentation sourcePath={currentDocumentation.path} />{/key}
+				{#key currentDocumentation.id}<MarkdownDocumentation
+						sourcePath={currentDocumentation.path}
+						documentTitle={currentDocumentation.title}
+					/>{/key}
 			</div>
 			<div class="documentation-navigation">
-				{#if previousDocumentation}<button class="documentation-nav-card" on:click={() => openDocumentation(previousDocumentation.id)}><span class="documentation-nav-label">← Previous</span><strong>{previousDocumentation.title}</strong></button>{:else}<div></div>{/if}
-				{#if nextDocumentation}<button class="documentation-nav-card documentation-nav-next" on:click={() => openDocumentation(nextDocumentation.id)}><span class="documentation-nav-label">Continue →</span><strong>{nextDocumentation.title}</strong></button>{/if}
+				{#if previousDocumentation}<button
+						class="documentation-nav-card"
+						on:click={() => openDocumentation(previousDocumentation.id)}
+						><span class="documentation-nav-label">← Previous</span><strong
+							>{previousDocumentation.title}</strong
+						></button
+					>{:else}<div></div>{/if}
+				{#if nextDocumentation}<button
+						class="documentation-nav-card documentation-nav-next"
+						on:click={() => openDocumentation(nextDocumentation.id)}
+						><span class="documentation-nav-label">Continue →</span><strong
+							>{nextDocumentation.title}</strong
+						></button
+					>{/if}
 			</div>
 		</section>
 	{/if}

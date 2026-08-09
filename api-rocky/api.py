@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import os
 import hashlib
+import hmac
+import json
+import math
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -42,18 +45,38 @@ CHAT_API_KEY = os.getenv("ROCKY_CHAT_API_KEY", "").strip()
 CHAT_SERVICE_OWNER_ID = os.getenv("ROCKY_CHAT_SERVICE_OWNER_ID", "rocky-chat-service@kent.edu").strip() or "rocky-chat-service@kent.edu"
 CHAT_SERVICE_KEY_NAME = "rocky-chat-service"
 GRANITE_URL = os.getenv("ROCKY_GRANITE_URL", "http://127.0.0.1:5002/generate")
-PUBLIC_MODEL = "rocky"
 INFERENCE_MODEL = os.getenv(
     "OLLAMA_MODEL",
     "gemma4:latest",
 ).strip() or "gemma4:latest"
+PUBLIC_MODEL = os.getenv("ROCKY_PUBLIC_MODEL", INFERENCE_MODEL).strip() or INFERENCE_MODEL
 CHAT_API_HOST = os.getenv("ROCKY_CHAT_API_HOST", "127.0.0.1")
 CHAT_API_PORT = int(os.getenv("ROCKY_CHAT_API_PORT", "5003"))
 GRANITE_TIMEOUT_SECONDS = int(os.getenv("ROCKY_GRANITE_TIMEOUT_SECONDS", "170"))
+GRANITE_READY_URL = os.getenv(
+    "ROCKY_GRANITE_READY_URL",
+    GRANITE_URL.rsplit("/", 1)[0] + "/ready",
+).strip()
+GRANITE_AUTH_TOKEN = os.getenv("ROCKY_GRANITE_TOKEN", "").strip()
+INTERNAL_PROXY_SECRET = os.getenv("ROCKY_INTERNAL_PROXY_SECRET", "").strip()
+MAX_OUTPUT_TOKENS = int(os.getenv("ROCKY_MAX_OUTPUT_TOKENS", "2048"))
+MAX_CONTEXT_CHARS = int(os.getenv("ROCKY_MAX_CONTEXT_CHARS", "60000"))
+READINESS_TIMEOUT_SECONDS = float(os.getenv("ROCKY_READINESS_TIMEOUT_SECONDS", "2"))
 REQUIRE_REQUEST_LOGGING = os.getenv(
     "ROCKY_REQUIRE_REQUEST_LOGGING",
     "true" if APP_ENV == "production" else "false",
 ).strip().lower() in {"1", "true", "yes", "on"}
+
+if APP_ENV == "production":
+    if len(INTERNAL_PROXY_SECRET) < 32:
+        raise RuntimeError(
+            "ROCKY_INTERNAL_PROXY_SECRET must contain at least 32 characters "
+            "in production."
+        )
+    if len(GRANITE_AUTH_TOKEN) < 32:
+        raise RuntimeError(
+            "ROCKY_GRANITE_TOKEN must contain at least 32 characters in production."
+        )
 
 def resolve_mongita_path(value):
     configured_path = Path(str(value).strip() or ".rocky-data/mongita").expanduser()
@@ -70,6 +93,7 @@ MONGITA_PATH = resolve_mongita_path(
 api_keys_col = None
 conversations_col = None
 messages_col = None
+responses_col = None
 telemetry_interactions_col = None
 telemetry_current_col = None
 telemetry_store = None
@@ -174,6 +198,11 @@ def ensure_chat_indexes():
         messages_col,
         [("conversation_id", 1), ("user_id", 1), ("created_at", 1)],
     )
+    create_index_safely(
+        responses_col,
+        [("response_id", 1), ("owner_scope", 1)],
+        unique=True,
+    )
 
 
 # Database configuration
@@ -201,6 +230,7 @@ def initialize_database():
     global api_keys_col
     global conversations_col
     global messages_col
+    global responses_col
     global telemetry_interactions_col
     global telemetry_current_col
     global MONGITA_KEY_READ_REFRESH_ENABLED
@@ -238,6 +268,7 @@ def initialize_database():
                 api_keys_col = database["api_keys"]
                 conversations_col = database["conversations"]
                 messages_col = database["messages"]
+                responses_col = database["responses"]
                 telemetry_interactions_col = database["telemetry_interactions"]
                 telemetry_current_col = database["telemetry_current"]
 
@@ -279,6 +310,7 @@ def initialize_database():
         api_keys_col = database["api_keys"]
         conversations_col = database["conversations"]
         messages_col = database["messages"]
+        responses_col = database["responses"]
         telemetry_interactions_col = database["telemetry_interactions"]
         telemetry_current_col = database["telemetry_current"]
         MONGITA_KEY_READ_REFRESH_ENABLED = True
@@ -450,6 +482,7 @@ def telemetry_request_record(payload=None, raw_body=None):
         "model": optional_text(payload.get("model"), 256) if isinstance(payload, dict) else None,
         "store": payload.get("store") if isinstance(payload, dict) and isinstance(payload.get("store"), bool) else None,
         "conversation_id": optional_text(payload.get("conversation_id"), 256) if isinstance(payload, dict) else None,
+        "previous_response_id": optional_text(payload.get("previous_response_id"), 256) if isinstance(payload, dict) else None,
         "instructions_text": payload.get("instructions") if isinstance(payload, dict) and isinstance(payload.get("instructions"), str) else None,
         "input_text": extract_user_message_text(payload) if isinstance(payload, dict) else None,
         "parameters": {
@@ -459,7 +492,6 @@ def telemetry_request_record(payload=None, raw_body=None):
                 "max_output_tokens",
                 "metadata",
                 "presence_penalty",
-                "reasoning",
                 "temperature",
                 "top_p",
             )
@@ -483,7 +515,7 @@ def telemetry_identity_record(key_doc):
         "attribution": "group-key-only" if owner_type == "group" else "personal-key-owner",
     }
     source = "public_api"
-    if is_trusted_web_key_doc(key_doc):
+    if is_trusted_web_key_doc(key_doc) and has_valid_internal_proxy_secret():
         context = get_forwarded_user_context()
         actor.update({
             "user_id": context.get("user_id"),
@@ -518,6 +550,14 @@ def telemetry_identity_record(key_doc):
     }
 
 
+def telemetry_operation():
+    if request.path == "/v1/models":
+        return "models.list"
+    if request.path == "/v1/responses":
+        return "responses.create"
+    return "unknown"
+
+
 def begin_telemetry_interaction():
     request_id = f"req_{uuid4().hex}"
     started_monotonic_ns = time.monotonic_ns()
@@ -528,6 +568,7 @@ def begin_telemetry_interaction():
         "persisted": False,
     }
     initial_record = {
+        "operation": telemetry_operation(),
         "source": "unknown",
         "client": telemetry_client_record(),
         "content_available": True,
@@ -606,13 +647,40 @@ def finish_telemetry_interaction(
 
 
 def model_error_status(error_type):
-    return {"bad_request": 400, "timeout": 504}.get(error_type, 502)
+    return {"bad_request": 400, "busy": 503, "timeout": 504}.get(error_type, 502)
 
 
-def telemetry_json(payload, status, interaction):
+def api_error(message, *, error_type="invalid_request_error", param=None, code=None):
+    error = {
+        "message": message,
+        "type": error_type,
+        "param": param,
+        "code": code,
+    }
+    return {"error": error}
+
+
+def model_capabilities():
+    """Return the configured public model features advertised by Rocky."""
+    return {
+        "max_output_tokens": MAX_OUTPUT_TOKENS,
+        "max_context_characters": MAX_CONTEXT_CHARS,
+        "supports_streaming": False,
+        "supports_previous_response_id": True,
+        "supports_instructions": True,
+        "model_dependent_parameters": ["frequency_penalty", "presence_penalty"],
+    }
+
+
+def telemetry_json(payload, status, interaction, headers=None):
     response = jsonify(payload)
     if isinstance(interaction, dict) and interaction.get("request_id"):
-        response.headers["X-Rocky-Request-Id"] = interaction["request_id"]
+        request_id = interaction["request_id"]
+        response.headers["x-request-id"] = request_id
+        response.headers["X-Rocky-Request-Id"] = request_id
+    if isinstance(headers, dict):
+        for name, value in headers.items():
+            response.headers[name] = str(value)
     return response, status
 
 
@@ -626,6 +694,7 @@ def terminal_telemetry_json(
     error_stage=None,
     error_type=None,
     additional_fields=None,
+    headers=None,
 ):
     persisted = finish_telemetry_interaction(
         interaction,
@@ -639,11 +708,15 @@ def terminal_telemetry_json(
     )
     if REQUIRE_REQUEST_LOGGING and not persisted:
         return telemetry_json(
-            {"error": "Request logging is unavailable."},
+            api_error(
+                "Request logging is unavailable.",
+                error_type="server_error",
+                code="request_logging_unavailable",
+            ),
             503,
             interaction,
         )
-    return telemetry_json(payload, status, interaction)
+    return telemetry_json(payload, status, interaction, headers=headers)
 
 
 
@@ -652,12 +725,132 @@ def health():
     return jsonify({"ok": True, "service": "api-rocky"}), 200
 
 
+@app.route("/ready", methods=["GET"])
+def ready():
+    dependencies = {"database": False, "granite": False}
+    granite_model = None
+    try:
+        if api_keys_col is not None:
+            api_keys_col.find_one({"_id": "__rocky_readiness__"})
+            dependencies["database"] = True
+    except Exception:
+        app.logger.warning("readiness.database_unavailable")
+
+    try:
+        headers = {}
+        if GRANITE_AUTH_TOKEN:
+            headers["X-Rocky-Granite-Token"] = GRANITE_AUTH_TOKEN
+        granite_response = requests.get(
+            GRANITE_READY_URL,
+            headers=headers,
+            timeout=READINESS_TIMEOUT_SECONDS,
+        )
+        try:
+            granite_payload = granite_response.json()
+        except (TypeError, ValueError):
+            granite_payload = {}
+        if isinstance(granite_payload, dict):
+            reported_model = granite_payload.get("model")
+            if isinstance(reported_model, str) and reported_model.strip():
+                granite_model = reported_model.strip()
+        dependencies["granite"] = (
+            granite_response.status_code == 200
+            and granite_model == INFERENCE_MODEL
+        )
+    except requests.RequestException:
+        pass
+
+    ready_now = all(dependencies.values())
+    return jsonify({
+        "ok": ready_now,
+        "service": "api-rocky",
+        "dependencies": dependencies,
+        "capabilities": model_capabilities(),
+        "models": {
+            "public": PUBLIC_MODEL,
+            "inference": INFERENCE_MODEL,
+            "granite": granite_model,
+        },
+    }), 200 if ready_now else 503
+
+
+@app.route("/v1/models", methods=["GET"])
+def list_models():
+    interaction = begin_telemetry_interaction()
+    key_doc = get_key_doc(extract_bearer_api_key())
+    if not key_doc:
+        return terminal_telemetry_json(
+            interaction,
+            api_error(
+                "Invalid API key",
+                error_type="authentication_error",
+                code="invalid_api_key",
+            ),
+            401,
+            "rejected",
+            error_stage="authentication",
+            error_type="invalid_api_key",
+        )
+
+    if is_service_key_doc(key_doc) and not is_trusted_web_request(key_doc):
+        return terminal_telemetry_json(
+            interaction,
+            api_error(
+                "Internal proxy authentication failed.",
+                error_type="authentication_error",
+                code="invalid_proxy_authentication",
+            ),
+            401,
+            "rejected",
+            error_stage="authentication",
+            error_type="invalid_proxy_authentication",
+        )
+
+    identity_logged = enrich_telemetry_interaction(
+        interaction,
+        telemetry_identity_record(key_doc),
+    )
+    if REQUIRE_REQUEST_LOGGING and not identity_logged:
+        return terminal_telemetry_json(
+            interaction,
+            api_error(
+                "Request logging is unavailable.",
+                error_type="server_error",
+                code="request_logging_unavailable",
+            ),
+            503,
+            "failed",
+            error_stage="telemetry",
+            error_type="identity_persistence_failed",
+        )
+
+    return terminal_telemetry_json(
+        interaction,
+        {
+            "object": "list",
+            "data": [{
+                "id": PUBLIC_MODEL,
+                "object": "model",
+                "created": 0,
+                "owned_by": "kent-state",
+                "metadata": model_capabilities(),
+            }],
+        },
+        200,
+        "completed",
+    )
+
+
 @app.errorhandler(413)
 def request_too_large(_error):
     interaction = getattr(g, "rocky_telemetry_interaction", None)
     if not isinstance(interaction, dict):
         interaction = begin_telemetry_interaction()
-    payload = {"error": "Request body is too large."}
+    payload = api_error(
+        "Request body is too large.",
+        error_type="invalid_request_error",
+        code="request_too_large",
+    )
     return terminal_telemetry_json(
         interaction,
         payload,
@@ -690,10 +883,6 @@ def telemetry_model_fields(request_body, model_metrics):
         "model": {
             "public_model": PUBLIC_MODEL,
             "actual_model": metrics.get("actual_model") or INFERENCE_MODEL,
-            "reasoning_requested": (
-                isinstance(request_body, dict)
-                and request_body.get("reasoning") is not None
-            ),
         },
     }
 
@@ -703,7 +892,11 @@ def rocky_api():
     interaction = begin_telemetry_interaction()
     if REQUIRE_REQUEST_LOGGING and not interaction.get("persisted"):
         return telemetry_json(
-            {"error": "Request logging is unavailable."},
+            api_error(
+                "Request logging is unavailable.",
+                error_type="server_error",
+                code="request_logging_unavailable",
+            ),
             503,
             interaction,
         )
@@ -718,7 +911,11 @@ def rocky_api():
         if REQUIRE_REQUEST_LOGGING and not malformed_logged:
             return terminal_telemetry_json(
                 interaction,
-                {"error": "Request logging is unavailable."},
+                api_error(
+                    "Request logging is unavailable.",
+                    error_type="server_error",
+                    code="request_logging_unavailable",
+                ),
                 503,
                 "failed",
                 error_stage="telemetry",
@@ -726,7 +923,11 @@ def rocky_api():
             )
         return terminal_telemetry_json(
             interaction,
-            {"error": "Bad request: expected JSON payload"},
+            api_error(
+                "Request body must be valid JSON object.",
+                param=None,
+                code="invalid_json",
+            ),
             400,
             "rejected",
             error_stage="body",
@@ -741,7 +942,11 @@ def rocky_api():
     if REQUIRE_REQUEST_LOGGING and not request_logged:
         return terminal_telemetry_json(
             interaction,
-            {"error": "Request logging is unavailable."},
+            api_error(
+                "Request logging is unavailable.",
+                error_type="server_error",
+                code="request_logging_unavailable",
+            ),
             503,
             "failed",
             error_stage="telemetry",
@@ -752,11 +957,47 @@ def rocky_api():
     if not key_doc:
         return terminal_telemetry_json(
             interaction,
-            {"error": "Invalid API key"},
+            api_error(
+                "Invalid API key",
+                error_type="authentication_error",
+                code="invalid_api_key",
+            ),
             401,
             "rejected",
             error_stage="authentication",
             error_type="invalid_api_key",
+        )
+
+    if (
+        is_trusted_web_key_doc(key_doc)
+        and forwarded_identity_headers_present()
+        and not has_valid_internal_proxy_secret()
+    ):
+        return terminal_telemetry_json(
+            interaction,
+            api_error(
+                "Internal proxy authentication failed.",
+                error_type="authentication_error",
+                code="invalid_proxy_authentication",
+            ),
+            401,
+            "rejected",
+            error_stage="authentication",
+            error_type="invalid_proxy_authentication",
+        )
+
+    if is_service_key_doc(key_doc) and not is_trusted_web_request(key_doc):
+        return terminal_telemetry_json(
+            interaction,
+            api_error(
+                "Internal proxy authentication failed.",
+                error_type="authentication_error",
+                code="invalid_proxy_authentication",
+            ),
+            401,
+            "rejected",
+            error_stage="authentication",
+            error_type="invalid_proxy_authentication",
         )
 
     identity_logged = enrich_telemetry_interaction(
@@ -766,7 +1007,11 @@ def rocky_api():
     if REQUIRE_REQUEST_LOGGING and not identity_logged:
         return terminal_telemetry_json(
             interaction,
-            {"error": "Request logging is unavailable."},
+            api_error(
+                "Request logging is unavailable.",
+                error_type="server_error",
+                code="request_logging_unavailable",
+            ),
             503,
             "failed",
             error_stage="telemetry",
@@ -777,26 +1022,53 @@ def rocky_api():
     if validation_error:
         return terminal_telemetry_json(
             interaction,
-            {"error": validation_error},
+            api_error(
+                validation_error["message"],
+                param=validation_error.get("param"),
+                code=validation_error.get("code"),
+            ),
             400,
             "rejected",
             error_stage="validation",
             error_type="invalid_request",
         )
 
-    store_history = should_store_history(request_body)
-    granite_payload = None
+    trusted_web_request = is_trusted_web_request(key_doc)
+    if request_body.get("conversation_id") and not trusted_web_request:
+        return terminal_telemetry_json(
+            interaction,
+            api_error(
+                "conversation_id is reserved for the built-in web chat. "
+                "Use previous_response_id for API continuation.",
+                param="conversation_id",
+                code="unsupported_parameter",
+            ),
+            400,
+            "rejected",
+            error_stage="validation",
+            error_type="invalid_request",
+        )
+
+    use_web_history = should_use_web_history(request_body, key_doc)
+    store_response = should_store_response(request_body)
     chat_user_context = None
     user_id = None
     user_message = None
-    requested_conversation_id = None
+    requested_conversation_id = request_body.get("conversation_id")
+    previous_response_id = request_body.get("previous_response_id")
+    history_messages = []
+    owner_scope = response_owner_scope(key_doc)
 
-    if store_history:
+    if use_web_history:
         chat_user_context = get_chat_user_context(key_doc)
         if not chat_user_context:
             return terminal_telemetry_json(
                 interaction,
-                {"error": "Missing chat user context."},
+                api_error(
+                    "Missing trusted chat user context.",
+                    error_type="authentication_error",
+                    code="missing_chat_user_context",
+                ),
                 400,
                 "rejected",
                 error_stage="authentication",
@@ -805,111 +1077,168 @@ def rocky_api():
 
         user_id = chat_user_context["user_id"]
         user_message = extract_user_message_text(request_body)
-        if not user_message:
+    elif previous_response_id:
+        history_messages = load_response_context(previous_response_id, owner_scope)
+        if history_messages is None:
             return terminal_telemetry_json(
                 interaction,
-                {"error": "Missing message."},
-                400,
+                api_error(
+                    "Previous response not found.",
+                    error_type="invalid_request_error",
+                    param="previous_response_id",
+                    code="response_not_found",
+                ),
+                404,
                 "rejected",
-                error_stage="validation",
-                error_type="missing_message",
-            )
-        if isinstance(request_body, dict):
-            requested_conversation_id = request_body.get("conversation_id")
-    else:
-        granite_payload = _build_granite_payload(request_body)
-        if not has_effective_user_prompt(granite_payload):
-            return terminal_telemetry_json(
-                interaction,
-                {"error": "Missing message."},
-                400,
-                "rejected",
-                error_stage="validation",
-                error_type="missing_message",
+                error_stage="conversation",
+                error_type="response_not_found",
             )
 
     model_metrics = None
     conversation_id = None
+    user_message_id = None
+    response_payload = None
     try:
-        model_request = granite_payload
-        if store_history:
+        if use_web_history:
             conversation_id = get_or_create_conversation(
                 user_id=user_id,
                 conversation_id=requested_conversation_id,
                 first_message=user_message,
                 user_context=chat_user_context
             )
+            if conversation_id is None:
+                return terminal_telemetry_json(
+                    interaction,
+                    api_error(
+                        "Conversation not found.",
+                        param="conversation_id",
+                        code="conversation_not_found",
+                    ),
+                    404,
+                    "rejected",
+                    error_stage="conversation",
+                    error_type="conversation_not_found",
+                )
 
             recent_messages = load_recent_messages(conversation_id, user_id)
-            granite_input = messages_to_granite_input(recent_messages)
-            granite_input.append({
-                "role": "user",
-                "content": [
-                    {
-                        "type": "input_text",
-                        "text": user_message,
-                    }
-                ],
-            })
-            history_request_body = build_history_request_body(
-                request_body,
-                granite_input,
+            history_messages = messages_to_granite_input(recent_messages)
+
+        (
+            model_request,
+            current_messages,
+            omitted_history_count,
+            retained_history,
+        ) = build_granite_payload_with_context(
+            request_body,
+            history_messages=history_messages,
+        )
+        if model_request is None or not has_effective_user_prompt(model_request):
+            return terminal_telemetry_json(
+                interaction,
+                api_error(
+                    "input must contain at least one user message.",
+                    param="input",
+                    code="missing_required_parameter",
+                ),
+                400,
+                "rejected",
+                error_stage="validation",
+                error_type="missing_message",
             )
-            model_request = history_request_body
 
         request_record["model_input"] = redact_structured_secrets(model_request)
+        request_record["history_truncated_messages"] = omitted_history_count
         model_input_logged = enrich_telemetry_interaction(interaction, {
             "request": request_record,
-            "inference_started_at": datetime.now(timezone.utc),
+            "inference_dispatched_at": datetime.now(timezone.utc),
         })
         if REQUIRE_REQUEST_LOGGING and not model_input_logged:
             return terminal_telemetry_json(
                 interaction,
-                {"error": "Request logging is unavailable."},
+                api_error(
+                    "Request logging is unavailable.",
+                    error_type="server_error",
+                    code="request_logging_unavailable",
+                ),
                 503,
                 "failed",
                 error_stage="telemetry",
                 error_type="model_input_persistence_failed",
             )
 
-        if store_history:
-            save_message(
+        if use_web_history:
+            user_message_id = save_message(
                 conversation_id=conversation_id,
                 user_id=user_id,
                 role="user",
                 content=user_message,
-                user_context=chat_user_context
+                user_context=chat_user_context,
+                status="pending",
             )
 
         response = request_ai(model_request)
         model_metrics = response.get("_telemetry")
         if response.get("error"):
+            if user_message_id:
+                update_message_status(
+                    conversation_id,
+                    user_id,
+                    user_message_id,
+                    "failed",
+                )
             outcome = (
                 "timed_out"
                 if response.get("error_type") == "timeout"
                 else "failed"
             )
-            status = model_error_status(response.get("error_type"))
+            model_error_type = response.get("error_type") or "model_error"
+            status = model_error_status(model_error_type)
+            code_by_type = {
+                "bad_request": "invalid_model_request",
+                "busy": "model_busy",
+                "timeout": "model_timeout",
+                "network": "model_service_unavailable",
+                "bad_response": "invalid_model_response",
+            }
+            error_payload = api_error(
+                response["error"],
+                error_type=(
+                    "invalid_request_error"
+                    if model_error_type == "bad_request"
+                    else "server_error"
+                ),
+                code=code_by_type.get(model_error_type, "model_error"),
+            )
+            if conversation_id is not None:
+                error_payload["conversation_id"] = conversation_id
+                error_payload["message_stored"] = bool(user_message_id)
             return terminal_telemetry_json(
                 interaction,
-                {"error": response["error"]},
+                error_payload,
                 status,
                 outcome,
                 model_metrics=model_metrics,
                 error_stage=(
                     "ollama"
-                    if response.get("error_type") in {"timeout", "network", "bad_response"}
+                    if model_error_type in {"timeout", "network", "bad_response"}
                     else "granite"
                 ),
-                error_type=response.get("error_type") or "model_error",
+                error_type=model_error_type,
                 additional_fields=telemetry_model_fields(
                     request_body,
                     model_metrics,
                 ),
+                headers={"Retry-After": "2"} if model_error_type == "busy" else None,
             )
 
         assistant_reply = response["output_text"]
-        if store_history:
+        if use_web_history:
+            update_message_status(
+                conversation_id,
+                user_id,
+                user_message_id,
+                "sent",
+            )
             save_message(
                 conversation_id=conversation_id,
                 user_id=user_id,
@@ -918,15 +1247,58 @@ def rocky_api():
                 model=response.get("model"),
                 user_context=chat_user_context
             )
+
+        response_payload = build_response_payload(
+            assistant_reply,
+            request_body,
+            response.get("metadata", {}),
+            model_metrics,
+        )
+        if previous_response_id:
+            response_payload["previous_response_id"] = previous_response_id
+        if conversation_id is not None:
+            response_payload["conversation_id"] = conversation_id
+
+        if store_response and not use_web_history:
+            assistant_context_message = {
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": assistant_reply}],
+            }
+            save_response_context(
+                response_payload["id"],
+                owner_scope,
+                [*retained_history, *current_messages, assistant_context_message],
+            )
     except Exception as error:
+        if user_message_id:
+            try:
+                update_message_status(
+                    conversation_id,
+                    user_id,
+                    user_message_id,
+                    "failed",
+                )
+            except Exception:
+                app.logger.warning(
+                    "chat.message_status_update_failed request_id=%s",
+                    interaction.get("request_id"),
+                )
         app.logger.error(
             "chat.request_failed request_id=%s error_type=%s",
             interaction.get("request_id"),
             type(error).__name__,
         )
+        error_payload = api_error(
+            "Internal server error.",
+            error_type="server_error",
+            code="internal_error",
+        )
+        if conversation_id is not None:
+            error_payload["conversation_id"] = conversation_id
+            error_payload["message_stored"] = bool(user_message_id)
         return terminal_telemetry_json(
             interaction,
-            {"error": "Internal server error."},
+            error_payload,
             500,
             "failed",
             model_metrics=model_metrics,
@@ -938,14 +1310,6 @@ def rocky_api():
             ),
         )
 
-    response_payload = build_response_payload(
-        assistant_reply,
-        request_body,
-        response.get("metadata", {}),
-        model_metrics,
-    )
-    if conversation_id is not None:
-        response_payload["conversation_id"] = conversation_id
     return terminal_telemetry_json(
         interaction,
         response_payload,
@@ -1117,22 +1481,181 @@ def extract_bearer_api_key():
 
 
 def validate_public_request(request_body):
-    model = request_body.get("model", PUBLIC_MODEL)
+    def invalid(message, param, code="invalid_value"):
+        return {"message": message, "param": param, "code": code}
+
+    supported_fields = {
+        "conversation_id",
+        "frequency_penalty",
+        "input",
+        "instructions",
+        "max_output_tokens",
+        "metadata",
+        "model",
+        "presence_penalty",
+        "previous_response_id",
+        "store",
+        "stream",
+        "temperature",
+        "top_p",
+    }
+    for field in request_body:
+        if field not in supported_fields:
+            return invalid(
+                f"Parameter '{field}' is not supported.",
+                field,
+                "unsupported_parameter",
+            )
+
+    if "model" not in request_body:
+        return invalid("model is required.", "model", "missing_required_parameter")
+    model = request_body.get("model")
     if not isinstance(model, str) or model != PUBLIC_MODEL:
-        return "Unsupported model. Use 'rocky'."
+        return invalid(
+            f"Unsupported model. Use '{PUBLIC_MODEL}'.",
+            "model",
+            "model_not_found",
+        )
 
-    if "store" in request_body and not isinstance(request_body["store"], bool):
-        return "store must be a boolean."
-
-    conversation_id = request_body.get("conversation_id")
-    if conversation_id is not None and not isinstance(conversation_id, str):
-        return "conversation_id must be a string."
+    input_value = request_body.get("input")
+    if isinstance(input_value, str):
+        if not input_value.strip():
+            return invalid("input must not be empty.", "input")
+        input_character_count = len(input_value)
+    elif isinstance(input_value, list):
+        if not input_value:
+            return invalid("input must not be empty.", "input")
+        input_character_count = 0
+        user_message_present = False
+        for message_index, message in enumerate(input_value):
+            message_param = f"input[{message_index}]"
+            if not isinstance(message, dict):
+                return invalid("Each input item must be an object.", message_param)
+            role = message.get("role", "user")
+            if role not in {"user", "assistant", "system", "developer"}:
+                return invalid(
+                    f"Unsupported input role '{role}'.",
+                    f"{message_param}.role",
+                    "unsupported_role",
+                )
+            user_message_present = user_message_present or role == "user"
+            content = message.get("content")
+            if isinstance(content, str):
+                if not content.strip():
+                    return invalid("Message content must not be empty.", f"{message_param}.content")
+                input_character_count += len(content)
+                continue
+            if not isinstance(content, list) or not content:
+                return invalid(
+                    "Message content must be a non-empty string or text-block array.",
+                    f"{message_param}.content",
+                )
+            for block_index, block in enumerate(content):
+                block_param = f"{message_param}.content[{block_index}]"
+                if not isinstance(block, dict):
+                    return invalid("Each content block must be an object.", block_param)
+                block_type = block.get("type")
+                if block_type not in {"input_text", "output_text", "text"}:
+                    return invalid(
+                        f"Content type '{block_type}' is not supported.",
+                        f"{block_param}.type",
+                        "unsupported_content_type",
+                    )
+                text = block.get("text")
+                if not isinstance(text, str) or not text.strip():
+                    return invalid("Text content must not be empty.", f"{block_param}.text")
+                input_character_count += len(text)
+        if not user_message_present:
+            return invalid("input must contain at least one user message.", "input")
+    else:
+        return invalid(
+            "input must be a non-empty string or message array.",
+            "input",
+            "invalid_type",
+        )
 
     instructions = request_body.get("instructions")
     if instructions is not None and (
         not isinstance(instructions, str) or not instructions.strip()
     ):
-        return "instructions must be a non-empty string."
+        return invalid("instructions must be a non-empty string.", "instructions")
+    input_character_count += len(instructions) if isinstance(instructions, str) else 0
+    if input_character_count > MAX_CONTEXT_CHARS:
+        return invalid(
+            f"Current input exceeds the {MAX_CONTEXT_CHARS}-character context limit.",
+            "input",
+            "input_too_large",
+        )
+
+    for field in ("store", "stream"):
+        if field in request_body and not isinstance(request_body[field], bool):
+            return invalid(f"{field} must be a boolean.", field, "invalid_type")
+    if request_body.get("stream") is True:
+        return invalid(
+            "Streaming is not currently supported.",
+            "stream",
+            "unsupported_parameter",
+        )
+
+    for field in ("conversation_id", "previous_response_id"):
+        value = request_body.get(field)
+        if value is not None and (not isinstance(value, str) or not value.strip()):
+            return invalid(f"{field} must be a non-empty string.", field, "invalid_type")
+    if request_body.get("conversation_id") and request_body.get("previous_response_id"):
+        return invalid(
+            "conversation_id and previous_response_id cannot be used together.",
+            "previous_response_id",
+            "invalid_parameter_combination",
+        )
+    if request_body.get("conversation_id") and request_body.get("store") is False:
+        return invalid(
+            "conversation_id requires store to be true.",
+            "store",
+            "invalid_parameter_combination",
+        )
+
+    numeric_ranges = {
+        "temperature": (0, 2),
+        "top_p": (0, 1),
+        "frequency_penalty": (-2, 2),
+        "presence_penalty": (-2, 2),
+    }
+    for field, (minimum, maximum) in numeric_ranges.items():
+        if field not in request_body:
+            continue
+        value = request_body[field]
+        if (
+            not isinstance(value, (int, float))
+            or isinstance(value, bool)
+            or not math.isfinite(value)
+        ):
+            return invalid(f"{field} must be a finite number.", field, "invalid_type")
+        if not minimum <= value <= maximum:
+            return invalid(
+                f"{field} must be between {minimum} and {maximum}.",
+                field,
+            )
+
+    if "max_output_tokens" in request_body:
+        value = request_body["max_output_tokens"]
+        if not isinstance(value, int) or isinstance(value, bool):
+            return invalid(
+                "max_output_tokens must be an integer.",
+                "max_output_tokens",
+                "invalid_type",
+            )
+        if not 1 <= value <= MAX_OUTPUT_TOKENS:
+            return invalid(
+                f"max_output_tokens must be between 1 and {MAX_OUTPUT_TOKENS}.",
+                "max_output_tokens",
+            )
+
+    metadata = request_body.get("metadata")
+    if metadata is not None:
+        if not isinstance(metadata, dict):
+            return invalid("metadata must be an object.", "metadata", "invalid_type")
+        if len(json.dumps(metadata, ensure_ascii=False).encode("utf-8")) > 16 * 1024:
+            return invalid("metadata must not exceed 16 KiB.", "metadata", "metadata_too_large")
 
     return None
 
@@ -1147,7 +1670,7 @@ def hash_api_key(key):
     return hash_api_key_value(key)
 
 def parse_expiration(value):
-    if value in {None, ""}:
+    if value is None or value == "":
         return None
     if isinstance(value, datetime):
         parsed = value
@@ -1171,7 +1694,10 @@ def key_doc_is_active(key_doc):
     if key_doc.get("deleted_at") or key_doc.get("revoked_at"):
         return False
 
-    expires_at = parse_expiration(key_doc.get("expire") or key_doc.get("expires_at"))
+    expiration_value = key_doc.get("expire") or key_doc.get("expires_at")
+    expires_at = parse_expiration(expiration_value)
+    if expiration_value is not None and expiration_value != "" and expires_at is None:
+        return False
     if expires_at is not None and expires_at <= datetime.now(timezone.utc):
         return False
 
@@ -1201,7 +1727,32 @@ def normalize_identity(value):
     return str(value).strip().lower() if value is not None else ""
 
 
+def has_valid_internal_proxy_secret():
+    if not INTERNAL_PROXY_SECRET:
+        return False
+    provided = request.headers.get("X-Rocky-Internal-Secret", "")
+    return bool(provided) and hmac.compare_digest(provided, INTERNAL_PROXY_SECRET)
+
+
+def forwarded_identity_headers_present():
+    return any(
+        request.headers.get(name)
+        for name in (
+            "X-Rocky-User-Id",
+            "X-Rocky-User-Email",
+            "X-Rocky-User-Name",
+            "X-Rocky-User-Is-Admin",
+        )
+    )
+
+
 def get_forwarded_user_context():
+    if not has_valid_internal_proxy_secret():
+        return {
+            "user_id": None,
+            "user_email": None,
+            "user_name": None,
+        }
     user_id = normalize_identity(request.headers.get("X-Rocky-User-Id"))
     user_email = normalize_identity(request.headers.get("X-Rocky-User-Email"))
     user_name = str(request.headers.get("X-Rocky-User-Name") or "").strip()
@@ -1214,11 +1765,22 @@ def get_forwarded_user_context():
 
 
 def get_chat_user_context(key_doc):
+    if (
+        is_trusted_web_key_doc(key_doc)
+        and forwarded_identity_headers_present()
+        and not has_valid_internal_proxy_secret()
+    ):
+        return None
     if is_service_key_doc(key_doc):
         context = get_forwarded_user_context()
         if not context["user_id"]:
             return None
         return context
+
+    if is_trusted_web_key_doc(key_doc) and has_valid_internal_proxy_secret():
+        context = get_forwarded_user_context()
+        if context["user_id"]:
+            return context
 
     user_id = get_owner_id(key_doc)
     if not user_id:
@@ -1231,6 +1793,14 @@ def get_chat_user_context(key_doc):
         "user_email": user_email or None,
         "user_name": None,
     }
+
+
+def is_trusted_web_request(key_doc):
+    return (
+        is_trusted_web_key_doc(key_doc)
+        and has_valid_internal_proxy_secret()
+        and bool(get_forwarded_user_context().get("user_id"))
+    )
 
 
 def find_valid_key_doc(collection, query):
@@ -1305,30 +1875,98 @@ def get_owner_id(key_doc):
         or "unknown-user"
     )
 
-def should_store_history(request_body):
-    """
-    History is enabled by default.
-    If request has store: false, do not save/load history.
 
-    Maybe add a setting in settings to turn on and off History?
-    """
-    if isinstance(request_body, dict) and request_body.get("store") is False:
+def response_owner_scope(key_doc):
+    if is_trusted_web_request(key_doc):
+        context = get_forwarded_user_context()
+        return f"web-user:{context['user_id']}"
+    credential_id = (
+        key_doc.get("key_id")
+        or key_doc.get("hash")
+        or get_owner_id(key_doc)
+    )
+    return f"credential:{credential_id}"
+
+
+def load_response_context(response_id, owner_scope):
+    if responses_col is None:
+        return None
+    response_doc = responses_col.find_one({
+        "response_id": response_id,
+        "owner_scope": owner_scope,
+    })
+    if not isinstance(response_doc, dict):
+        return None
+    context_messages = response_doc.get("context_messages")
+    return context_messages if isinstance(context_messages, list) else None
+
+
+def save_response_context(response_id, owner_scope, context_messages):
+    if responses_col is None:
+        raise RuntimeError("Response storage is unavailable.")
+    responses_col.insert_one({
+        "response_id": response_id,
+        "owner_scope": owner_scope,
+        "model": PUBLIC_MODEL,
+        "context_messages": context_messages,
+        "created_at": utc_now(),
+    })
+
+
+def message_character_count(message):
+    if not isinstance(message, dict):
+        return 0
+    return len(extract_message_content_text(message.get("content")))
+
+
+def bounded_history_messages(history_messages, current_messages, instructions=None):
+    history = history_messages if isinstance(history_messages, list) else []
+    current_size = sum(message_character_count(message) for message in current_messages)
+    if isinstance(instructions, str):
+        current_size += len(instructions)
+    remaining = max(0, MAX_CONTEXT_CHARS - current_size)
+
+    selected_reversed = []
+    for message in reversed(history):
+        size = message_character_count(message)
+        if size > remaining:
+            break
+        selected_reversed.append(message)
+        remaining -= size
+
+    selected = list(reversed(selected_reversed))
+    return selected, len(history) - len(selected)
+
+def should_store_response(request_body):
+    """Responses are stored by default; institutional telemetry is independent."""
+    return not (
+        isinstance(request_body, dict)
+        and request_body.get("store") is False
+    )
+
+
+def should_use_web_history(request_body, key_doc):
+    if not isinstance(request_body, dict) or not should_store_response(request_body):
         return False
+    return bool(request_body.get("conversation_id")) or is_trusted_web_request(key_doc)
 
-    return True
+
+def should_store_history(request_body):
+    """Backward-compatible helper retained for callers outside the main route."""
+    return should_store_response(request_body)
 
 
 def extract_user_message_text(request_body):
     """Extracts the latest user message from the request body."""
     if isinstance(request_body, str):
-        return request_body.strip()
+        return request_body if request_body.strip() else ""
 
     if not isinstance(request_body, dict):
         return ""
 
     input_value = request_body.get("input")
     if isinstance(input_value, str):
-        return input_value.strip()
+        return input_value if input_value.strip() else ""
 
     if not isinstance(input_value, list):
         return ""
@@ -1354,6 +1992,7 @@ def get_or_create_conversation(user_id, conversation_id, first_message, user_con
 
         if existing:
             return conversation_id
+        return None
 
     new_conversation_id = str(uuid4())
 
@@ -1373,7 +2012,15 @@ def get_or_create_conversation(user_id, conversation_id, first_message, user_con
 
     return new_conversation_id
 
-def save_message(conversation_id, user_id, role, content, model=None, user_context=None):
+def save_message(
+    conversation_id,
+    user_id,
+    role,
+    content,
+    model=None,
+    user_context=None,
+    status="sent",
+):
     """
     Saves one chat message to MongoDB/Mongita.
 
@@ -1381,14 +2028,16 @@ def save_message(conversation_id, user_id, role, content, model=None, user_conte
     """
     context = user_context if isinstance(user_context, dict) else {}
 
+    message_id = str(uuid4())
     messages_col.insert_one({
-        "message_id": str(uuid4()),
+        "message_id": message_id,
         "conversation_id": conversation_id,
         "user_id": user_id,
         "user_email": context.get("user_email"),
         "role": role,
         "content": content,
         "model": model,
+        "status": status,
         "created_at": utc_now()
     })
 
@@ -1404,6 +2053,20 @@ def save_message(conversation_id, user_id, role, content, model=None, user_conte
         }
     )
 
+    return message_id
+
+
+def update_message_status(conversation_id, user_id, message_id, status):
+    """Updates the durable delivery state for one owned chat message."""
+    messages_col.update_one(
+        {
+            "conversation_id": conversation_id,
+            "user_id": user_id,
+            "message_id": message_id,
+        },
+        {"$set": {"status": status}},
+    )
+
 def load_recent_messages(conversation_id, user_id, limit=20):
     """
     Loads the most recent messages for a conversation.
@@ -1415,6 +2078,11 @@ def load_recent_messages(conversation_id, user_id, limit=20):
         "user_id": user_id
     }))
 
+    messages = [
+        message
+        for message in messages
+        if message.get("status", "sent") == "sent"
+    ]
     messages.sort(key=lambda item: item.get("created_at", ""))
 
     return messages[-limit:]
@@ -1451,6 +2119,7 @@ def clean_message_for_export(message):
         "role": message.get("role"),
         "content": message.get("content"),
         "model": message.get("model"),
+        "status": message.get("status", "sent"),
         "created_at": message.get("created_at")
     }
 
@@ -1501,10 +2170,12 @@ def messages_to_granite_input(messages):
     granite_input = []
 
     for message in messages:
+        if message.get("status", "sent") != "sent":
+            continue
         role = message.get("role", "user")
-        content = str(message.get("content", "")).strip()
+        content = str(message.get("content", ""))
 
-        if not content:
+        if not content.strip():
             continue
 
         granite_input.append({
@@ -1541,7 +2212,7 @@ def build_history_request_body(original_request_body, granite_input):
 
 def extract_message_content_text(content):
     if isinstance(content, str):
-        return content.strip()
+        return content if content.strip() else ""
     if not isinstance(content, list):
         return ""
 
@@ -1553,18 +2224,17 @@ def extract_message_content_text(content):
             continue
         text = block.get("text")
         if isinstance(text, str) and text.strip():
-            text_parts.append(text.strip())
+            text_parts.append(text)
     return "\n".join(text_parts)
 
 
 def normalize_input_messages(input_value):
     if isinstance(input_value, str):
-        text = input_value.strip()
-        if not text:
+        if not input_value.strip():
             return []
         return [{
             "role": "user",
-            "content": [{"type": "input_text", "text": text}],
+            "content": [{"type": "input_text", "text": input_value}],
         }]
 
     if not isinstance(input_value, list):
@@ -1589,28 +2259,36 @@ def normalize_input_messages(input_value):
     return normalized_messages
 
 
-def _build_granite_payload(request_body):
+def build_granite_payload_with_context(request_body, history_messages=None):
     if request_body is None:
-        return None
+        return None, [], 0, []
 
     if isinstance(request_body, str):
         request_body = {"input": request_body}
 
     if not isinstance(request_body, dict):
-        return None
+        return None, [], 0, []
 
-    input_messages = normalize_input_messages(request_body.get("input"))
+    current_messages = normalize_input_messages(request_body.get("input"))
+    if not current_messages:
+        return None, [], 0, []
+
     instructions = request_body.get("instructions")
     if instructions is not None:
         if not isinstance(instructions, str) or not instructions.strip():
-            return None
+            return None, [], 0, []
+
+    retained_history, omitted_history_count = bounded_history_messages(
+        history_messages,
+        current_messages,
+        instructions=instructions,
+    )
+    input_messages = [*retained_history, *current_messages]
+    if isinstance(instructions, str):
         input_messages.insert(0, {
             "role": "system",
             "content": [{"type": "input_text", "text": instructions.strip()}],
         })
-
-    if not input_messages:
-        return None
 
     payload = {
         "model": INFERENCE_MODEL,
@@ -1621,13 +2299,19 @@ def _build_granite_payload(request_body):
         "frequency_penalty",
         "max_output_tokens",
         "presence_penalty",
-        "reasoning",
-        "temperature",
+                "temperature",
         "top_p",
     ):
         if option in request_body:
             payload[option] = request_body[option]
 
+    return payload, current_messages, omitted_history_count, retained_history
+
+
+def _build_granite_payload(request_body):
+    payload, _current_messages, _omitted_history_count, _retained_history = (
+        build_granite_payload_with_context(request_body)
+    )
     return payload
 
 
@@ -1658,7 +2342,12 @@ def build_response_payload(output_text, request_body, metadata, model_metrics):
             }],
         }],
         "output_text": output_text,
-        "metadata": metadata if isinstance(metadata, dict) else {},
+        "metadata": (
+            request_body.get("metadata", {})
+            if isinstance(request_body, dict)
+            and isinstance(request_body.get("metadata", {}), dict)
+            else {}
+        ),
         "usage": {
             "input_tokens": prompt_tokens,
             "input_tokens_details": {
@@ -1691,14 +2380,19 @@ def extract_granite_telemetry(data):
     return sanitize_model_metrics(metrics)
 
 
-def model_failure(error_type, metrics=None):
+def model_failure(error_type, metrics=None, message=None):
     messages = {
         "bad_request": "Granite rejected the request.",
+        "busy": "The model is busy. Try again shortly.",
         "timeout": "Model request timed out.",
         "bad_response": "Granite returned an invalid response.",
     }
     return {
-        "error": messages.get(error_type, "Model service request failed."),
+        "error": (
+            message.strip()[:512]
+            if isinstance(message, str) and message.strip()
+            else messages.get(error_type, "Model service request failed.")
+        ),
         "error_type": error_type,
         "_telemetry": metrics or {},
     }
@@ -1710,9 +2404,13 @@ def request_ai(request_body):
         return model_failure("bad_request")
 
     try:
+        headers = {}
+        if GRANITE_AUTH_TOKEN:
+            headers["X-Rocky-Granite-Token"] = GRANITE_AUTH_TOKEN
         resp = requests.post(
             GRANITE_URL,
             json=payload,
+            headers=headers,
             timeout=GRANITE_TIMEOUT_SECONDS,
         )
     except requests.Timeout:
@@ -1747,11 +2445,16 @@ def request_ai(request_body):
     if not 200 <= response_status < 300 or granite_error is not None:
         if response_status == 400 or granite_error_type == "bad_request":
             error_type = "bad_request"
+        elif response_status == 503 or granite_error_type == "model_busy":
+            error_type = "busy"
         elif response_status == 504 or granite_error_type == "model_timeout":
             error_type = "timeout"
         else:
             error_type = "network"
-        return model_failure(error_type, model_metrics)
+        safe_message = None
+        if error_type == "bad_request" and isinstance(granite_error, dict):
+            safe_message = granite_error.get("message")
+        return model_failure(error_type, model_metrics, message=safe_message)
 
     output_text = data.get("output_text")
     if not isinstance(output_text, str) or not output_text.strip():

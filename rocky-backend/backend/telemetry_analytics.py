@@ -4,6 +4,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from math import ceil, floor
 from typing import Any, Iterable
+from zoneinfo import ZoneInfo
 
 
 WINDOWS = {
@@ -23,6 +24,7 @@ BREAKDOWN_DIMENSIONS = {
     "user", "course", "key", "group", "model", "source", "outcome",
 }
 OUTCOMES = ("completed", "rejected", "failed", "timed_out")
+OPERATIONS = {"models.list", "responses.create", "unknown"}
 MAX_BUCKETS = 1_000
 MAX_BREAKDOWN_ROWS = 100
 MAX_REQUEST_ROWS = 200
@@ -36,6 +38,8 @@ ANALYTICS_ROW_PROJECTION = {
     "outcome": 1,
     "http_status": 1,
     "source": 1,
+    "operation": 1,
+    "inference_dispatched_at": 1,
     "actor": 1,
     "credential": 1,
     "course": 1,
@@ -185,6 +189,72 @@ def documents_in_range(collection, start: datetime, end: datetime,
     return list(rows.values())
 
 
+def user_usage_summary(collection, identifiers: Iterable[str],
+                       generated_at: datetime | None = None):
+    normalized_identifiers = {
+        str(identifier).strip().lower()
+        for identifier in identifiers
+        if str(identifier).strip()
+    }
+    now = as_utc(generated_at or utc_now())
+    if now is None:
+        raise ValueError("The analytics clock is invalid.")
+
+    query = {
+        "$or": [
+            {"actor.user_id": {"$in": sorted(normalized_identifiers)}},
+            {"actor.email": {"$in": sorted(normalized_identifiers)}},
+        ]
+    }
+    try:
+        candidates = collection.find(query, ANALYTICS_ROW_PROJECTION)
+        rows = list(candidates)
+    except Exception:
+        rows = list(collection.find({}))
+
+    matching_rows: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        actor = row.get("actor") if isinstance(row.get("actor"), dict) else {}
+        actor_identifiers = {
+            str(actor.get(field) or "").strip().lower()
+            for field in ("user_id", "email")
+        }
+        actor_identifiers.discard("")
+        if normalized_identifiers.isdisjoint(actor_identifiers):
+            continue
+        identifier = str(row.get("request_id") or row.get("_id"))
+        matching_rows[identifier] = row
+
+    metrics = metric_accumulator()
+    last_request_at = None
+    eastern = ZoneInfo("America/New_York")
+    today_start = now.astimezone(eastern).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    ).astimezone(timezone.utc)
+    requests_today = 0
+    for row in matching_rows.values():
+        add_row(metrics, row)
+        timestamp = received_at(row)
+        if timestamp is None:
+            continue
+        if timestamp >= today_start:
+            requests_today += 1
+        if last_request_at is None or timestamp > last_request_at:
+            last_request_at = timestamp
+
+    public = public_metrics(metrics)
+    return {
+        "generated_at": iso(now),
+        "today_start": iso(today_start),
+        "requests_today": requests_today,
+        "total_requests": public["requests"],
+        "active_requests": public["active"],
+        "outcomes": public["outcomes"],
+        "usage": public["usage"],
+        "last_request_at": iso(last_request_at),
+    }
+
+
 def received_at(row: dict[str, Any]) -> datetime | None:
     return as_utc(row.get("received_at") or row.get("accepted_at"))
 
@@ -282,6 +352,12 @@ def percentile(values: Iterable[float], percentage: float) -> float | None:
 def metric_accumulator():
     return {
         "requests": 0,
+        "generation_requests": 0,
+        "inference_dispatches": 0,
+        "generation_completed": 0,
+        "generation_rejected": 0,
+        "generation_failed": 0,
+        "generation_timed_out": 0,
         "completed": 0,
         "rejected": 0,
         "failed": 0,
@@ -294,6 +370,7 @@ def metric_accumulator():
         "input_bytes": 0,
         "output_bytes": 0,
         "latencies": [],
+        "generation_latencies": [],
         "model_total_durations_ns": [],
         "model_load_durations_ns": [],
         "prompt_eval_durations_ns": [],
@@ -318,6 +395,15 @@ def add_row(metrics: dict[str, Any], row: dict[str, Any]):
     row_latency = latency(row)
     if row_latency is not None:
         metrics["latencies"].append(row_latency)
+    row_operation = str(row.get("operation") or "responses.create")
+    if row_operation == "responses.create":
+        metrics["generation_requests"] += 1
+        if row_outcome in OUTCOMES:
+            metrics[f"generation_{row_outcome}"] += 1
+        if row.get("inference_dispatched_at") is not None:
+            metrics["inference_dispatches"] += 1
+            if row_latency is not None:
+                metrics["generation_latencies"].append(row_latency)
     durations = (
         ("model_total_durations_ns", "model_total_duration_ns", "total_duration"),
         ("model_load_durations_ns", "model_load_duration_ns", "load_duration"),
@@ -340,8 +426,22 @@ def rate(numerator: float, denominator: float) -> float | None:
 
 def public_metrics(metrics: dict[str, Any]):
     terminal = sum(metrics[name] for name in OUTCOMES)
-    inference_attempts = metrics["completed"] + metrics["failed"] + metrics["timed_out"]
+    inference_attempts = (
+        metrics["generation_completed"]
+        + metrics["generation_failed"]
+        + metrics["generation_timed_out"]
+    )
     latencies = metrics["latencies"]
+    generation_latencies = metrics["generation_latencies"]
+
+    def latency_summary(values):
+        return {
+            "samples": len(values),
+            "average": round(sum(values) / len(values), 2) if values else None,
+            "p50": percentile(values, 0.50),
+            "p95": percentile(values, 0.95),
+            "p99": percentile(values, 0.99),
+        }
 
     def duration_summary(values):
         milliseconds = [value / 1_000_000 for value in values]
@@ -359,8 +459,19 @@ def public_metrics(metrics: dict[str, Any]):
         "active": metrics["active"],
         "outcomes": {name: metrics[name] for name in OUTCOMES},
         "flagged": metrics["flagged"],
-        "success_rate": rate(metrics["completed"], inference_attempts),
-        "acceptance_rate": rate(metrics["requests"] - metrics["rejected"], metrics["requests"]),
+        "success_rate": rate(metrics["generation_completed"], inference_attempts),
+        "acceptance_rate": rate(
+            metrics["generation_requests"] - metrics["generation_rejected"],
+            metrics["generation_requests"],
+        ),
+        "generation": {
+            "requests": metrics["generation_requests"],
+            "inference_dispatches": metrics["inference_dispatches"],
+            "outcomes": {
+                name: metrics[f"generation_{name}"]
+                for name in OUTCOMES
+            },
+        },
         "usage": {
             "input_tokens": metrics["input_tokens"],
             "output_tokens": metrics["output_tokens"],
@@ -368,13 +479,8 @@ def public_metrics(metrics: dict[str, Any]):
             "input_bytes": metrics["input_bytes"],
             "output_bytes": metrics["output_bytes"],
         },
-        "latency_ms": {
-            "samples": len(latencies),
-            "average": round(sum(latencies) / len(latencies), 2) if latencies else None,
-            "p50": percentile(latencies, 0.50),
-            "p95": percentile(latencies, 0.95),
-            "p99": percentile(latencies, 0.99),
-        },
+        "api_latency_ms": latency_summary(latencies),
+        "latency_ms": latency_summary(generation_latencies),
         "model_performance": {
             "total_duration": duration_summary(metrics["model_total_durations_ns"]),
             "load_duration": duration_summary(metrics["model_load_durations_ns"]),
@@ -480,7 +586,7 @@ def timeseries(rows: list[dict[str, Any]], window: str, start: datetime,
 
 def dimension_value(row: dict[str, Any], dimension: str):
     if dimension == "user":
-        identifier = nested(row, "actor", "user_id") or nested(row, "actor", "email")
+        identifier = nested(row, "actor", "email") or nested(row, "actor", "user_id")
         label = nested(row, "actor", "name") or nested(row, "actor", "email") or identifier
     elif dimension == "course":
         identifier = nested(row, "course", "course_id") or nested(row, "course", "course_code")
@@ -557,6 +663,7 @@ def request_summary(row: dict[str, Any]):
         "outcome": outcome(row),
         "http_status": row.get("http_status"),
         "source": row.get("source"),
+        "operation": row.get("operation") or "responses.create",
         "actor": row.get("actor"),
         "credential": row.get("credential"),
         "course": row.get("course"),
@@ -569,16 +676,47 @@ def request_summary(row: dict[str, Any]):
     })
 
 
+def _matches_identifier(value: Any, expected: str | None) -> bool:
+    if not expected:
+        return True
+    return str(value or "").strip().lower() == expected.strip().lower()
+
+
 def filter_requests(rows: list[dict[str, Any]], *, requested_outcome=None,
-                    user_id=None, course_id=None, flagged=None,
+                    user_id=None, course_id=None, key_id=None, model=None,
+                    source=None, operation=None, flagged=None,
                     review_status=None):
     filtered = []
     for row in rows:
         if requested_outcome and outcome(row) != requested_outcome:
             continue
-        if user_id and str(nested(row, "actor", "user_id", default="")) != user_id:
+        if user_id and not any(_matches_identifier(value, user_id) for value in (
+            nested(row, "actor", "user_id"),
+            nested(row, "actor", "email"),
+        )):
             continue
-        if course_id and str(nested(row, "course", "course_id", default="")) != course_id:
+        if course_id and not any(_matches_identifier(value, course_id) for value in (
+            nested(row, "course", "course_id"),
+            nested(row, "course", "course_code"),
+        )):
+            continue
+        if key_id and not any(_matches_identifier(value, key_id) for value in (
+            nested(row, "credential", "key_id"),
+            nested(row, "credential", "key_name"),
+        )):
+            continue
+        if model and not any(_matches_identifier(value, model) for value in (
+            nested(row, "model", "public_model"),
+            nested(row, "model", "actual_model"),
+            nested(row, "request", "model"),
+            row.get("actual_model"),
+        )):
+            continue
+        if source and not _matches_identifier(row.get("source"), source):
+            continue
+        if operation and not _matches_identifier(
+            row.get("operation") or "responses.create", operation
+        ):
             continue
         if flagged is not None and bool(nested(row, "review", "flagged", default=False)) != flagged:
             continue

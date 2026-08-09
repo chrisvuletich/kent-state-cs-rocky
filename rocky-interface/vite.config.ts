@@ -31,7 +31,9 @@ export default defineConfig(({ mode }) => {
 
 	const port = Number(rawPort);
 	if (!Number.isInteger(port) || port < 1 || port > 65535) {
-		throw new Error(`Invalid ROCKY_WEB_PORT: "${rawPort}". Expected an integer between 1 and 65535.`);
+		throw new Error(
+			`Invalid ROCKY_WEB_PORT: "${rawPort}". Expected an integer between 1 and 65535.`
+		);
 	}
 
 	const rawAllowedHosts = env.ROCKY_ALLOWED_HOSTS?.trim();
@@ -45,7 +47,9 @@ export default defineConfig(({ mode }) => {
 		.filter((entry) => entry.length > 0);
 
 	if (allowedHosts.length === 0) {
-		throw new Error('Invalid ROCKY_ALLOWED_HOSTS: provide at least one host, e.g. "localhost,127.0.0.1".');
+		throw new Error(
+			'Invalid ROCKY_ALLOWED_HOSTS: provide at least one host, e.g. "localhost,127.0.0.1".'
+		);
 	}
 
 	return {

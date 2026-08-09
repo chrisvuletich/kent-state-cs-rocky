@@ -1,6 +1,8 @@
 # Rocky Model Bridge
 
-This is an internal Flask bridge between the Rocky chat API and Ollama. It is not a public student API and should bind to loopback or another private network interface.
+This is an authenticated internal Flask bridge between the Rocky chat API and
+Ollama. It is not a public student API and should bind to loopback or an
+interface restricted to Rocky.
 
 Copy `.env.example` to `.env`, ensure Ollama is running with the configured `OLLAMA_MODEL`, and start it from this directory:
 
@@ -8,7 +10,17 @@ Copy `.env.example` to `.env`, ensure Ollama is running with the configured `OLL
 python -m app.main
 ```
 
-The public chat service maps model `rocky` to the configured Ollama model before calling this bridge.
+Set the same `ROCKY_GRANITE_TOKEN` here and on the Rocky chat API. The public
+model identifier is configured with `ROCKY_PUBLIC_MODEL`; the bridge sends the
+server-controlled `OLLAMA_MODEL` to Ollama. `/ready` verifies that Ollama is
+reachable and that the configured model is installed. When the bridge token is
+configured, both `/generate` and `/ready` require it in
+`X-Rocky-Granite-Token`.
+
+```sh
+curl http://127.0.0.1:5002/ready \
+  -H "X-Rocky-Granite-Token: $ROCKY_GRANITE_TOKEN"
+```
 
 ## Private hardware snapshot
 

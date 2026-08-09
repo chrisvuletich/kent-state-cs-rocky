@@ -39,11 +39,15 @@ export async function updateCurrentUserSetting<K extends UserSettingKey>(
 			body: JSON.stringify({ value })
 		});
 
-		const payload = await parseResponse<{ settings: UserSettings }>(response, `Update user setting "${key}"`);
+		const payload = await parseResponse<{ settings: UserSettings }>(
+			response,
+			`Update user setting "${key}"`
+		);
 		showSuccessFeedback('Setting updated successfully.');
 		return payload.settings;
 	} catch (err) {
-		const message = err instanceof Error && err.message.trim() ? err.message : 'Unable to update setting.';
+		const message =
+			err instanceof Error && err.message.trim() ? err.message : 'Unable to update setting.';
 		showErrorFeedback(message);
 		throw err;
 	}

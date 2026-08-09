@@ -1,12 +1,13 @@
 # Rocky Ubuntu Deployment
 
-This deployment runs Rocky from `/var/www/rocky/current` with nginx as the public reverse proxy.
+This deployment runs the web/API services on Rocky and the model bridge beside
+Ollama on Granite. Nginx on Rocky is the only public API entry point.
 
 Services:
 
 - `rocky-frontend.service`: SvelteKit Node server on `127.0.0.1:8000`.
 - `rocky-backend.service`: Flask/Gunicorn API on `127.0.0.1:5001`.
-- `rocky-granite.service`: Granite/Ollama bridge on `127.0.0.1:5002`.
+- `rocky-granite.service`: authenticated Granite/Ollama bridge on Granite port `5002`.
 - `rocky-chat-api.service`: Chat API on `127.0.0.1:5003`.
 - `rocky-hardware-sampler.service`: bounded Granite hardware history collector.
 
@@ -14,19 +15,28 @@ The tracked service files are examples:
 
 - Replace `{{ROCKY_USER}}` with the Linux user that should run the app.
 - Replace `{{ROCKY_GROUP}}` with that user's primary group or another readable app group.
-- Replace `{{ROCKY_APP_DIR}}` with the absolute app path, for example `/var/www/rocky/current`.
+- Replace `{{ROCKY_APP_DIR}}` with the release path on the relevant host.
+- Replace `{{GRANITE_BIND_IP}}` with the Granite address reachable only from Rocky.
 
 Copy the edited files to `/etc/systemd/system/*.service`, then run:
 
 ```sh
 sudo systemctl daemon-reload
-sudo systemctl enable --now rocky-backend rocky-granite rocky-chat-api rocky-frontend
+sudo systemctl enable --now rocky-backend rocky-chat-api rocky-frontend
+```
+
+On Granite, install `rocky-granite.service.example` and run:
+
+```sh
+sudo systemctl daemon-reload
+sudo systemctl enable --now rocky-granite
 ```
 
 Environment files stay outside the repo:
 
 - `/etc/rocky/frontend.env`
 - `/etc/rocky/backend.env`
+- `/etc/rocky/granite.env` on Granite
 
 For a true production database, add these to `/etc/rocky/backend.env` and restart `rocky-backend.service`:
 
@@ -36,9 +46,49 @@ ROCKY_DB_BACKEND=mongodb
 ROCKY_MONGODB_URI=...
 ```
 
-The chat API reads API keys from the same database, so `ROCKY_DB_NAME` and the MongoDB settings must be identical for `rocky-backend` and `rocky-chat-api`. Keep the Granite bridge and Ollama private; nginx exposes only the frontend and `POST /v1/responses`.
+The chat API reads API keys from the same database, so `ROCKY_DB_NAME` and the MongoDB settings must be identical for `rocky-backend` and `rocky-chat-api`. Nginx exposes only the frontend, `POST /v1/responses`, and `GET /v1/models`.
 
 Set the same long random `ROCKY_HIDDEN_API_KEY_SECRET` in both `/etc/rocky/backend.env` and `/etc/rocky/frontend.env` so the built-in web chat can use each user's hidden key. Also set the same independent `ROCKY_INTERNAL_PROXY_SECRET` in both files; Flask rejects forwarded user and administrator headers without it. Set a third independent `ROCKY_SESSION_SECRET` in `/etc/rocky/frontend.env` for signed web sessions. Both new secrets must contain at least 32 characters in production.
+
+Set one additional long random `ROCKY_GRANITE_TOKEN` in Rocky's
+`/etc/rocky/backend.env` and Granite's `/etc/rocky/granite.env`. Configure the
+student-facing model and Granite URL in Rocky's `/etc/rocky/backend.env`:
+
+```sh
+ROCKY_PUBLIC_MODEL=gemma4:latest
+OLLAMA_MODEL=gemma4:latest
+ROCKY_GRANITE_URL=http://GRANITE_PRIVATE_ADDRESS:5002/generate
+ROCKY_GRANITE_READY_URL=http://GRANITE_PRIVATE_ADDRESS:5002/ready
+ROCKY_GRANITE_TOKEN=...
+ROCKY_MAX_CONTEXT_CHARS=60000
+ROCKY_MAX_OUTPUT_TOKENS=2048
+```
+
+Set the same student-facing model in `/etc/rocky/frontend.env` so the built-in
+chat sends the advertised identifier:
+
+```sh
+ROCKY_PUBLIC_MODEL=gemma4:latest
+```
+
+Granite's `/etc/rocky/granite.env` needs:
+
+```sh
+ROCKY_APP_ENV=production
+ROCKY_GRANITE_TOKEN=...
+OLLAMA_BASE_URL=http://127.0.0.1:11434
+OLLAMA_MODEL=gemma4:latest
+ROCKY_GRANITE_MAX_CONCURRENT=1
+ROCKY_GRANITE_QUEUE_WAIT_SECONDS=1
+```
+
+For a direct readiness check on Granite, load `/etc/rocky/granite.env` and send
+`ROCKY_GRANITE_TOKEN` in the `X-Rocky-Granite-Token` header. Rocky's own
+`/ready` endpoint performs this authenticated check automatically.
+
+Allow Granite port `5002` only from Rocky. If the connection is not on an
+isolated private network, place it behind an SSH tunnel or TLS rather than
+sending prompts and the internal token over plaintext HTTP.
 
 Microsoft login additionally requires the specific Kent tenant and application client IDs in `/etc/rocky/frontend.env`:
 
@@ -96,3 +146,273 @@ Install and start `rocky-hardware-sampler.service` on Rocky after confirming
 the private Granite `/health` endpoint is reachable. The sampler stores only
 numeric hardware/model state and host/model names; it does not receive prompts,
 responses, API keys, or Microsoft credentials.
+
+## Verify a deployment
+
+Run the configuration doctor from the release checkout on Rocky after loading
+both production environment files. It reads configuration, pings MongoDB, and
+checks the backend, chat API, Granite, Ollama, and model mapping. It does not
+write application data or print secret values.
+
+```sh
+cd /home/bboggia/rocky/current
+source .venv/bin/activate
+python manage.py doctor \
+  --env-file /etc/rocky/backend.env \
+  --env-file /etc/rocky/frontend.env
+```
+
+Use `--skip-network` to inspect configuration without contacting services. A
+successful run exits `0`; a failed check exits `1`; invalid command usage exits
+`2`.
+
+Then verify the same public routes students use. Keep the test API key in the
+shell environment rather than a tracked file.
+
+```sh
+export ROCKY_BASE_URL='https://rocky.cs.kent.edu'
+export ROCKY_API_KEY='sk_kent_replace_with_test_key'
+export ROCKY_EXPECTED_MODEL='gemma4:latest'
+python run-test/integration/deployment_smoke.py
+```
+
+That command is read-only: it checks web health, aggregate service health, and
+authenticated model discovery. After those pass, submit one short, audited
+generation request with:
+
+```sh
+python run-test/integration/deployment_smoke.py --include-generation
+```
+
+Unset the key when finished:
+
+```sh
+unset ROCKY_API_KEY
+```
+
+## Request retention
+
+Request telemetry is permanent unless Kent State establishes a different
+policy. Document that default in `/etc/rocky/backend.env` with:
+
+```sh
+ROCKY_REQUEST_RETENTION_DAYS=0
+```
+
+The setting is documentation only; Rocky never schedules automatic deletion.
+Administrators can inspect an explicit cutoff with the dry-run command:
+
+```sh
+python manage.py purge-requests \
+  --env-file /etc/rocky/backend.env \
+  --before 2025-08-01
+```
+
+The command reports the matching count and oldest/newest timestamps without
+changing data. After taking and verifying a database backup, deletion requires
+the additional `--apply` flag. Future cutoff dates and missing cutoffs are
+rejected. An applied purge records its cutoff and deleted count in
+`api_history` as a `telemetry-purge` audit event.
+
+## MongoDB backup and recovery
+
+Rocky does not implement its own backup service. Use the standard MongoDB
+Database Tools on Rocky, keep backup files outside the release directory, and
+follow Kent State's storage and retention requirements. The examples below use
+`/var/backups/rocky`; an administrator must create that directory and grant the
+Rocky service account access before the first backup.
+
+Install a MongoDB Database Tools version compatible with the MongoDB server.
+Confirm that the commands are available before relying on this procedure:
+
+```sh
+mongodump --version
+mongorestore --version
+```
+
+Store the MongoDB URI in a Database Tools configuration file so credentials do
+not appear in process arguments. The account that runs backups should own the
+file, and no other account should be able to read it:
+
+```sh
+MONGODB_TOOLS_CONFIG=/etc/rocky/mongodb-tools.yml
+sudo touch "$MONGODB_TOOLS_CONFIG"
+sudo chown bboggia:bboggia "$MONGODB_TOOLS_CONFIG"
+sudo chmod 600 "$MONGODB_TOOLS_CONFIG"
+sudoedit "$MONGODB_TOOLS_CONFIG"
+```
+
+The file contains one YAML field. Substitute the production URI while editing;
+do not commit the file or paste its value into a shell command:
+
+```yaml
+uri: mongodb://username:password@mongodb-host:27017/?authSource=admin
+```
+
+If backups run as a different account, use that account as the owner instead.
+MongoDB Database Tools 100.3.0 or newer support the `--config` option used below.
+
+### Create and verify an archive
+
+Take a backup at least nightly while classes are active, and immediately before
+a deployment, migration, retention purge, or other planned database change.
+Run the following from the release checkout on Rocky:
+
+```sh
+cd /home/bboggia/rocky/current
+source .venv/bin/activate
+set -a
+. /etc/rocky/backend.env
+set +a
+
+BACKUP_DIR=/var/backups/rocky
+BACKUP_STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+BACKUP_PATH="$BACKUP_DIR/rocky-$BACKUP_STAMP.archive.gz"
+MONGODB_TOOLS_CONFIG=/etc/rocky/mongodb-tools.yml
+
+umask 077
+python manage.py database-counts \
+  --env-file /etc/rocky/backend.env \
+  > "$BACKUP_PATH.counts.txt"
+mongodump \
+  --config="$MONGODB_TOOLS_CONFIG" \
+  --db="$ROCKY_DB_NAME" \
+  --archive="$BACKUP_PATH" \
+  --gzip
+sha256sum "$BACKUP_PATH" > "$BACKUP_PATH.sha256"
+chmod 600 "$BACKUP_PATH" "$BACKUP_PATH.counts.txt" "$BACKUP_PATH.sha256"
+```
+
+Do not store database archives in Git, under `current`, or in a web-accessible
+directory. The archive contains users, API-key hashes, prompts, responses, and
+audit records. Give it the same access restrictions as the production database.
+Copy it to Kent State-managed backup storage rather than relying on the Rocky
+server as the only copy.
+
+Verify the file checksum and ask `mongorestore` to inspect the archive without
+writing data:
+
+```sh
+sha256sum --check "$BACKUP_PATH.sha256"
+mongorestore \
+  --config="$MONGODB_TOOLS_CONFIG" \
+  --archive="$BACKUP_PATH" \
+  --gzip \
+  --dryRun \
+  --nsInclude="$ROCKY_DB_NAME.*"
+```
+
+A checksum and dry run detect common file and command problems, but the most
+useful recovery test is a temporary restore.
+
+### Test a restore in a temporary database
+
+Choose a new, empty database name. The example deliberately maps every Rocky
+collection into `rocky_restore_check`; do not use the production database name.
+
+```sh
+RESTORE_CHECK_DB=rocky_restore_check
+
+mongorestore \
+  --config="$MONGODB_TOOLS_CONFIG" \
+  --archive="$BACKUP_PATH" \
+  --gzip \
+  --stopOnError \
+  --nsFrom="$ROCKY_DB_NAME.*" \
+  --nsTo="$RESTORE_CHECK_DB.*"
+
+python manage.py database-counts \
+  --env-file /etc/rocky/backend.env \
+  --database "$RESTORE_CHECK_DB" \
+  > "$BACKUP_PATH.restore-counts.txt"
+
+diff -u "$BACKUP_PATH.counts.txt" "$BACKUP_PATH.restore-counts.txt"
+```
+
+The first two header lines identify different database names, so `diff` should
+show that expected difference. Every collection count should otherwise match.
+Also inspect a small sample of users, courses, API keys, telemetry, and audit
+events in the temporary database before declaring the backup usable.
+
+After verification, an administrator may delete only the explicitly named
+temporary database:
+
+```sh
+python - <<'PY'
+import os
+
+from pymongo import MongoClient
+
+database_name = "rocky_restore_check"
+if database_name != "rocky_restore_check":
+    raise RuntimeError("unexpected database")
+MongoClient(os.environ["ROCKY_MONGODB_URI"]).drop_database(database_name)
+PY
+```
+
+If a different temporary name was used, update both occurrences in the safety
+check before running it. Never run `dropDatabase()` against the production
+database.
+
+### Restore production
+
+A production restore replaces data and requires a maintenance window. First:
+
+1. Confirm the exact archive path, checksum, source database, and intended
+   production database.
+2. Complete the temporary-restore procedure above.
+3. Take a new emergency backup of the current production database, even when it
+   is damaged or incomplete.
+4. Notify users that Rocky will be unavailable during the restore.
+5. Stop services that read or write MongoDB:
+
+```sh
+sudo systemctl stop \
+  rocky-frontend.service \
+  rocky-chat-api.service \
+  rocky-backend.service \
+  rocky-hardware-sampler.service
+```
+
+Run one final dry run, then restore the archive. `--drop` replaces collections
+present in the archive; it is intentionally destructive and belongs only in
+this reviewed recovery procedure.
+
+```sh
+mongorestore \
+  --config="$MONGODB_TOOLS_CONFIG" \
+  --archive="$BACKUP_PATH" \
+  --gzip \
+  --dryRun \
+  --nsInclude="$ROCKY_DB_NAME.*"
+
+mongorestore \
+  --config="$MONGODB_TOOLS_CONFIG" \
+  --archive="$BACKUP_PATH" \
+  --gzip \
+  --drop \
+  --stopOnError \
+  --nsInclude="$ROCKY_DB_NAME.*"
+```
+
+Restart the services and compare the restored collection counts with the saved
+baseline:
+
+```sh
+sudo systemctl start \
+  rocky-backend.service \
+  rocky-chat-api.service \
+  rocky-frontend.service \
+  rocky-hardware-sampler.service
+
+python manage.py database-counts \
+  --env-file /etc/rocky/backend.env
+python manage.py doctor \
+  --env-file /etc/rocky/backend.env \
+  --env-file /etc/rocky/frontend.env
+python run-test/integration/deployment_smoke.py
+```
+
+Finally verify sign-in, course membership, API-key authentication, analytics,
+request detail, and audit logs. Run the optional smoke-test generation only
+after the read-only checks pass.

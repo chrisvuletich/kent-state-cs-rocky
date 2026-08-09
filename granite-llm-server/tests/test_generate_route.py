@@ -4,6 +4,7 @@ from unittest.mock import Mock, patch
 
 import requests
 
+import app.main as granite_main
 from app.main import app as flask_app
 
 
@@ -32,6 +33,66 @@ class TestGenerateRoute(unittest.TestCase):
     def setUp(self):
         flask_app.config["TESTING"] = True
         self.client = flask_app.test_client()
+
+    @patch("app.ollama_client.requests.post")
+    def test_generate_requires_configured_internal_token(self, mock_post):
+        with patch.object(granite_main, "GRANITE_AUTH_TOKEN", "synthetic-granite-token"):
+            rejected = self.client.post("/generate", json=granite_payload())
+            mock_post.return_value = make_ollama_response({
+                "message": {"content": "Authenticated"}
+            })
+            accepted = self.client.post(
+                "/generate",
+                json=granite_payload(),
+                headers={"X-Rocky-Granite-Token": "synthetic-granite-token"},
+            )
+
+        self.assertEqual(rejected.status_code, 401)
+        self.assertEqual(accepted.status_code, 200)
+        mock_post.assert_called_once()
+
+    def test_generate_returns_retryable_busy_response(self):
+        gate = Mock()
+        gate.acquire.return_value = False
+        with patch.object(granite_main, "INFERENCE_GATE", gate):
+            response = self.client.post("/generate", json=granite_payload())
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.get_json()["error"]["type"], "model_busy")
+        self.assertEqual(response.headers["Retry-After"], "2")
+
+    def test_ready_checks_ollama_and_configured_model(self):
+        with patch.object(granite_main, "check_ollama_readiness", return_value=True) as check:
+            response = self.client.get("/ready")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()["dependencies"]["ollama"])
+        check.assert_called_once()
+
+    def test_ready_requires_the_configured_internal_token(self):
+        with (
+            patch.object(
+                granite_main,
+                "GRANITE_AUTH_TOKEN",
+                "synthetic-granite-token",
+            ),
+            patch.object(
+                granite_main,
+                "check_ollama_readiness",
+                return_value=True,
+            ) as check,
+        ):
+            rejected = self.client.get("/ready")
+            accepted = self.client.get(
+                "/ready",
+                headers={
+                    "X-Rocky-Granite-Token": "synthetic-granite-token",
+                },
+            )
+
+        self.assertEqual(rejected.status_code, 401)
+        self.assertEqual(accepted.status_code, 200)
+        check.assert_called_once()
 
     @patch("app.ollama_client.requests.post")
     def test_generate_sends_exact_payload_to_ollama_with_reasoning(

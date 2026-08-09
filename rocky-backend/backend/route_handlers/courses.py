@@ -75,6 +75,70 @@ def _reject_if_course_closed(course: dict[str, Any]):
     return jsonify({"error": "Course is closed. Reopen it to make changes."}), 403
 
 
+def _course_member_aliases(course: dict[str, Any], member_id: str, normalize_str) -> set[str]:
+    """Return every stored identifier that refers to one course member."""
+
+    normalized_target = normalize_str(member_id).lower()
+    aliases = {normalized_target} if normalized_target else set()
+    for member in course.get("members", []):
+        if not isinstance(member, dict):
+            continue
+        member_aliases = {
+            normalize_str(member.get("id")).lower(),
+            normalize_str(member.get("email")).lower(),
+        }
+        member_aliases.discard("")
+        if normalized_target in member_aliases:
+            aliases.update(member_aliases)
+    return aliases
+
+
+def _revoke_course_owner_keys(
+    course: dict[str, Any],
+    api_keys_collection,
+    owner_type: str,
+    owner_ids: set[str],
+    normalize_str,
+) -> int:
+    """Irreversibly revoke matching course keys while retaining their audit records."""
+
+    normalized_owner_ids = {
+        normalize_str(owner_id).lower()
+        for owner_id in owner_ids
+        if normalize_str(owner_id)
+    }
+    if not normalized_owner_ids:
+        return 0
+
+    lookup: dict[str, Any] = {
+        "owner_type": normalize_str(owner_type).lower(),
+        "owner_id": {"$in": sorted(normalized_owner_ids)},
+    }
+    if isinstance(course.get("id"), int):
+        lookup["course_id"] = course["id"]
+    else:
+        course_code = normalize_str(course.get("code"))
+        if not course_code:
+            return 0
+        lookup["c_id"] = course_code
+
+    revoked_at = datetime.now(timezone.utc).isoformat()
+    revoked_count = 0
+    for key_entry in api_keys_collection.find(lookup):
+        if not isinstance(key_entry, dict):
+            continue
+        if not key_entry.get("hash") and key_entry.get("deleted_at"):
+            continue
+        updated_key = dict(key_entry)
+        updated_key["hash"] = ""
+        updated_key["is_active"] = False
+        updated_key["disabled_reason"] = "membership"
+        updated_key["deleted_at"] = revoked_at
+        api_keys_collection.replace_one({"_id": key_entry.get("_id")}, updated_key)
+        revoked_count += 1
+    return revoked_count
+
+
 def _deactivate_overflow_course_keys(course: dict[str, Any], api_keys_collection, owner_type: str, owner_ids: list[str], max_slot_index: int, normalize_str):
     normalized_owner_type = normalize_str(owner_type).lower()
     if normalized_owner_type not in {"person", "group"}:
@@ -238,6 +302,14 @@ def create_course(deps: dict[str, Any]):
         return _bad_request("Unable to process course metadata.")
 
     courses.insert_one(cleaned)
+    deps["record_audit_event"](
+        deps,
+        "course-created",
+        course=cleaned,
+        target_type="course",
+        target_id=cleaned.get("id"),
+        changes={"code": cleaned.get("code"), "name": cleaned.get("name"), "semester": cleaned.get("semester")},
+    )
     return jsonify(_serialize_value(cleaned)), 201
 
 
@@ -332,6 +404,14 @@ def patch_course_metadata(deps: dict[str, Any], course_id: str):
         return _bad_request("Unable to update course metadata.")
 
     courses.replace_one({"_id": course["_id"]}, updated)
+    deps["record_audit_event"](
+        deps,
+        "course-metadata-updated",
+        course=updated,
+        target_type="course",
+        target_id=updated.get("id"),
+        changes={key: updated.get(key) for key in data},
+    )
     return jsonify(_serialize_value(updated))
 
 
@@ -364,6 +444,14 @@ def update_course_status_route(deps: dict[str, Any], course_id: str):
         return _bad_request("Unable to update course status.")
 
     courses.replace_one({"_id": course["_id"]}, updated)
+    deps["record_audit_event"](
+        deps,
+        "course-status-updated",
+        course=updated,
+        target_type="course",
+        target_id=updated.get("id"),
+        changes={"is_active": data["is_active"]},
+    )
     return jsonify(_serialize_value(updated))
 
 
@@ -371,6 +459,8 @@ def delete_course(deps: dict[str, Any], course_id: str):
     require_admin = deps["require_admin"]
     get_course_record = deps["get_course_record"]
     courses = deps["courses"]
+    api_keys = deps["api_keys"]
+    delete_course_api_keys = deps["delete_course_api_keys"]
 
     ok, err = require_admin()
     if not ok:
@@ -380,7 +470,16 @@ def delete_course(deps: dict[str, Any], course_id: str):
     if not course:
         return jsonify({"error": "Course not found"}), 404
 
+    deleted_keys = delete_course_api_keys(course, api_keys)
     courses.delete_one({"_id": course["_id"]})
+    deps["record_audit_event"](
+        deps,
+        "course-deleted",
+        course=course,
+        target_type="course",
+        target_id=course.get("id"),
+        changes={"code": course.get("code"), "name": course.get("name"), "deleted_keys": deleted_keys},
+    )
     return jsonify({"message": "Course deleted"})
 
 
@@ -426,6 +525,19 @@ def add_course_members_route(deps: dict[str, Any], course_id: str):
         return _bad_request("Unable to add course members.")
 
     courses.replace_one({"_id": course["_id"]}, updated)
+    added_identifiers = [
+        (member.get("id") or member.get("email"))
+        for member in (members_payload or [])
+        if isinstance(member, dict)
+    ]
+    deps["record_audit_event"](
+        deps,
+        "course-members-added",
+        course=updated,
+        target_type="course-members",
+        target_id=",".join(str(value) for value in added_identifiers if value),
+        changes={"members": added_identifiers},
+    )
     return jsonify(_serialize_value(updated))
 
 
@@ -434,6 +546,7 @@ def remove_course_member_route(deps: dict[str, Any], course_id: str):
     _resolve_requester_user_id = deps["_resolve_requester_user_id"]
     get_course_record = deps["get_course_record"]
     courses = deps["courses"]
+    api_keys = deps["api_keys"]
     can_manage_people = deps["can_manage_people"]
     remove_course_member = deps["remove_course_member"]
     _bad_request = deps["_bad_request"]
@@ -465,12 +578,54 @@ def remove_course_member_route(deps: dict[str, Any], course_id: str):
     if not can_manage_people(course, requester_id or email, is_admin):
         return jsonify({"error": "Instructor or admin access is required."}), 403
 
+    member_aliases = _course_member_aliases(course, target_member_id, normalize_str)
+    affected_group_ids = {
+        normalize_str(group.get("id")).lower()
+        for group in course.get("groups", [])
+        if isinstance(group, dict)
+        and not member_aliases.isdisjoint(
+            {
+                normalize_str(group_member_id).lower()
+                for group_member_id in group.get("memberIds", [])
+            }
+        )
+        and normalize_str(group.get("id"))
+    }
+
     try:
         updated = remove_course_member(course, target_member_id, is_admin)
     except ValueError as exc:
         return _bad_request("Unable to remove course member.")
 
     courses.replace_one({"_id": course["_id"]}, updated)
+    revoked_person_keys = _revoke_course_owner_keys(
+        course,
+        api_keys,
+        "person",
+        member_aliases,
+        normalize_str,
+    )
+    revoked_group_keys = sum(
+        _revoke_course_owner_keys(
+            course,
+            api_keys,
+            "group",
+            {group_id},
+            normalize_str,
+        )
+        for group_id in affected_group_ids
+    )
+    deps["record_audit_event"](
+        deps,
+        "course-member-removed",
+        course=updated,
+        target_type="course-member",
+        target_id=target_member_id,
+        changes={
+            "revoked_person_keys": revoked_person_keys,
+            "revoked_group_keys": revoked_group_keys,
+        },
+    )
     return jsonify(_serialize_value(updated))
 
 
@@ -525,6 +680,15 @@ def create_course_group_route(deps: dict[str, Any], course_id: str):
         return _bad_request("Unable to create course group.")
 
     courses.replace_one({"_id": course["_id"]}, updated)
+    created_group = updated.get("groups", [])[-1] if updated.get("groups") else {}
+    deps["record_audit_event"](
+        deps,
+        "course-group-created",
+        course=updated,
+        target_type="group",
+        target_id=created_group.get("id"),
+        changes={"name": created_group.get("name")},
+    )
     return jsonify(_serialize_value(updated))
 
 
@@ -570,6 +734,14 @@ def add_group_member_route(deps: dict[str, Any], course_id: str, group_id: str):
         return _bad_request("Unable to add group member.")
 
     courses.replace_one({"_id": course["_id"]}, updated)
+    deps["record_audit_event"](
+        deps,
+        "course-group-member-added",
+        course=updated,
+        target_type="group",
+        target_id=group_id,
+        changes={"member_id": target_member_id},
+    )
     return jsonify(_serialize_value(updated))
 
 
@@ -578,6 +750,7 @@ def remove_group_member_route(deps: dict[str, Any], course_id: str, group_id: st
     _resolve_requester_user_id = deps["_resolve_requester_user_id"]
     get_course_record = deps["get_course_record"]
     courses = deps["courses"]
+    api_keys = deps["api_keys"]
     can_manage_people = deps["can_manage_people"]
     remove_group_member = deps["remove_group_member"]
     _bad_request = deps["_bad_request"]
@@ -609,12 +782,54 @@ def remove_group_member_route(deps: dict[str, Any], course_id: str, group_id: st
     if not target_member_id:
         return _bad_request("id is required.")
 
+    member_aliases = _course_member_aliases(course, target_member_id, normalize_str)
+    target_group = next(
+        (
+            group
+            for group in course.get("groups", [])
+            if isinstance(group, dict)
+            and normalize_str(group.get("id")).lower() == normalize_str(group_id).lower()
+        ),
+        None,
+    )
+    member_was_in_group = bool(
+        target_group
+        and not member_aliases.isdisjoint(
+            {
+                normalize_str(group_member_id).lower()
+                for group_member_id in target_group.get("memberIds", [])
+            }
+        )
+    )
+
     try:
         updated = remove_group_member(course, group_id, target_member_id)
     except ValueError as exc:
         return _bad_request("Unable to remove group member.")
 
     courses.replace_one({"_id": course["_id"]}, updated)
+    revoked_group_keys = (
+        _revoke_course_owner_keys(
+            course,
+            api_keys,
+            "group",
+            {normalize_str(group_id).lower()},
+            normalize_str,
+        )
+        if member_was_in_group
+        else 0
+    )
+    deps["record_audit_event"](
+        deps,
+        "course-group-member-removed",
+        course=updated,
+        target_type="group",
+        target_id=group_id,
+        changes={
+            "member_id": target_member_id,
+            "revoked_group_keys": revoked_group_keys,
+        },
+    )
     return jsonify(_serialize_value(updated))
 
 
@@ -699,6 +914,14 @@ def update_member_key_limit_route(deps: dict[str, Any], course_id: str, member_i
     )
 
     courses.replace_one({"_id": course["_id"]}, updated)
+    deps["record_audit_event"](
+        deps,
+        "course-member-key-limit-updated",
+        course=updated,
+        target_type="course-member",
+        target_id=member_id,
+        changes={"key_limit": key_limit},
+    )
     return jsonify(_serialize_value(updated))
 
 
@@ -782,6 +1005,14 @@ def update_instructor_handout_limit_route(deps: dict[str, Any], course_id: str):
         )
 
     courses.replace_one({"_id": course["_id"]}, updated)
+    deps["record_audit_event"](
+        deps,
+        "course-instructor-handout-limit-updated",
+        course=updated,
+        target_type="course",
+        target_id=updated.get("id"),
+        changes={"instructor_handout_limit": handout_limit},
+    )
     return jsonify(_serialize_value(updated))
 
 
@@ -836,6 +1067,14 @@ def update_instructor_key_limit_route(deps: dict[str, Any], course_id: str):
     )
 
     courses.replace_one({"_id": course["_id"]}, updated)
+    deps["record_audit_event"](
+        deps,
+        "course-instructor-key-limit-updated",
+        course=updated,
+        target_type="course",
+        target_id=updated.get("id"),
+        changes={"instructor_key_limit": key_limit},
+    )
     return jsonify({"message": "Instructor key limit updated successfully."})
 
 
@@ -884,6 +1123,14 @@ def update_group_key_limit_route(deps: dict[str, Any], course_id: str, group_id:
     _reconcile_course_key_activity(updated, api_keys, "group", [group_id], key_limit, normalize_str)
 
     courses.replace_one({"_id": course["_id"]}, updated)
+    deps["record_audit_event"](
+        deps,
+        "course-group-key-limit-updated",
+        course=updated,
+        target_type="group",
+        target_id=group_id,
+        changes={"key_limit": key_limit},
+    )
     return jsonify(_serialize_value(updated))
 
 
@@ -938,94 +1185,24 @@ def list_course_api_keys_route(deps: dict[str, Any], course_id: str):
     return jsonify(_serialize_value(result))
 
 
-def _build_api_history_entry(course: dict[str, Any], requester_email: str, payload: dict[str, Any], deps: dict[str, Any]):
-    _resolve_requester_user_id = deps["_resolve_requester_user_id"]
-    normalize_str = deps["normalize_str"]
-
-    requester_id = _resolve_requester_user_id(requester_email)
-    normalized_requester_email = normalize_str(requester_email).lower()
-    actor_identifier = normalize_str(requester_id) or normalized_requester_email
-
-    payload_meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
-    owner_type = (
-        normalize_str(payload.get("ownerType") or payload.get("owner_type") or payload_meta.get("owner_type")).lower()
-        or "person"
-    )
-    owner_id = normalize_str(payload.get("ownerId") or payload.get("owner_id") or payload_meta.get("owner_id")).lower()
-
-    groups = course.get("groups") if isinstance(course.get("groups"), list) else []
-    explicit_group_id = normalize_str(payload.get("groupId") or payload.get("group_id") or payload_meta.get("group_id"))
-    group_id = explicit_group_id or (owner_id if owner_type == "group" else "")
-
-    event_type = normalize_str(payload.get("eventType") or payload.get("event_type")).lower() or "request"
-    has_explicit_target = bool(explicit_group_id or owner_id or payload.get("ownerType") or payload.get("owner_type") or payload.get("ownerId") or payload.get("owner_id") or payload_meta.get("owner_type") or payload_meta.get("owner_id"))
-
-    matched_group = None
-    if not has_explicit_target:
-        matched_group = next(
-            (
-                group
-                for group in groups
-                if isinstance(group, dict)
-                and (
-                    requester_id in [normalize_str(member_id) for member_id in (group.get("memberIds") or [])]
-                    or normalized_requester_email in [normalize_str(member_id).lower() for member_id in (group.get("memberIds") or [])]
-                )
-            ),
-            None,
-        )
-        if matched_group is not None:
-            group_id = normalize_str(matched_group.get("id"))
-
-    matched_target_group = next(
-        (group for group in groups if isinstance(group, dict) and normalize_str(group.get("id")) == group_id),
-        None,
-    )
-    group_name = (
-        normalize_str(payload.get("groupName") or payload.get("group_name") or payload_meta.get("group_name"))
-        or (normalize_str(matched_target_group.get("name")) if matched_target_group else "")
-    )
-
-    merged_meta = {
-        **payload_meta,
-        "actor_id": actor_identifier,
-        "actor_email": normalized_requester_email,
-        "owner_type": owner_type,
-        "owner_id": owner_id,
-        "group_id": group_id or None,
-        "group_name": group_name or None,
-    }
-
-    return {
-        "u_id": actor_identifier,
-        "c_id": normalize_str(course.get("code")),
-        "course_id": course.get("id"),
-        "event_type": event_type,
-        "group_id": group_id or None,
-        "group_name": group_name or None,
-        "is_group_member": bool(group_id),
-        "meta": merged_meta,
-        "created": datetime.now(timezone.utc).isoformat(),
-    }
-
-
 def regenerate_course_api_key_route(deps: dict[str, Any], course_id: str):
     require_requester_identity = deps["require_requester_identity"]
     _resolve_requester_user_id = deps["_resolve_requester_user_id"]
     get_course_record = deps["get_course_record"]
     courses = deps["courses"]
     api_keys = deps["api_keys"]
-    api_history = deps["api_history"]
     can_request_api_key = deps["can_request_api_key"]
     can_manage_people = deps["can_manage_people"]
     _get_owner_key_limit = deps["_get_owner_key_limit"]
     _iter_course_api_keys = deps["_iter_course_api_keys"]
     _parse_iso_datetime = deps["_parse_iso_datetime"]
-    _build_api_history_entry = deps["_build_api_history_entry"]
     regenerate_course_api_key = deps["regenerate_course_api_key"]
+    resolve_course_key_owner = deps["resolve_course_key_owner"]
     _bad_request = deps["_bad_request"]
     _serialize_value = deps["_serialize_value"]
     normalize_str = deps["normalize_str"]
+    _resolve_user_record = deps["_resolve_user_record"]
+    _is_user_active = deps["_is_user_active"]
     API_KEY_REGENERATION_COOLDOWN = deps["API_KEY_REGENERATION_COOLDOWN"]
 
     identity = require_requester_identity()
@@ -1059,25 +1236,7 @@ def regenerate_course_api_key_route(deps: dict[str, Any], course_id: str):
 
     if not is_admin and not can_manage_course_people:
         if owner_type == "group":
-            target_group_id = owner_id
-            target_group = next(
-                (
-                    group
-                    for group in course.get("groups", [])
-                    if isinstance(group, dict) and normalize_str(group.get("id")).lower() == normalize_str(target_group_id).lower()
-                ),
-                None,
-            )
-            if target_group is None:
-                return _bad_request("groupId is required for group keys.")
-            is_group_member = normalized_requester in {
-                normalize_str(member_id).lower()
-                for member_id in target_group.get("memberIds", [])
-            }
-            if not is_group_member:
-                return jsonify({"error": "Group membership is required."}), 403
-            owner_type = "group"
-            owner_id = normalize_str(target_group.get("id"))
+            return jsonify({"error": "Instructor, teaching assistant, or admin access is required for group keys."}), 403
         else:
             owner_type = "person"
             owner_id = normalized_requester
@@ -1100,6 +1259,29 @@ def regenerate_course_api_key_route(deps: dict[str, Any], course_id: str):
         owner_id = normalize_str(owner_id or normalized_requester)
 
     owner_id = normalize_str(owner_id or normalized_requester).lower()
+    admin_self_owner = False
+    try:
+        resolved_owner = resolve_course_key_owner(course, owner_type, owner_id)
+    except ValueError as exc:
+        if is_admin and owner_type == "person" and owner_id == normalized_requester:
+            resolved_owner = {"owner_type": "person", "owner_id": normalized_requester}
+            admin_self_owner = True
+        else:
+            return _bad_request(str(exc))
+    owner_type = resolved_owner["owner_type"]
+    owner_id = resolved_owner["owner_id"]
+
+    if owner_type == "person":
+        owner_record = _resolve_user_record(owner_id, owner_id)
+        if owner_record is not None and not _is_user_active(owner_record):
+            return jsonify({
+                "error": {
+                    "message": "API keys cannot be generated for an inactive account.",
+                    "type": "permission_error",
+                    "code": "account_inactive",
+                }
+            }), 403
+
     key_name = normalize_str(data.get("keyName") or data.get("key_name") or "key-1")[:64].strip() or "key-1"
     slot_index_raw = data.get("slotIndex") or data.get("slot_index")
     slot_index_provided = slot_index_raw is not None and slot_index_raw != ""
@@ -1111,6 +1293,9 @@ def regenerate_course_api_key_route(deps: dict[str, Any], course_id: str):
         slot_index = 1
 
     owner_key_limit = _get_owner_key_limit(course, owner_type, owner_id)
+    if admin_self_owner and owner_key_limit == 0:
+        configured_admin_limit = course.get("instructor_key_limit")
+        owner_key_limit = configured_admin_limit if isinstance(configured_admin_limit, int) and configured_admin_limit >= 0 else 2
     if slot_index > owner_key_limit:
         return _bad_request(
             f"Key slot {slot_index} exceeds this owner's limit ({owner_key_limit})."
@@ -1167,26 +1352,19 @@ def regenerate_course_api_key_route(deps: dict[str, Any], course_id: str):
     except ValueError as exc:
         return _bad_request("Unable to generate API key.")
 
-    history_doc = _build_api_history_entry(
-        course,
-        email,
-        {
-            "eventType": "generate-key",
-            "ownerType": owner_type,
-            "ownerId": owner_id,
-            "groupId": owner_id if owner_type == "group" else "",
-            "groupName": normalize_str(data.get("groupName") or data.get("group_name")),
-            "meta": {
-                "path": request.path,
-                "owner_type": owner_type,
-                "owner_id": owner_id,
-                "key_name": key_name,
-                "slot_index": slot_index,
-            },
-        },
+    deps["record_audit_event"](
         deps,
+        "generate-key",
+        course=course,
+        target_type=owner_type,
+        target_id=owner_id,
+        metadata={
+            "owner_type": owner_type,
+            "owner_id": owner_id,
+            "key_name": key_name,
+            "slot_index": slot_index,
+        },
     )
-    api_history.insert_one(history_doc)
 
     return jsonify(_serialize_value(key_doc))
 
@@ -1197,11 +1375,9 @@ def delete_course_api_key_route(deps: dict[str, Any], course_id: str):
     get_course_record = deps["get_course_record"]
     courses = deps["courses"]
     api_keys = deps["api_keys"]
-    api_history = deps["api_history"]
     can_manage_api_keys = deps["can_manage_api_keys"]
     can_manage_people = deps["can_manage_people"]
     delete_course_api_keys = deps["delete_course_api_keys"]
-    _build_api_history_entry = deps["_build_api_history_entry"]
     _bad_request = deps["_bad_request"]
     _serialize_value = deps["_serialize_value"]
     _serialize_api_key_summary = deps["_serialize_api_key_summary"]
@@ -1245,20 +1421,7 @@ def delete_course_api_key_route(deps: dict[str, Any], course_id: str):
                 if owner_id != normalized_requester and owner_id != normalize_str(email).lower():
                     return jsonify({"error": "You may only delete your own keys."}), 403
             elif owner_type == "group":
-                target_group = next(
-                    (
-                        group
-                        for group in course.get("groups", [])
-                        if isinstance(group, dict) and normalize_str(group.get("id")).lower() == owner_id
-                    ),
-                    None,
-                )
-                if target_group is None:
-                    return _bad_request("groupId is required for group keys.")
-                member_ids = {normalize_str(member_id).lower() for member_id in target_group.get("memberIds", [])}
-                requester_identifier = normalize_str(requester_id or email).lower()
-                if requester_identifier not in member_ids and normalize_str(email).lower() not in member_ids:
-                    return jsonify({"error": "Group membership is required."}), 403
+                return jsonify({"error": "Instructor, teaching assistant, or admin access is required for group keys."}), 403
 
         course_numeric_id = course.get("id") if isinstance(course.get("id"), int) else None
         lookup_filter: dict[str, Any] = {
@@ -1291,20 +1454,7 @@ def delete_course_api_key_route(deps: dict[str, Any], course_id: str):
                 if existing_owner_id != normalized_requester and existing_owner_id != normalize_str(email).lower():
                     return jsonify({"error": "You may only delete your own keys."}), 403
             elif existing_owner_type == "group":
-                target_group = next(
-                    (
-                        group
-                        for group in course.get("groups", [])
-                        if isinstance(group, dict) and normalize_str(group.get("id")).lower() == existing_owner_id
-                    ),
-                    None,
-                )
-                if target_group is None:
-                    return jsonify({"error": "Group membership is required."}), 403
-                member_ids = {normalize_str(member_id).lower() for member_id in target_group.get("memberIds", [])}
-                requester_identifier = normalize_str(requester_id or email).lower()
-                if requester_identifier not in member_ids and normalize_str(email).lower() not in member_ids:
-                    return jsonify({"error": "Group membership is required."}), 403
+                return jsonify({"error": "Instructor, teaching assistant, or admin access is required for group keys."}), 403
 
         updated_key = dict(existing_key)
         updated_key["hash"] = ""
@@ -1312,27 +1462,19 @@ def delete_course_api_key_route(deps: dict[str, Any], course_id: str):
         updated_key["deleted_at"] = datetime.now(timezone.utc).isoformat()
         api_keys.replace_one({"_id": existing_key.get("_id")}, updated_key)
 
-        history_doc = _build_api_history_entry(
-            course,
-            email,
-            {
-                "eventType": "delete-key",
-                "ownerType": owner_type,
-                "ownerId": owner_id,
-                "groupId": owner_id if owner_type == "group" else "",
-                "groupName": normalize_str(data.get("groupName") or data.get("group_name")),
-                "meta": {
-                    "path": request.path,
-                    "owner_type": owner_type,
-                    "owner_id": owner_id,
-                    "key_name": key_name,
-                    "slot_index": slot_index if slot_index > 0 else existing_key.get("slot_index"),
-                    "action": "delete-key",
-                },
-            },
+        deps["record_audit_event"](
             deps,
+            "delete-key",
+            course=course,
+            target_type=owner_type,
+            target_id=owner_id,
+            metadata={
+                "owner_type": owner_type,
+                "owner_id": owner_id,
+                "key_name": key_name,
+                "slot_index": slot_index if slot_index > 0 else existing_key.get("slot_index"),
+            },
         )
-        api_history.insert_one(history_doc)
         return jsonify(
             _serialize_value(
                 {
@@ -1351,6 +1493,14 @@ def delete_course_api_key_route(deps: dict[str, Any], course_id: str):
     except ValueError as exc:
         return _bad_request("Unable to delete API keys.")
 
+    deps["record_audit_event"](
+        deps,
+        "course-api-keys-deleted",
+        course=course,
+        target_type="course",
+        target_id=course.get("id"),
+        changes={"deleted": deleted_count},
+    )
     return jsonify({"message": "API keys deleted", "deleted": deleted_count})
 
 
@@ -1423,47 +1573,19 @@ def update_course_api_key_status_route(deps: dict[str, Any], course_id: str):
             return jsonify({"error": "API key not found."}), 404
         return _bad_request("Unable to update API key status.")
 
+    deps["record_audit_event"](
+        deps,
+        "course-api-key-status-updated",
+        course=course,
+        target_type=owner_type,
+        target_id=owner_id,
+        changes={
+            "key_name": key_name,
+            "slot_index": slot_index,
+            "is_active": bool(raw_is_active),
+        },
+    )
     return jsonify({"message": "API key status updated successfully."})
-
-
-def append_course_api_history(deps: dict[str, Any], course_id: str):
-    require_requester_identity = deps["require_requester_identity"]
-    _resolve_requester_user_id = deps["_resolve_requester_user_id"]
-    get_course_record = deps["get_course_record"]
-    courses = deps["courses"]
-    api_history = deps["api_history"]
-    filter_visible_courses = deps["filter_visible_courses"]
-    _serialize_value = deps["_serialize_value"]
-    _build_api_history_entry = deps["_build_api_history_entry"]
-    _bad_request = deps["_bad_request"]
-
-    identity = require_requester_identity()
-    if identity[0] is None:
-        return jsonify({"error": "Authentication headers are required."}), 401
-    email, is_admin = identity
-    requester_id = _resolve_requester_user_id(email)
-
-    course = get_course_record(courses, course_id)
-    if not course:
-        return jsonify({"error": "Course not found"}), 404
-
-    closed_response = _reject_if_course_closed(course)
-    if closed_response is not None:
-        return closed_response
-
-    visible = filter_visible_courses([_serialize_value(course)], requester_id or email, is_admin)
-    if not visible:
-        return jsonify({"error": "Not found"}), 404
-
-    payload = request.get_json(silent=True)
-    if payload is None:
-        payload = {}
-    if not isinstance(payload, dict):
-        return _bad_request("Request body must be a JSON object.")
-
-    history_doc = _build_api_history_entry(course, email, payload, deps)
-    api_history.insert_one(history_doc)
-    return jsonify(_serialize_value(history_doc)), 201
 
 
 def get_course_api_history(deps: dict[str, Any], course_id: str):

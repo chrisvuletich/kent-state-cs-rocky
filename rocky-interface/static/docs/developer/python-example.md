@@ -31,12 +31,13 @@ import os
 import requests
 
 url = "https://rocky.cs.kent.edu/v1/responses"
+model = os.environ["ROCKY_MODEL"]
 
 headers = {
     "Authorization": f"Bearer {os.environ['ROCKY_API_KEY']}"
 }
 payload = {
-    "model": "rocky",
+    "model": model,
     "input": "Hello Rocky!",
     "max_output_tokens": 300,
     "store": False,
@@ -48,6 +49,8 @@ response.raise_for_status()
 print(response.json()["output_text"])
 ```
 
+Run `GET /v1/models` and set `ROCKY_MODEL` to the identifier it returns.
+
 ## Example Response
 
 If the request succeeds, Rocky returns a JSON response similar to the example below.
@@ -57,7 +60,7 @@ If the request succeeds, Rocky returns a JSON response similar to the example be
   "id": "resp_123...",
   "object": "response",
   "status": "completed",
-  "model": "rocky",
+  "model": "model-id-from-v1-models",
   "output": [
     {
       "type": "message",
@@ -69,6 +72,7 @@ If the request succeeds, Rocky returns a JSON response similar to the example be
   ],
   "output_text": "Hello! How can I help you today?"
 }
+```
 
 Rocky's documented Python interface uses `requests` and does not require an AI-provider SDK.
 
@@ -85,14 +89,15 @@ client = OpenAI(
     base_url="https://rocky.cs.kent.edu/v1",
 )
 
+model = os.environ["ROCKY_MODEL"]
+
 response = client.responses.create(
-    model="rocky",
+    model=model,
     input="Hello Rocky!",
     store=False,
 )
 
 print(response.output_text)
-```
 ```
 
 ## Next Steps

@@ -15,7 +15,10 @@ class TelemetryAnalyticsEndpointTests(BackendTestCase):
 
     def row(self, request_id, minutes_ago, outcome=None, *, user="student-1",
             course=44001, tokens=(10, 5), latency=100, flagged=False,
-            source="public_api", prompt=None):
+            source="public_api", prompt=None, operation="responses.create",
+            inference_dispatched=None):
+        if inference_dispatched is None:
+            inference_dispatched = outcome in {"completed", "failed", "timed_out"}
         document = {
             "_id": request_id,
             "request_id": request_id,
@@ -23,6 +26,7 @@ class TelemetryAnalyticsEndpointTests(BackendTestCase):
             "state": "terminal" if outcome else "received",
             "received_at": self.now - timedelta(minutes=minutes_ago),
             "source": source,
+            "operation": operation,
             "actor": {
                 "user_id": user,
                 "email": f"{user}@kent.edu" if user else None,
@@ -40,6 +44,8 @@ class TelemetryAnalyticsEndpointTests(BackendTestCase):
             "model": {"actual_model": "granite-test", "public_model": "rocky"},
             "review": {"flagged": flagged, "status": "unreviewed"},
         }
+        if inference_dispatched:
+            document["inference_dispatched_at"] = document["received_at"]
         if outcome:
             document.update({
                 "outcome": outcome,
@@ -91,7 +97,10 @@ class TelemetryAnalyticsEndpointTests(BackendTestCase):
         })
         self.assertEqual(payload["success_rate"], 0.6667)
         self.assertEqual(payload["acceptance_rate"], 0.8)
-        self.assertEqual(payload["latency_ms"]["average"], 237.5)
+        self.assertEqual(payload["api_latency_ms"]["average"], 237.5)
+        self.assertEqual(payload["latency_ms"]["average"], 300.0)
+        self.assertEqual(payload["generation"]["requests"], 5)
+        self.assertEqual(payload["generation"]["inference_dispatches"], 3)
         self.assertEqual(payload["rates"]["peak_requests_per_minute"], 1)
         self.assertEqual(payload["rates"]["peak_tokens_per_minute"], 30)
         self.assertEqual(
@@ -123,11 +132,41 @@ class TelemetryAnalyticsEndpointTests(BackendTestCase):
         )
         self.assertEqual(response.status_code, 200)
         payload = response.get_json()
-        self.assertEqual(payload["active_requests"], 4)
+        self.assertEqual(payload["active_requests"], 1)
         self.assertEqual(payload["lifetime"]["requests"], 90)
         self.assertEqual(payload["lifetime"]["usage"]["input_tokens"], 1_200)
         self.assertEqual(payload["lifetime"]["latency_ms"]["average"], 250.0)
         self.assertEqual(payload["last_model"], "granite-test")
+
+    def test_my_usage_is_scoped_to_authenticated_user(self):
+        student_id = self.seeded_user_ids["student.local@kent.edu"]
+        own_recent = self.row("req_my_recent", 3, "completed", tokens=(12, 7))
+        own_recent["actor"] = {
+            "user_id": student_id,
+            "email": "student.local@kent.edu",
+            "name": "Student Local",
+        }
+        own_older = self.row("req_my_older", 60 * 48, "failed", tokens=(5, 0))
+        own_older["actor"] = {
+            "user_id": student_id,
+            "email": "student.local@kent.edu",
+            "name": "Student Local",
+        }
+        main.telemetry_interactions.insert_many([own_recent, own_older])
+
+        response = self.client.get("/analytics/my-usage", headers=self.student_headers)
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["total_requests"], 2)
+        self.assertEqual(payload["requests_today"], 1)
+        self.assertEqual(payload["usage"]["input_tokens"], 17)
+        self.assertEqual(payload["usage"]["output_tokens"], 7)
+        self.assertEqual(payload["outcomes"]["completed"], 1)
+        self.assertEqual(payload["outcomes"]["failed"], 1)
+
+    def test_my_usage_requires_authenticated_identity(self):
+        response = self.client.get("/analytics/my-usage")
+        self.assertEqual(response.status_code, 401)
 
     def test_timeseries_includes_zero_buckets_and_totals(self):
         response = self.client.get(
@@ -159,11 +198,41 @@ class TelemetryAnalyticsEndpointTests(BackendTestCase):
         users = self.client.get(
             "/analytics/breakdown?dimension=user", headers=self.admin_headers
         ).get_json()["rows"]
-        self.assertEqual(users[0]["id"], "student-1")
+        self.assertEqual(users[0]["id"], "student-1@kent.edu")
         self.assertEqual(users[0]["requests"], 3)
         self.assertTrue(any(row["id"] == "unattributed" for row in users))
 
-    def test_recent_filters_and_detail_return_sanitized_stored_content(self):
+    def test_model_listing_is_api_traffic_not_generation_traffic(self):
+        self.telemetry_model_row = self.row(
+            "req_models",
+            1,
+            "completed",
+            tokens=(0, 0),
+            latency=15,
+            operation="models.list",
+            inference_dispatched=False,
+        )
+        main.telemetry_interactions.insert_one(self.telemetry_model_row)
+
+        payload = self.client.get(
+            "/analytics/summary?window=24h", headers=self.admin_headers
+        ).get_json()
+
+        self.assertEqual(payload["requests"], 6)
+        self.assertEqual(payload["outcomes"]["completed"], 3)
+        self.assertEqual(payload["generation"]["requests"], 5)
+        self.assertEqual(payload["generation"]["outcomes"]["completed"], 2)
+        self.assertEqual(payload["latency_ms"]["samples"], 3)
+        self.assertEqual(payload["api_latency_ms"]["samples"], 5)
+
+        filtered = self.client.get(
+            "/analytics/summary?window=24h&operation=models.list",
+            headers=self.admin_headers,
+        ).get_json()
+        self.assertEqual(filtered["requests"], 1)
+        self.assertEqual(filtered["generation"]["requests"], 0)
+
+    def test_recent_filters_and_detail_return_complete_stored_content(self):
         response = self.client.get(
             "/analytics/requests?outcome=completed&user_id=student-2&flagged=true",
             headers=self.admin_headers,
@@ -183,6 +252,73 @@ class TelemetryAnalyticsEndpointTests(BackendTestCase):
         self.assertEqual(detail_payload["response"]["output_text"], "response req_complete_2")
         self.assertNotIn("_id", detail_payload)
 
+    def test_shared_filters_apply_to_summary_breakdown_and_request_queue(self):
+        route = (
+            "/analytics/summary?window=24h&user_id=student-2@kent.edu"
+            "&course_id=CS-44001&key_id=key-student-2&model=granite-test"
+            "&source=public_api&operation=responses.create&outcome=completed&flagged=true"
+        )
+        summary_payload = self.client.get(route, headers=self.admin_headers).get_json()
+        self.assertEqual(summary_payload["requests"], 1)
+        self.assertEqual(summary_payload["outcomes"]["completed"], 1)
+
+        breakdown_payload = self.client.get(
+            route.replace("/analytics/summary", "/analytics/breakdown")
+            + "&dimension=user",
+            headers=self.admin_headers,
+        ).get_json()
+        self.assertEqual(len(breakdown_payload["rows"]), 1)
+        self.assertEqual(breakdown_payload["rows"][0]["id"], "student-2@kent.edu")
+
+        request_payload = self.client.get(
+            route.replace("/analytics/summary", "/analytics/requests"),
+            headers=self.admin_headers,
+        ).get_json()
+        self.assertEqual(request_payload["matched"], 1)
+        self.assertEqual(request_payload["requests"][0]["request_id"], "req_complete_2")
+
+    def test_analytics_exports_are_admin_only_exact_and_audited(self):
+        row = self.row("req_export", 1, "completed", user="student-export")
+        row["request"]["input_text"] = "=PROMPT(1)"
+        row["response"]["output_text"] = "+response"
+        main.telemetry_interactions.insert_one(row)
+
+        denied = self.client.get(
+            "/analytics/export?format=json&window=24h", headers=self.student_headers
+        )
+        self.assertEqual(denied.status_code, 403)
+
+        exported = self.client.get(
+            "/analytics/export?format=json&window=24h&user_id=student-export",
+            headers=self.admin_headers,
+        )
+        self.assertEqual(exported.status_code, 200)
+        self.assertIn("attachment", exported.headers["Content-Disposition"])
+        payload = exported.get_json()
+        self.assertEqual(payload["count"], 1)
+        self.assertEqual(payload["records"][0]["prompt"], "=PROMPT(1)")
+        self.assertEqual(payload["records"][0]["response"], "+response")
+
+        csv_export = self.client.get(
+            "/analytics/export?format=csv&window=24h&user_id=student-export",
+            headers=self.admin_headers,
+        )
+        self.assertEqual(csv_export.status_code, 200)
+        csv_text = csv_export.get_data(as_text=True)
+        self.assertIn("'=PROMPT(1)", csv_text)
+        self.assertIn("'+response", csv_text)
+        self.assertTrue(any(
+            row.get("event_type") == "analytics-export"
+            for row in main.api_history.find({})
+        ))
+
+        too_large = self.client.get(
+            "/analytics/export?format=json&window=24h&limit=1",
+            headers=self.admin_headers,
+        )
+        self.assertEqual(too_large.status_code, 413)
+        self.assertIn("add filters", too_large.get_json()["error"])
+
     def test_routes_are_admin_only_and_query_inputs_are_bounded(self):
         routes = (
             "/analytics/kpis",
@@ -193,6 +329,7 @@ class TelemetryAnalyticsEndpointTests(BackendTestCase):
             "/analytics/breakdown",
             "/analytics/requests",
             "/analytics/requests/req_complete_1",
+            "/analytics/export",
         )
         for route in routes:
             response = self.client.get(route, headers=self.student_headers)
@@ -206,6 +343,7 @@ class TelemetryAnalyticsEndpointTests(BackendTestCase):
             "/analytics/requests?limit=1000",
             "/analytics/requests?outcome=unknown",
             "/analytics/requests?flagged=perhaps",
+            "/analytics/summary?operation=not-real",
         )
         for route in invalid:
             response = self.client.get(route, headers=self.admin_headers)

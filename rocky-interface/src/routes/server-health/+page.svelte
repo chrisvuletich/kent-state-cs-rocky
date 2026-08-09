@@ -27,13 +27,10 @@
 
 <svelte:head>
 	<title>Rocky Server Health</title>
-	<meta
-		name="description"
-		content="Current availability of Rocky application services."
-	/>
+	<meta name="description" content="Current availability of Rocky application services." />
 </svelte:head>
 
-<main class="health-page">
+<section class="health-page" aria-label="Server health">
 	<header class="page-header">
 		<div>
 			<p class="eyebrow">SYSTEM STATUS</p>
@@ -76,10 +73,7 @@
 		{#each data.health.services as service}
 			<article class="service-row">
 				<div class="service-name">
-					<span
-						class:healthy-dot={service.ok}
-						class:unhealthy-dot={!service.ok}
-						class="service-dot"
+					<span class:healthy-dot={service.ok} class:unhealthy-dot={!service.ok} class="service-dot"
 					></span>
 
 					<div>
@@ -88,7 +82,11 @@
 					</div>
 				</div>
 
-				<div class:healthy-text={service.ok} class:unhealthy-text={!service.ok} class="service-status">
+				<div
+					class:healthy-text={service.ok}
+					class:unhealthy-text={!service.ok}
+					class="service-status"
+				>
 					{service.ok ? 'Operational' : 'Unavailable'}
 				</div>
 
@@ -104,7 +102,7 @@
 		</p>
 		<a href="/api/server-health">View raw health response</a>
 	</footer>
-</main>
+</section>
 
 <style>
 	.health-page {

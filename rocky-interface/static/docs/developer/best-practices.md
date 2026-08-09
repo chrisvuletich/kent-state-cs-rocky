@@ -14,6 +14,8 @@ const apiKey = "abc123xyz";
 const apiKey = process.env.ROCKY_API_KEY;
 ```
 
+The environment-variable example above is for server-side Node.js. Never put a Rocky API key in JavaScript that is delivered to a web browser; have the browser call your own server instead.
+
 ## Validate API Responses
 
 Always check that a request completed successfully before using the data returned by the API.

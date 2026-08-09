@@ -140,17 +140,23 @@ export function normalizeCourse(raw: ApiCourse, index = 0): Course {
 			? raw.ta_ids.map((id) => id?.trim().toLowerCase() || '').filter((id) => id.length > 0)
 			: [],
 		taEmails: Array.isArray(raw.ta_emails)
-			? raw.ta_emails.map((email) => email?.trim().toLowerCase() || '').filter((email) => email.length > 0)
+			? raw.ta_emails
+					.map((email) => email?.trim().toLowerCase() || '')
+					.filter((email) => email.length > 0)
 			: [],
 		semester: normalizeSemester(raw.semester),
 		isActive: raw.is_active !== false,
 		color: raw.color?.trim() || COURSE_EDITOR_DEFAULT_COLOR,
 		instructorKeyLimit:
-		typeof raw.instructor_key_limit === 'number' && Number.isFinite(raw.instructor_key_limit) && raw.instructor_key_limit >= 0
-			? Math.floor(raw.instructor_key_limit)
-			: 2,
-	instructorHandoutLimit:
-		typeof raw.instructor_handout_limit === 'number' && Number.isFinite(raw.instructor_handout_limit) && raw.instructor_handout_limit >= 0
+			typeof raw.instructor_key_limit === 'number' &&
+			Number.isFinite(raw.instructor_key_limit) &&
+			raw.instructor_key_limit >= 0
+				? Math.floor(raw.instructor_key_limit)
+				: 2,
+		instructorHandoutLimit:
+			typeof raw.instructor_handout_limit === 'number' &&
+			Number.isFinite(raw.instructor_handout_limit) &&
+			raw.instructor_handout_limit >= 0
 				? Math.floor(raw.instructor_handout_limit)
 				: 2,
 		hasApiKey: Boolean(raw.has_api_key),
@@ -158,7 +164,9 @@ export function normalizeCourse(raw: ApiCourse, index = 0): Course {
 		apiKeyOwnerId: raw.api_key_owner_id?.trim() || null,
 		apiKeyGroupCreatedBy: raw.api_key_group_created_by?.trim() || null,
 		apiKeyCreated: raw.api_key_created?.trim() || null,
-		members: Array.isArray(raw.members) ? raw.members.map((member) => normalizeCourseMember(member)) : []
+		members: Array.isArray(raw.members)
+			? raw.members.map((member) => normalizeCourseMember(member))
+			: []
 	};
 }
 
@@ -166,7 +174,10 @@ export function normalizeCourses(rawCourses: ApiCourse[]): Course[] {
 	return rawCourses.map((course, index) => normalizeCourse(course, index));
 }
 
-function normalizeCourseMember(raw: ApiCourseMember, accountsByEmail?: Record<string, CourseAccountRecord>): CourseMember {
+function normalizeCourseMember(
+	raw: ApiCourseMember,
+	accountsByEmail?: Record<string, CourseAccountRecord>
+): CourseMember {
 	const referenceEmail = raw.email?.trim().toLowerCase() || '';
 	const matchedAccount = referenceEmail ? accountsByEmail?.[referenceEmail] : undefined;
 	const email = matchedAccount?.email || raw.email?.trim() || '';
@@ -185,7 +196,11 @@ function normalizeCourseMember(raw: ApiCourseMember, accountsByEmail?: Record<st
 	};
 }
 
-export function normalizeCourseDetail(raw: ApiCourseDetail, index = 0, accountsByEmail?: Record<string, CourseAccountRecord>): CourseDetail {
+export function normalizeCourseDetail(
+	raw: ApiCourseDetail,
+	index = 0,
+	accountsByEmail?: Record<string, CourseAccountRecord>
+): CourseDetail {
 	return {
 		id: typeof raw.id === 'number' && Number.isFinite(raw.id) ? raw.id : index + 1,
 		members: Array.isArray(raw.members)
@@ -194,15 +209,16 @@ export function normalizeCourseDetail(raw: ApiCourseDetail, index = 0, accountsB
 	};
 }
 
-export function normalizeCourseDetails(rawDetails: ApiCourseDetail[], accountsByEmail?: Record<string, CourseAccountRecord>): CourseDetail[] {
+export function normalizeCourseDetails(
+	rawDetails: ApiCourseDetail[],
+	accountsByEmail?: Record<string, CourseAccountRecord>
+): CourseDetail[] {
 	return rawDetails.map((detail, index) => normalizeCourseDetail(detail, index, accountsByEmail));
 }
 
 export function normalizeCourseGroup(raw: ApiCourseGroup, index = 0): CourseGroup {
 	const normalizedMemberIds = Array.isArray(raw.memberIds)
-		? raw.memberIds
-				.map((id) => id?.trim() || '')
-				.filter((id) => id.length > 0)
+		? raw.memberIds.map((id) => id?.trim() || '').filter((id) => id.length > 0)
 		: [];
 
 	return {
@@ -218,5 +234,7 @@ export function normalizeCourseGroup(raw: ApiCourseGroup, index = 0): CourseGrou
 }
 
 export function normalizeCourseGroups(rawGroups: ApiCourseGroup[]): CourseGroup[] {
-	return rawGroups.map((group, index) => normalizeCourseGroup(group, index)).filter((group) => group.courseId > 0);
+	return rawGroups
+		.map((group, index) => normalizeCourseGroup(group, index))
+		.filter((group) => group.courseId > 0);
 }

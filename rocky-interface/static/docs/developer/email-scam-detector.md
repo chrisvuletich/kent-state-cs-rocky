@@ -38,6 +38,7 @@ import os
 import requests
 
 API_KEY = os.environ["ROCKY_API_KEY"]
+MODEL = os.environ["ROCKY_MODEL"]
 EMAIL_TEXT = """Subject: Your Account Has Been Suspended
 
 Dear Customer,
@@ -56,7 +57,7 @@ whether it is likely phishing:\n\n{EMAIL_TEXT}"""
 response = requests.post(
     "https://rocky.cs.kent.edu/v1/responses",
     headers={"Authorization": f"Bearer {API_KEY}"},
-    json={"model": "rocky", "input": prompt, "store": False},
+    json={"model": MODEL, "input": prompt, "store": False},
     timeout=180,
 )
 response.raise_for_status()

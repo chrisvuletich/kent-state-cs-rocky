@@ -5,7 +5,8 @@ import { APP_ENV } from '$lib/config/env';
 const SESSION_VERSION = 1;
 const SESSION_LIFETIME_SECONDS = 60 * 60 * 8;
 const configuredSecret = (env.ROCKY_SESSION_SECRET ?? '').trim();
-const sessionSecret = configuredSecret || (APP_ENV === 'production' ? '' : 'rocky-local-development-session');
+const sessionSecret =
+	configuredSecret || (APP_ENV === 'production' ? '' : 'rocky-local-development-session');
 
 if (!sessionSecret) {
 	throw new Error('Missing required private environment variable: ROCKY_SESSION_SECRET');
@@ -27,11 +28,13 @@ function signature(payload: string): string {
 export function createSessionToken(email: string): string {
 	const normalizedEmail = email.trim().toLowerCase();
 	if (!normalizedEmail) throw new Error('A session email is required.');
-	const payload = Buffer.from(JSON.stringify({
-		v: SESSION_VERSION,
-		email: normalizedEmail,
-		exp: Math.floor(Date.now() / 1000) + SESSION_LIFETIME_SECONDS
-	} satisfies SessionPayload)).toString('base64url');
+	const payload = Buffer.from(
+		JSON.stringify({
+			v: SESSION_VERSION,
+			email: normalizedEmail,
+			exp: Math.floor(Date.now() / 1000) + SESSION_LIFETIME_SECONDS
+		} satisfies SessionPayload)
+	).toString('base64url');
 	return `${payload}.${signature(payload)}`;
 }
 
@@ -45,7 +48,9 @@ export function readSessionEmail(token: string | undefined): string | null {
 	if (expected.length !== provided.length || !timingSafeEqual(expected, provided)) return null;
 
 	try {
-		const parsed = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as Partial<SessionPayload>;
+		const parsed = JSON.parse(
+			Buffer.from(payload, 'base64url').toString('utf8')
+		) as Partial<SessionPayload>;
 		const email = typeof parsed.email === 'string' ? parsed.email.trim().toLowerCase() : '';
 		if (parsed.v !== SESSION_VERSION || !email || typeof parsed.exp !== 'number') return null;
 		if (parsed.exp <= Math.floor(Date.now() / 1000)) return null;

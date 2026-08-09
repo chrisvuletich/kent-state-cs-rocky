@@ -1,4 +1,4 @@
-import { error, json, type RequestHandler } from '@sveltejs/kit';
+import { error, type RequestHandler } from '@sveltejs/kit';
 import { API_BASE_URL } from '$lib/config/env';
 import { internalProxyHeaders } from '$lib/server/backendSecurity';
 
@@ -44,6 +44,10 @@ function ensureAuthorized(path: string, currentUser: App.Locals['currentUser']):
 	if (!currentUser) {
 		throw error(401, 'Not authenticated.');
 	}
+
+	if (!currentUser.isActive) {
+		throw error(403, 'This account is inactive.');
+	}
 }
 
 const passthrough: RequestHandler = async ({ params, request, locals }) => {
@@ -55,18 +59,15 @@ const passthrough: RequestHandler = async ({ params, request, locals }) => {
 	ensureAuthorized(path, locals.currentUser);
 
 	const backendResponse = await forward(request, locals, path);
-	const bodyText = await backendResponse.text();
-
-	let payload: unknown = null;
-	if (bodyText.length > 0) {
-		try {
-			payload = JSON.parse(bodyText);
-		} catch {
-			payload = { raw: bodyText };
-		}
+	const headers = new Headers();
+	for (const name of ['content-type', 'content-disposition', 'cache-control']) {
+		const value = backendResponse.headers.get(name);
+		if (value) headers.set(name, value);
 	}
-
-	return json(payload, { status: backendResponse.status });
+	return new Response(backendResponse.body, {
+		status: backendResponse.status,
+		headers
+	});
 };
 
 export const GET = passthrough;

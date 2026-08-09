@@ -33,11 +33,11 @@ Administrators can use the sidebar to open Analytics, Users, Courses, Admin Pane
 
 Open **Analytics** to review live AI request telemetry. Choose a time window to compare request and token throughput, model speed, outcomes, and latency. Use **Breakdown** to group the same metrics by user, course, API key, group, model, request source, or outcome.
 
-The **Review queue** opens a sanitized request detail view containing the recorded prompt and response. Filter it by request outcome, flagged state, or review status to focus on requests that need attention. Analytics and review controls are restricted to administrators.
+The **Review queue** opens the complete recorded prompt and response text. This conversation content is retained verbatim and is not sanitized. Filter it by request outcome, flagged state, or review status to focus on requests that need attention. Analytics and review controls are restricted to administrators.
 
 For a request that needs follow-up, mark it **Flagged**, choose at least one structured reason, set its status to **Unreviewed**, **In review**, or **Resolved**, and add concise administrative notes. Saving records the reviewing administrator and time. Removing the flag also removes its flag reasons, while notes and workflow status remain available for documenting the decision.
 
-Every saved review appends the previous and updated review values to the request's history and creates a metadata-only audit event. The audit event identifies the request and review transition; it does not create another copy of the prompt or response. The request detail does not expose plaintext API keys, authorization headers, cookies, or stored key hashes.
+Every saved review appends the previous and updated review values to the request's history and creates a metadata-only audit event. The audit event identifies the request and review transition; it does not create another copy of the prompt or response. Authentication material—including plaintext API keys, authorization headers, cookies, internal service tokens, and stored key hashes—is excluded independently from the verbatim conversation record.
 
 If another administrator saves the same review first, Rocky preserves your
 draft and asks you to reload the newer review instead of overwriting it.

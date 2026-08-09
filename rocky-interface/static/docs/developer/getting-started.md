@@ -28,10 +28,12 @@ The Rocky API sends and receives information using JSON (JavaScript Object Notat
 
 ```json
 {
-  "model": "rocky",
+  "model": "model-id-from-v1-models",
   "input": "Hello Rocky!"
 }
 ```
+
+Before building an application, call `GET /v1/models` with your API key and use the returned model identifier.
 
 ## HTTP Methods
 

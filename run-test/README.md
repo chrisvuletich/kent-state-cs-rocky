@@ -22,16 +22,30 @@ Path: run-test/backend
   - verifies accepted data is inserted;
   - verifies invalid data is rejected;
   - verifies API endpoints return 400 for malformed payloads.
+- test_audit_events.py:
+  - verifies successful administrative mutations create trusted audit events;
+  - verifies rejected mutations do not create events and sensitive fields are removed;
+  - verifies account deactivation suspends owned API keys.
 - test_user_settings.py:
   - verifies per-user settings are readable and writable;
   - verifies widgets stay isolated per user.
 - test_course_api_history.py:
   - verifies API history records grouped and ungrouped usage;
   - verifies analytics and widgets endpoints remain reachable.
+- test_authorization_matrix.py:
+  - keeps student, instructor, administrator, inactive-account, closed-course,
+    and trusted-proxy expectations in one data-driven role matrix;
+  - verifies students can create only their own course key.
+- test_database_counts.py:
+  - verifies the backup/restore count baseline is deterministic and read-only.
 
-Run all test modules with:
+Install the backend and compatibility-test dependencies with:
 
-- python run-test/test_all.py
+- `pip install -r rocky-backend/requirements.txt -r run-test/requirements-compat.txt`
+
+`openai` is only a test dependency. The compatibility test verifies that the
+official Python client can consume Rocky's OpenAI-compatible HTTP responses;
+students may continue to use `requests`, `curl`, or any other HTTP client.
 
 ## Frontend tests
 
@@ -46,11 +60,64 @@ Path: run-test/frontend
   - signs into mock session;
   - clicks each sidebar view;
   - asserts each view renders the correct page title.
+- test_admin_management_chromedriver.py:
+  - creates a role-aware external whitelist account;
+  - verifies the resulting mutation appears in the Admin audit preview.
+- test_priority_reliability_chromedriver.py:
+  - verifies course cards use button semantics;
+  - verifies existing keys warn before regeneration;
+  - checks independent Admin Dashboard sections, shareable analytics state, and
+    desktop/mobile chat layout.
+- test_role_journeys_chromedriver.py:
+  - verifies student key generation, copy-once disclosure, and dismissal;
+  - verifies instructor student/group key controls and unrelated-course hiding;
+  - verifies logout clears account-specific browser state and protects `/`.
 
 ## Local run commands
 
 From repo root:
 
-- All tests: python run-test/test_all.py
-- Backend only: python -m unittest discover -s run-test/backend -p "test_*.py"
-- Frontend only: python -m unittest discover -s run-test/frontend -p "test_*.py"
+- All backend and browser tests: `python run-test/test_all.py`
+- Backend only: `python -m unittest discover -s run-test/backend -p "test_*.py"`
+- Frontend only: `python -m unittest discover -s run-test/frontend -p "test_*.py"`
+- Granite bridge only: `cd granite-llm-server && python -m unittest discover -s tests -p "test_*.py"`
+
+Browser tests use port `4173` by default. If another local project already uses
+that port, set a different one, such as `ROCKY_WEB_PORT=4273`, before running
+the frontend suite.
+
+The frontend also has Node-based checks. From `rocky-interface`, run
+`npm run lint`, `npm run check`, `npm run test:unit`, and `npm run build`.
+
+## Backup and restore count baseline
+
+`manage.py database-counts` performs read-only `count_documents({})` calls for
+the account, course, key, telemetry, and audit collections used in recovery
+verification:
+
+```sh
+python manage.py database-counts --env-file /etc/rocky/backend.env
+python manage.py database-counts \
+  --env-file /etc/rocky/backend.env \
+  --database rocky_restore_check
+```
+
+The second form is intended for a temporary restored database. Full archive,
+permission, checksum, temporary-restore, and production-recovery instructions
+are in `deploy/README.md`.
+
+## Deployment smoke test
+
+`integration/deployment_smoke.py` checks a deployed instance through its public
+URLs. It requires `ROCKY_BASE_URL` and `ROCKY_API_KEY`; the optional
+`ROCKY_EXPECTED_MODEL` value verifies the advertised model identifier.
+
+```sh
+export ROCKY_BASE_URL='https://rocky.cs.kent.edu'
+export ROCKY_API_KEY='sk_kent_replace_with_test_key'
+python run-test/integration/deployment_smoke.py
+```
+
+The default checks are read-only. Add `--include-generation` to send one short
+request with `store: false`. The request is still retained in institutional
+audit telemetry, like every other inference request.

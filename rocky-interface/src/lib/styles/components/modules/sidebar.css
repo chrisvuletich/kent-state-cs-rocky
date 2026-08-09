@@ -29,10 +29,10 @@
 }
 
 @media (max-width: 768px) {
-    .nav-link {
-        padding: 16px var(--space-lg);
-        font-size: var(--font-size-base);
-    }
+	.nav-link {
+		padding: 16px var(--space-lg);
+		font-size: var(--font-size-base);
+	}
 }
 
 .nav-link-icon {

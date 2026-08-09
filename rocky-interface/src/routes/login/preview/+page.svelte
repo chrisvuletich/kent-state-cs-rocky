@@ -45,6 +45,8 @@
 	}
 </script>
 
+<svelte:head><title>Login Preview | Rocky</title></svelte:head>
+
 <div class="login-background">
 	<div class="login-overlay login-preview-overlay">
 		<section class="preview-shell">
@@ -66,7 +68,9 @@
 							<h2>{user.displayName}</h2>
 							<p>{user.email}</p>
 							<span class="preview-role">{user.role}</span>
-							<button class="login-signin-btn" type="button" on:click={() => enterAsUser(user)}>Continue as {user.displayName}</button>
+							<button class="login-signin-btn" type="button" on:click={() => enterAsUser(user)}
+								>Continue as {user.displayName}</button
+							>
 						</article>
 					{/each}
 				</div>

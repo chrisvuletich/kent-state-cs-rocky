@@ -2,10 +2,17 @@ import { env } from '$env/dynamic/private';
 import { error } from '@sveltejs/kit';
 import { deriveHiddenApiKey } from '$lib/server/hiddenApiKey';
 import { deriveChatApiBaseUrl } from './chatProxyUrl';
+import { internalProxyHeaders } from './backendSecurity';
 
 export const CHAT_API_URL = (env.ROCKY_CHAT_API_URL ?? 'http://127.0.0.1:5003/v1/responses').trim();
 export const CHAT_API_BASE_URL = deriveChatApiBaseUrl(CHAT_API_URL);
-const HIDDEN_API_KEY_SECRET = (env.ROCKY_HIDDEN_API_KEY_SECRET ?? env.ROCKY_CHAT_API_KEY ?? '').trim();
+const HIDDEN_API_KEY_SECRET = (
+	env.ROCKY_HIDDEN_API_KEY_SECRET ??
+	env.ROCKY_CHAT_API_KEY ??
+	''
+).trim();
+const configuredChatModel = (env.ROCKY_PUBLIC_MODEL ?? env.OLLAMA_MODEL ?? '').trim();
+export const CHAT_MODEL = configuredChatModel || 'gemma4:latest';
 
 export function requireChatUser(locals: App.Locals): NonNullable<App.Locals['currentUser']> {
 	const user = locals.currentUser;
@@ -18,7 +25,9 @@ export function requireChatUser(locals: App.Locals): NonNullable<App.Locals['cur
 	return user;
 }
 
-export function chatIdentityHeaders(user: NonNullable<App.Locals['currentUser']>): Record<string, string> {
+export function chatIdentityHeaders(
+	user: NonNullable<App.Locals['currentUser']>
+): Record<string, string> {
 	return {
 		'X-Rocky-User-Id': user.id,
 		'X-Rocky-User-Email': user.email,
@@ -27,10 +36,16 @@ export function chatIdentityHeaders(user: NonNullable<App.Locals['currentUser']>
 	};
 }
 
-export function chatRequestHeaders(user: NonNullable<App.Locals['currentUser']>): Record<string, string> {
+export function chatRequestHeaders(
+	user: NonNullable<App.Locals['currentUser']>
+): Record<string, string> {
+	const proxyHeaders = internalProxyHeaders();
+	const canForwardTrustedIdentity = Object.keys(proxyHeaders).length > 0;
+
 	return {
 		Authorization: `Bearer ${hiddenApiKeyForUser(user)}`,
-		...chatIdentityHeaders(user)
+		...proxyHeaders,
+		...(canForwardTrustedIdentity ? chatIdentityHeaders(user) : {})
 	};
 }
 

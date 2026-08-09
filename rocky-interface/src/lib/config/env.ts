@@ -32,7 +32,9 @@ function parseAppEnv(value: string): 'development' | 'testing' | 'production' {
 	if (value === 'development' || value === 'testing' || value === 'production') {
 		return value;
 	}
-	throw new Error(`Invalid PUBLIC_APP_ENV: "${value}". Expected one of: development, testing, production.`);
+	throw new Error(
+		`Invalid PUBLIC_APP_ENV: "${value}". Expected one of: development, testing, production.`
+	);
 }
 
 function parseApiBaseUrl(value: string): string {
@@ -44,19 +46,29 @@ function parseApiBaseUrl(value: string): string {
 	}
 
 	if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-		throw new Error(`Invalid PUBLIC_API_BASE_URL protocol: "${parsed.protocol}". Expected http or https.`);
+		throw new Error(
+			`Invalid PUBLIC_API_BASE_URL protocol: "${parsed.protocol}". Expected http or https.`
+		);
 	}
 
 	return trimTrailingSlash(parsed.toString());
 }
 
 export const APP_ENV = parseAppEnv(requirePublicEnv('PUBLIC_APP_ENV', PUBLIC_APP_ENV));
-export const API_BASE_URL = parseApiBaseUrl(requirePublicEnv('PUBLIC_API_BASE_URL', PUBLIC_API_BASE_URL));
-export const ENABLE_DBTEST = parseBooleanEnv('PUBLIC_ENABLE_DBTEST', requirePublicEnv('PUBLIC_ENABLE_DBTEST', PUBLIC_ENABLE_DBTEST));
+export const API_BASE_URL = parseApiBaseUrl(
+	requirePublicEnv('PUBLIC_API_BASE_URL', PUBLIC_API_BASE_URL)
+);
+export const ENABLE_DBTEST = parseBooleanEnv(
+	'PUBLIC_ENABLE_DBTEST',
+	requirePublicEnv('PUBLIC_ENABLE_DBTEST', PUBLIC_ENABLE_DBTEST)
+);
 
 export type AuthMode = 'preview' | 'microsoft';
 
-function resolveAuthMode(appEnv: 'development' | 'testing' | 'production', microsoftEnabledOverride: boolean): AuthMode {
+function resolveAuthMode(
+	appEnv: 'development' | 'testing' | 'production',
+	microsoftEnabledOverride: boolean
+): AuthMode {
 	if (appEnv === 'production') {
 		return 'microsoft';
 	}
@@ -88,6 +100,12 @@ export const MICROSOFT_OAUTH = {
 if (ENABLE_MICROSOFT_OAUTH && !MICROSOFT_OAUTH.clientId) {
 	throw new Error('Missing required public environment variable: PUBLIC_MICROSOFT_CLIENT_ID');
 }
-if (ENABLE_MICROSOFT_OAUTH && (!MICROSOFT_OAUTH.tenantId || ['common', 'organizations', 'consumers'].includes(MICROSOFT_OAUTH.tenantId))) {
-	throw new Error('PUBLIC_MICROSOFT_TENANT_ID must be the specific Kent tenant ID when Microsoft OAuth is active.');
+if (
+	ENABLE_MICROSOFT_OAUTH &&
+	(!MICROSOFT_OAUTH.tenantId ||
+		['common', 'organizations', 'consumers'].includes(MICROSOFT_OAUTH.tenantId))
+) {
+	throw new Error(
+		'PUBLIC_MICROSOFT_TENANT_ID must be the specific Kent tenant ID when Microsoft OAuth is active.'
+	);
 }

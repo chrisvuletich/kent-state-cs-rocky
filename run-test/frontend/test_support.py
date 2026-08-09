@@ -31,14 +31,16 @@ from selenium.webdriver.support.ui import WebDriverWait
 ROOT = Path(__file__).resolve().parents[2]
 FRONTEND_DIR = ROOT / "rocky-interface"
 BACKEND_DIR = ROOT / "rocky-backend"
-BASE_URL = "http://127.0.0.1:4173"
+WEB_HOST = os.getenv("ROCKY_WEB_HOST", "127.0.0.1").strip() or "127.0.0.1"
+WEB_PORT = os.getenv("ROCKY_WEB_PORT", "4173").strip() or "4173"
+BASE_URL = f"http://{WEB_HOST}:{WEB_PORT}"
 NPM_BIN = "npm.cmd" if os.name == "nt" else "npm"
 PYTHON_BIN = sys.executable
 logger = logging.getLogger("rocky.tests.frontend")
 
 
 class FrontendBrowserTestCase(unittest.TestCase):
-    STARTUP_TIMEOUT_SECONDS = 60
+    STARTUP_TIMEOUT_SECONDS = 90
 
     @classmethod
     def _log(cls, message: str):
@@ -58,6 +60,14 @@ class FrontendBrowserTestCase(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        try:
+            cls._set_up_resources()
+        except BaseException:
+            cls.tearDownClass()
+            raise
+
+    @classmethod
+    def _set_up_resources(cls):
         cls._log("Seeding and starting backend API for browser tests.")
         subprocess.run([PYTHON_BIN, "seed_from_backend.py"], cwd=BACKEND_DIR, check=True)
         cls._process_log_dir = Path(tempfile.mkdtemp(prefix="rocky-e2e-process-logs-"))
@@ -92,11 +102,25 @@ class FrontendBrowserTestCase(unittest.TestCase):
                 "PUBLIC_APP_ENV": "testing",
                 "PUBLIC_API_BASE_URL": "http://127.0.0.1:5001",
                 "PUBLIC_ENABLE_DBTEST": "false",
+                "PUBLIC_ENABLE_MICROSOFT_OAUTH": "false",
+                "ROCKY_WEB_HOST": WEB_HOST,
+                "ROCKY_WEB_PORT": WEB_PORT,
+                "ROCKY_ALLOWED_HOSTS": f"{WEB_HOST},127.0.0.1,localhost",
             }
         )
 
         cls.frontend = subprocess.Popen(
-            [NPM_BIN, "run", "dev", "--", "--host", "127.0.0.1", "--port", "4173", "--strictPort"],
+            [
+                NPM_BIN,
+                "run",
+                "dev",
+                "--",
+                "--host",
+                WEB_HOST,
+                "--port",
+                WEB_PORT,
+                "--strictPort",
+            ],
             cwd=FRONTEND_DIR,
             env=env,
             stdout=cls._frontend_log_handle,
@@ -366,7 +390,7 @@ class FrontendBrowserTestCase(unittest.TestCase):
             try:
                 with urlopen("http://127.0.0.1:5001/health", timeout=2):
                     return
-            except URLError:
+            except (URLError, TimeoutError):
                 time.sleep(1)
         tail = cls._tail_log_file(getattr(cls, "_backend_log_path", Path("backend.log")))
         raise TimeoutError(f"Timed out waiting for backend server.\n--- backend.log tail ---\n{tail}")
@@ -380,9 +404,15 @@ class FrontendBrowserTestCase(unittest.TestCase):
                 tail = cls._tail_log_file(getattr(cls, "_frontend_log_path", Path("frontend.log")))
                 raise RuntimeError(f"Frontend dev server exited before tests started.\n--- frontend.log tail ---\n{tail}")
             try:
-                with urlopen(BASE_URL, timeout=2):
+                # The first request compiles the Svelte route. Give that work
+                # enough time to finish instead of repeatedly cancelling it.
+                remaining_seconds = max(1, deadline - time.time())
+                with urlopen(
+                    f"{BASE_URL}/login/preview",
+                    timeout=remaining_seconds,
+                ):
                     return
-            except URLError:
+            except (URLError, TimeoutError):
                 time.sleep(1)
         tail = cls._tail_log_file(getattr(cls, "_frontend_log_path", Path("frontend.log")))
         raise TimeoutError(f"Timed out waiting for frontend dev server.\n--- frontend.log tail ---\n{tail}")
@@ -394,7 +424,7 @@ class FrontendBrowserTestCase(unittest.TestCase):
             except (NoSuchElementException, StaleElementReferenceException):
                 return False
 
-        self.wait.until(heading_matches)
+        self.wait.until(heading_matches, message=f"Expected view title: {expected}")
 
     def _wait_for_post_login_navigation(self):
         try:
@@ -407,7 +437,10 @@ class FrontendBrowserTestCase(unittest.TestCase):
     def _click_element(self, by: By, value: str, retries: int = 3):
         for attempt in range(retries):
             try:
-                element = self.wait.until(EC.element_to_be_clickable((by, value)))
+                element = self.wait.until(
+                    EC.element_to_be_clickable((by, value)),
+                    message=f"Expected clickable element: {by}={value}",
+                )
                 element.click()
                 return
             except StaleElementReferenceException:

@@ -24,7 +24,11 @@ export function clearFeedback(): void {
 	feedbackMessage.set(null);
 }
 
-export function showFeedback(kind: FeedbackKind, message: string, durationMs = DEFAULT_DURATION_MS): void {
+export function showFeedback(
+	kind: FeedbackKind,
+	message: string,
+	durationMs = DEFAULT_DURATION_MS
+): void {
 	if (!message.trim()) {
 		return;
 	}

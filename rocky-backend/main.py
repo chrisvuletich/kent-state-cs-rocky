@@ -13,7 +13,7 @@ from bson.errors import InvalidId
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 
-from backend.authz import require_admin, require_internal_proxy, require_requester_identity
+from backend.authz import get_requester, require_admin, require_internal_proxy, require_requester_identity
 from backend.course_actions import (
     add_course_members,
     add_group_member,
@@ -30,6 +30,7 @@ from backend.course_actions import (
     remove_group_member,
     regenerate_course_api_key,
     reconcile_course_members_for_user,
+    resolve_course_key_owner,
     set_course_active_state,
     set_course_api_key_active_state,
     update_course_group_key_limit,
@@ -214,13 +215,7 @@ def _get_owner_key_limit(course: dict[str, Any], owner_type: str, owner_id: str)
     if isinstance(key_limit, int) and key_limit >= 0:
         return key_limit
     
-    # For person-type owners, fall back to instructor_key_limit if available
-    if normalized_owner_type == "person":
-        instructor_key_limit = course.get("instructor_key_limit") if course.get("instructor_key_limit") is not None else course.get("instructorKeyLimit")
-        if isinstance(instructor_key_limit, int) and instructor_key_limit >= 0:
-            return instructor_key_limit
-    
-    return 1
+    return 0
 
 
 def _serialize_api_key_summary(entry: dict[str, Any]) -> dict[str, Any]:
@@ -409,6 +404,7 @@ def _resolve_user_record(user_id: str | None, email: str | None):
                 "last_name": normalize_str(whitelist_user.get("last_name")),
                 "email": normalized_email,
                 "is_admin": bool(whitelist_user.get("is_admin")),
+                "role": _user_role(whitelist_user),
                 "is_active": _is_user_active(whitelist_user),
                 "settings": whitelist_user.get("settings", _default_user_settings()),
                 "created_at": whitelist_user.get("created_at"),
@@ -434,6 +430,7 @@ def _resolve_user_record(user_id: str | None, email: str | None):
                 "last_name": normalize_str(whitelist_user.get("last_name")),
                 "email": normalize_str(whitelist_user.get("email")).lower(),
                 "is_admin": bool(whitelist_user.get("is_admin")),
+                "role": _user_role(whitelist_user),
                 "is_active": _is_user_active(whitelist_user),
                 "settings": whitelist_user.get("settings", _default_user_settings()),
                 "created_at": whitelist_user.get("created_at"),
@@ -450,6 +447,41 @@ def _is_user_active(user_record: dict[str, Any]) -> bool:
 
 def _is_kent_email(email: str) -> bool:
     return email.lower().endswith(KENT_EMAIL_SUFFIX)
+
+
+@app.before_request
+def reject_inactive_requester():
+    """Keep inactive accounts out of protected backend routes.
+
+    The SvelteKit proxy performs the same check for a quick response. This
+    database-backed check protects the Flask application if a proxy route is
+    accidentally made too permissive later.
+    """
+    allowed_paths = {
+        "/",
+        "/health",
+        "/auth/preview-users",
+        "/auth/session-user",
+        "/auth/microsoft/login",
+    }
+    if request.path in allowed_paths:
+        return None
+
+    email, _ = get_requester()
+    if not email:
+        return None
+
+    user_record = _resolve_user_record(None, email)
+    if user_record is not None and not _is_user_active(user_record):
+        return jsonify({
+            "error": {
+                "message": "This account is inactive.",
+                "type": "permission_error",
+                "code": "account_inactive",
+            }
+        }), 403
+
+    return None
 
 
 def _normalize_oauth_payload(payload: Any):
@@ -706,6 +738,7 @@ def _route_deps() -> dict[str, Any]:
         "_resolve_requester_user_id": _resolve_requester_user_id,
         "_serialize_user": _serialize_user,
         "_serialize_whitelist_user": _serialize_whitelist_user,
+        "_user_role": _user_role,
         "_is_user_active": _is_user_active,
         "_default_user_settings": _default_user_settings,
         "_normalize_oauth_payload": _normalize_oauth_payload,
@@ -719,7 +752,8 @@ def _route_deps() -> dict[str, Any]:
         "_upsert_settings_for_user": _upsert_settings_for_user,
         "_serialize_value": _serialize_value,
         "_attach_course_key_state": _attach_course_key_state,
-        "_build_api_history_entry": course_handlers._build_api_history_entry,
+        "record_audit_event": audit_handlers.record_audit_event,
+        "set_user_api_keys_active_state": user_handlers.set_user_api_keys_active_state,
         "validate_user_payload": validate_user_payload,
         "validate_course_payload": validate_course_payload,
         "filter_visible_courses": filter_visible_courses,
@@ -740,6 +774,7 @@ def _route_deps() -> dict[str, Any]:
         "update_course_group_key_limit": update_course_group_key_limit,
         "delete_course_api_keys": delete_course_api_keys,
         "regenerate_course_api_key": regenerate_course_api_key,
+        "resolve_course_key_owner": resolve_course_key_owner,
         "reconcile_course_members_for_user": reconcile_course_members_for_user,
         "set_course_active_state": set_course_active_state,
         "set_course_api_key_active_state": set_course_api_key_active_state,
@@ -811,6 +846,11 @@ def bulk_update_users():
 @app.route("/audit-logs", methods=["GET"])
 def get_audit_logs():
     return audit_handlers.get_audit_logs(_route_deps())
+
+
+@app.route("/audit/export", methods=["GET"])
+def export_audit_logs():
+    return audit_handlers.get_audit_export(_route_deps())
 
 
 @app.route("/users/<user_id>", methods=["GET"])
@@ -938,11 +978,6 @@ def patch_user_setting(setting_key):
     return settings_handlers.patch_user_setting(_route_deps(), setting_key)
 
 
-@app.route("/courses/<course_id>/api-history", methods=["POST"])
-def append_course_api_history(course_id):
-    return course_handlers.append_course_api_history(_route_deps(), course_id)
-
-
 @app.route("/courses/<course_id>/api-history", methods=["GET"])
 def get_course_api_history(course_id):
     return course_handlers.get_course_api_history(_route_deps(), course_id)
@@ -968,6 +1003,11 @@ def get_analytics_current():
     return content_handlers.get_analytics_current(_route_deps())
 
 
+@app.route("/analytics/my-usage", methods=["GET"])
+def get_my_usage():
+    return content_handlers.get_my_usage(_route_deps())
+
+
 @app.route("/analytics/timeseries", methods=["GET"])
 def get_analytics_timeseries():
     return content_handlers.get_analytics_timeseries(_route_deps())
@@ -986,6 +1026,11 @@ def get_analytics_breakdown():
 @app.route("/analytics/requests", methods=["GET"])
 def get_analytics_requests():
     return content_handlers.get_analytics_requests(_route_deps())
+
+
+@app.route("/analytics/export", methods=["GET"])
+def export_analytics_requests():
+    return content_handlers.get_analytics_export(_route_deps())
 
 
 @app.route("/analytics/requests/<request_id>", methods=["GET"])

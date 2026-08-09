@@ -4,6 +4,9 @@ import requests
 
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
 OLLAMA_TIMEOUT_SECONDS = int(os.getenv("ROCKY_OLLAMA_TIMEOUT_SECONDS", "150"))
+OLLAMA_READY_TIMEOUT_SECONDS = float(
+    os.getenv("ROCKY_OLLAMA_READY_TIMEOUT_SECONDS", "2")
+)
 
 # Ollama metadata fields that contain int
 _PROVIDER_INTEGER_FIELDS = (
@@ -25,6 +28,30 @@ class OllamaCallError(Exception):
         super().__init__(kind)
         self.kind = kind
         self.telemetry = telemetry
+
+
+def check_ollama_readiness(model):
+    try:
+        response = requests.get(
+            OLLAMA_BASE_URL + "/api/tags",
+            timeout=OLLAMA_READY_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        data = response.json()
+    except (requests.RequestException, ValueError):
+        return False
+
+    models = data.get("models") if isinstance(data, dict) else None
+    if not isinstance(models, list):
+        return False
+    available_names = {
+        candidate
+        for item in models
+        if isinstance(item, dict)
+        for candidate in (item.get("name"), item.get("model"))
+        if isinstance(candidate, str)
+    }
+    return model in available_names
 
 
 def _extract_provider_telemetry(data):

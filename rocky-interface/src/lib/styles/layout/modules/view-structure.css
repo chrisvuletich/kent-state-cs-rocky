@@ -70,23 +70,23 @@
 }
 
 @media (max-width: 768px) {
-    .view-header {
-        flex-wrap: wrap;
-        gap: var(--space-md);
-    }
+	.view-header {
+		flex-wrap: wrap;
+		gap: var(--space-md);
+	}
 
-    .view-title h1 {
-        font-size: var(--font-size-xl);
-    }
+	.view-title h1 {
+		font-size: var(--font-size-xl);
+	}
 
 	.view-actions {
 		flex-shrink: 1;
 		gap: var(--space-sm);
 		flex-wrap: wrap;
-    }
+	}
 
-    .view-btn {
-        padding: 6px var(--space-md);
-        font-size: var(--font-size-xs);
-    }
+	.view-btn {
+		padding: 6px var(--space-md);
+		font-size: var(--font-size-xs);
+	}
 }

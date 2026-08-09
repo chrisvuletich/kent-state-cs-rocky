@@ -3,6 +3,7 @@ import type {
 	AnalyticsCurrent,
 	AnalyticsDimension,
 	AnalyticsHardware,
+	AnalyticsMyUsage,
 	AnalyticsRequestDetail,
 	AnalyticsRequestFilters,
 	AnalyticsRequests,
@@ -53,41 +54,94 @@ function query(values: Record<string, string | number | boolean | null | undefin
 	return params.toString();
 }
 
+function filterQuery(
+	filters: AnalyticsRequestFilters
+): Record<string, string | boolean | undefined> {
+	return {
+		user_id: filters.user,
+		course_id: filters.course,
+		key_id: filters.key,
+		model: filters.model,
+		operation: filters.operation,
+		outcome: filters.outcome,
+		source: filters.source,
+		flagged: filters.flagged,
+		review_status: filters.reviewStatus
+	};
+}
+
 export function fetchAnalyticsCurrent(): Promise<AnalyticsCurrent> {
 	return fetchAnalyticsJson('/analytics/current');
 }
 
-export function fetchAnalyticsSummary(window: AnalyticsWindow): Promise<AnalyticsSummary> {
-	return fetchAnalyticsJson(`/analytics/summary?${query({ window })}`);
+export function fetchMyUsage(): Promise<AnalyticsMyUsage> {
+	return fetchAnalyticsJson('/analytics/my-usage');
 }
 
-export function fetchAnalyticsTimeseries(window: AnalyticsWindow): Promise<AnalyticsTimeseries> {
-	return fetchAnalyticsJson(`/analytics/timeseries?${query({ window })}`);
+export function fetchAnalyticsSummary(
+	window: AnalyticsWindow,
+	filters: AnalyticsRequestFilters = {}
+): Promise<AnalyticsSummary> {
+	return fetchAnalyticsJson(`/analytics/summary?${query({ window, ...filterQuery(filters) })}`);
 }
 
-export function fetchAnalyticsHardware(window: AnalyticsWindow): Promise<AnalyticsHardware> {
-	return fetchAnalyticsJson(`/analytics/hardware?${query({ window })}`);
+export function fetchAnalyticsTimeseries(
+	window: AnalyticsWindow,
+	filters: AnalyticsRequestFilters = {}
+): Promise<AnalyticsTimeseries> {
+	return fetchAnalyticsJson(`/analytics/timeseries?${query({ window, ...filterQuery(filters) })}`);
 }
 
-export function fetchAnalyticsBreakdown(window: AnalyticsWindow, dimension: AnalyticsDimension): Promise<AnalyticsBreakdown> {
-	return fetchAnalyticsJson(`/analytics/breakdown?${query({ window, dimension, limit: 50 })}`);
+export function fetchAnalyticsHardware(
+	window: AnalyticsWindow,
+	filters: AnalyticsRequestFilters = {}
+): Promise<AnalyticsHardware> {
+	return fetchAnalyticsJson(`/analytics/hardware?${query({ window, ...filterQuery(filters) })}`);
 }
 
-export function fetchAnalyticsRequests(window: AnalyticsWindow, filters: AnalyticsRequestFilters = {}): Promise<AnalyticsRequests> {
-	return fetchAnalyticsJson(`/analytics/requests?${query({
+export function fetchAnalyticsBreakdown(
+	window: AnalyticsWindow,
+	dimension: AnalyticsDimension,
+	filters: AnalyticsRequestFilters = {}
+): Promise<AnalyticsBreakdown> {
+	return fetchAnalyticsJson(
+		`/analytics/breakdown?${query({ window, dimension, limit: 50, ...filterQuery(filters) })}`
+	);
+}
+
+export function fetchAnalyticsRequests(
+	window: AnalyticsWindow,
+	filters: AnalyticsRequestFilters = {}
+): Promise<AnalyticsRequests> {
+	return fetchAnalyticsJson(
+		`/analytics/requests?${query({
+			window,
+			limit: 100,
+			...filterQuery(filters)
+		})}`
+	);
+}
+
+export function analyticsExportUrl(
+	window: AnalyticsWindow,
+	format: 'json' | 'csv',
+	filters: AnalyticsRequestFilters = {}
+): string {
+	return `/api/backend/analytics/export?${query({
 		window,
-		limit: 100,
-		outcome: filters.outcome,
-		flagged: filters.flagged,
-		review_status: filters.reviewStatus
-	})}`);
+		format,
+		...filterQuery(filters)
+	})}`;
 }
 
 export function fetchAnalyticsRequest(requestId: string): Promise<AnalyticsRequestDetail> {
 	return fetchAnalyticsJson(`/analytics/requests/${encodeURIComponent(requestId)}`);
 }
 
-export function updateAnalyticsReview(requestId: string, review: AnalyticsReviewPatch): Promise<AnalyticsRequestDetail> {
+export function updateAnalyticsReview(
+	requestId: string,
+	review: AnalyticsReviewPatch
+): Promise<AnalyticsRequestDetail> {
 	return fetchAnalyticsJson(`/analytics/requests/${encodeURIComponent(requestId)}/review`, {
 		method: 'PATCH',
 		headers: { 'Content-Type': 'application/json' },

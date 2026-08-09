@@ -64,8 +64,11 @@ class ApiRockyAuthTests(unittest.TestCase):
         api_rocky.api_keys_col = FakeCollection()
         api_rocky.conversations_col = FakeCollection()
         api_rocky.messages_col = FakeCollection()
+        self.original_proxy_secret = api_rocky.INTERNAL_PROXY_SECRET
+        api_rocky.INTERNAL_PROXY_SECRET = "synthetic-internal-proxy-secret"
 
     def tearDown(self):
+        api_rocky.INTERNAL_PROXY_SECRET = self.original_proxy_secret
         if self.original_bypass is None:
             os.environ.pop("ROCKY_DEV_AUTH_BYPASS", None)
         else:
@@ -109,6 +112,17 @@ class ApiRockyAuthTests(unittest.TestCase):
 
         self.assertIsNone(api_rocky.get_key_doc(inactive_key))
         self.assertIsNone(api_rocky.get_key_doc(deleted_key))
+
+    def test_malformed_expiration_fails_closed(self):
+        plaintext = "sk_kent_malformed_expiration"
+        api_rocky.api_keys_col = FakeCollection([{
+            "hash": api_rocky.hash_api_key(plaintext),
+            "owner_id": "student.local@kent.edu",
+            "is_active": True,
+            "expire": "not-a-timestamp",
+        }])
+
+        self.assertIsNone(api_rocky.get_key_doc(plaintext))
 
     def test_get_key_doc_rejects_plaintext_only_documents(self):
         api_rocky.api_keys_col = FakeCollection(
@@ -175,6 +189,27 @@ class ApiRockyAuthTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.get_json().get("error"), "Missing chat user context.")
 
+    def test_service_key_rejects_spoofed_identity_without_proxy_secret(self):
+        plaintext = "service-key"
+        api_rocky.api_keys_col = FakeCollection([{
+            "hash": api_rocky.hash_api_key(plaintext),
+            "owner_id": "rocky-chat-service@kent.edu",
+            "owner_type": "service",
+            "key_scope": "service",
+            "is_active": True,
+        }])
+
+        response = api_rocky.app.test_client().post(
+            "/conversations/list",
+            json={},
+            headers={
+                "Authorization": f"Bearer {plaintext}",
+                "X-Rocky-User-Id": "spoofed-user",
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+
     def test_service_key_conversation_list_is_scoped_to_forwarded_user(self):
         plaintext = "service-key"
         api_rocky.api_keys_col = FakeCollection(
@@ -214,6 +249,7 @@ class ApiRockyAuthTests(unittest.TestCase):
                 "Authorization": f"Bearer {plaintext}",
                 "X-Rocky-User-Id": "user-one",
                 "X-Rocky-User-Email": "one@kent.edu",
+                "X-Rocky-Internal-Secret": api_rocky.INTERNAL_PROXY_SECRET,
             },
         )
 

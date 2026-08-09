@@ -1,124 +1,124 @@
 .about-background {
-    min-height: 100vh;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    padding: 2rem;
-    background:
-        linear-gradient(rgba(6, 28, 66, 0.7), rgba(6, 28, 66, 0.7)),
-        url("/commencement_dark.jpg") center center / cover no-repeat;
+	min-height: 100vh;
+	display: flex;
+	justify-content: center;
+	align-items: center;
+	padding: 2rem;
+	background:
+		linear-gradient(rgba(6, 28, 66, 0.7), rgba(6, 28, 66, 0.7)),
+		url('/commencement_dark.jpg') center center / cover no-repeat;
 }
 
 .about-card {
-    width: 100%;
-    max-width: 900px;
-    background: rgba(255, 255, 255, 0.96);
-    border-radius: 20px;
-    overflow: hidden;
-    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25);
+	width: 100%;
+	max-width: 900px;
+	background: rgba(255, 255, 255, 0.96);
+	border-radius: 20px;
+	overflow: hidden;
+	box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25);
 }
 
 .about-header {
-    text-align: center;
-    padding: 2.5rem 3rem 2rem;
-    background: linear-gradient(to bottom, #f6f9ff, #edf2fa);
-    border-bottom: 4px solid #f7b731;
+	text-align: center;
+	padding: 2.5rem 3rem 2rem;
+	background: linear-gradient(to bottom, #f6f9ff, #edf2fa);
+	border-bottom: 4px solid #f7b731;
 }
 
 .about-logo {
-    width: 220px;
-    margin-bottom: 1rem;
+	width: 220px;
+	margin-bottom: 1rem;
 }
 
 .about-header h1 {
-    margin: 0;
-    font-size: 3rem;
-    font-weight: 700;
-    color: #0b1736;
+	margin: 0;
+	font-size: 3rem;
+	font-weight: 700;
+	color: #0b1736;
 }
 
 .about-header p {
-    margin-top: 1rem;
-    font-size: 1.1rem;
-    color: #4f5d75;
-    line-height: 1.7;
+	margin-top: 1rem;
+	font-size: 1.1rem;
+	color: #4f5d75;
+	line-height: 1.7;
 }
 
 .about-content {
-    padding: 2.5rem 3rem;
+	padding: 2.5rem 3rem;
 }
 
 .about-content h2 {
-    margin-top: 2rem;
-    margin-bottom: 1rem;
-    color: #0b1736;
-    font-size: 1.8rem;
-    border-left: 5px solid #f7b731;
-    padding-left: 0.75rem;
+	margin-top: 2rem;
+	margin-bottom: 1rem;
+	color: #0b1736;
+	font-size: 1.8rem;
+	border-left: 5px solid #f7b731;
+	padding-left: 0.75rem;
 }
 
 .about-content p {
-    font-size: 1.05rem;
-    line-height: 1.8;
-    color: #333;
+	font-size: 1.05rem;
+	line-height: 1.8;
+	color: #333;
 }
 
 .about-content ul {
-    margin-top: 1rem;
-    padding-left: 1.5rem;
+	margin-top: 1rem;
+	padding-left: 1.5rem;
 }
 
 .about-content li {
-    margin-bottom: 0.9rem;
-    font-size: 1.05rem;
+	margin-bottom: 0.9rem;
+	font-size: 1.05rem;
 }
 
 .about-footer {
-    display: flex;
-    justify-content: flex-end;
-    padding: 1.5rem 3rem;
-    border-top: 1px solid #ddd;
-    background: #fafafa;
+	display: flex;
+	justify-content: flex-end;
+	padding: 1.5rem 3rem;
+	border-top: 1px solid #ddd;
+	background: #fafafa;
 }
 
 .back-button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0.85rem 2rem;
-    border-radius: 999px;
-    text-decoration: none;
-    font-weight: 600;
-    font-size: 1rem;
-    color: #003976;
-    background: white;
-    border: 2px solid #c8d1e0;
-    transition: all 0.2s ease;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	padding: 0.85rem 2rem;
+	border-radius: 999px;
+	text-decoration: none;
+	font-weight: 600;
+	font-size: 1rem;
+	color: #003976;
+	background: white;
+	border: 2px solid #c8d1e0;
+	transition: all 0.2s ease;
 }
 
 .back-button:hover {
-    background: #003976;
-    color: white;
-    border-color: #003976;
-    transform: translateY(-1px);
+	background: #003976;
+	color: white;
+	border-color: #003976;
+	transform: translateY(-1px);
 }
 
 @media (max-width: 768px) {
-    .about-card {
-        border-radius: 14px;
-    }
+	.about-card {
+		border-radius: 14px;
+	}
 
-    .about-header,
-    .about-content,
-    .about-footer {
-        padding: 2rem;
-    }
+	.about-header,
+	.about-content,
+	.about-footer {
+		padding: 2rem;
+	}
 
-    .about-header h1 {
-        font-size: 2.2rem;
-    }
+	.about-header h1 {
+		font-size: 2.2rem;
+	}
 
-    .about-footer {
-        justify-content: center;
-    }
+	.about-footer {
+		justify-content: center;
+	}
 }

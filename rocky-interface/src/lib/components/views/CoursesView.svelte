@@ -35,7 +35,14 @@
 	import type { User } from '$lib/types/user';
 	import type { CourseApiHistoryEntry, CourseApiKeySummaryResponse } from '$lib/api/courses';
 
-	type CourseTab = 'home' | 'students' | 'groups' | 'edit-roster' | 'edit-groups' | 'course-settings' | `group:${string}`;
+	type CourseTab =
+		| 'home'
+		| 'students'
+		| 'groups'
+		| 'edit-roster'
+		| 'edit-groups'
+		| 'course-settings'
+		| `group:${string}`;
 	type KeySlot = {
 		slotIndex: number;
 		baseKeyName: string;
@@ -68,7 +75,6 @@
 	let isSelectedCourseClosed = false;
 	let courseStatusActionPending = false;
 	let pendingCourseStatusValue: boolean | null = null;
-	let courseStatusPendingTimeoutId: ReturnType<typeof setTimeout> | null = null;
 
 	let allCourses: Course[] = [];
 	let allUsers: User[] = [];
@@ -131,19 +137,20 @@
 		return Number.isInteger(parsed) && parsed > 0 ? parsed : 0;
 	}
 
-	$: filteredMembers = rosterEntries.filter((member) => {
-		const q = searchQuery.toLowerCase().trim();
+	$: filteredMembers =
+		rosterEntries.filter((member) => {
+			const q = searchQuery.toLowerCase().trim();
 
-		return (
-			getMemberDisplayName(member)?.toLowerCase().includes(q) ||
-			member.email?.toLowerCase().includes(q)
-		);
-	}) || [];
+			return (
+				getMemberDisplayName(member)?.toLowerCase().includes(q) ||
+				member.email?.toLowerCase().includes(q)
+			);
+		}) || [];
 
 	$: sortedMembers = sortByName
 		? [...filteredMembers].sort((a, b) =>
 				getMemberDisplayName(a).localeCompare(getMemberDisplayName(b))
-		  )
+			)
 		: filteredMembers;
 
 	function getMemberIdentifier(member: CourseDetail['members'][number]): string {
@@ -156,11 +163,16 @@
 
 	function getMemberDisplayName(member: CourseDetail['members'][number]): string {
 		const currentSessionUser = $page.data.currentUser;
-		if (currentSessionUser && normalizeIdentifier(currentSessionUser.email) === normalizeIdentifier(member.email)) {
+		if (
+			currentSessionUser &&
+			normalizeIdentifier(currentSessionUser.email) === normalizeIdentifier(member.email)
+		) {
 			return currentSessionUser.displayName || member.name || currentSessionUser.email;
 		}
 
-		const matchedUser = allUsers.find((user) => normalizeIdentifier(user.email) === normalizeIdentifier(member.email));
+		const matchedUser = allUsers.find(
+			(user) => normalizeIdentifier(user.email) === normalizeIdentifier(member.email)
+		);
 		if (matchedUser) {
 			return matchedUser.displayName || member.name || matchedUser.email;
 		}
@@ -180,7 +192,9 @@
 
 		const instructorEmail = selectedCourse.instructorEmail?.trim().toLowerCase() || '';
 		const instructorMember = instructorEmail
-			? (selectedDetail?.members || []).find((member) => normalizeIdentifier(member.email) === instructorEmail)
+			? (selectedDetail?.members || []).find(
+					(member) => normalizeIdentifier(member.email) === instructorEmail
+				)
 			: undefined;
 
 		return {
@@ -196,7 +210,10 @@
 			return [];
 		}
 
-		const courseTaIdentifiers = [...(selectedCourse.taIds || []), ...(selectedCourse.taEmails || [])]
+		const courseTaIdentifiers = [
+			...(selectedCourse.taIds || []),
+			...(selectedCourse.taEmails || [])
+		]
 			.map(normalizeIdentifier)
 			.filter(Boolean);
 		if (!courseTaIdentifiers.length) {
@@ -206,11 +223,17 @@
 		const entries: RosterEntry[] = [];
 		for (const identifier of courseTaIdentifiers) {
 			const matchedUser = allUsers.find((user) => {
-				const userIdentifiers = [normalizeIdentifier(user.id), normalizeIdentifier(user.email)].filter(Boolean);
+				const userIdentifiers = [
+					normalizeIdentifier(user.id),
+					normalizeIdentifier(user.email)
+				].filter(Boolean);
 				return userIdentifiers.includes(identifier);
 			});
 			const matchedMember = (selectedDetail?.members || []).find((member) => {
-				const memberIdentifiers = [normalizeIdentifier(member.id), normalizeIdentifier(member.email)].filter(Boolean);
+				const memberIdentifiers = [
+					normalizeIdentifier(member.id),
+					normalizeIdentifier(member.email)
+				].filter(Boolean);
 				return memberIdentifiers.includes(identifier);
 			});
 
@@ -251,7 +274,10 @@
 		);
 		const instructorIdentifiers = new Set(
 			instructorEntry
-				? [normalizeIdentifier(instructorEntry.id), normalizeIdentifier(instructorEntry.email)].filter(Boolean)
+				? [
+						normalizeIdentifier(instructorEntry.id),
+						normalizeIdentifier(instructorEntry.email)
+					].filter(Boolean)
 				: []
 		);
 		const managerIdentifiers = new Set([...teacherAssistantIdentifiers, ...instructorIdentifiers]);
@@ -260,7 +286,10 @@
 				...teacherAssistantEntries,
 				...members
 					.filter((member) => {
-						const memberIdentifiers = [normalizeIdentifier(member.id), normalizeIdentifier(member.email)].filter(Boolean);
+						const memberIdentifiers = [
+							normalizeIdentifier(member.id),
+							normalizeIdentifier(member.email)
+						].filter(Boolean);
 						return !memberIdentifiers.some((identifier) => managerIdentifiers.has(identifier));
 					})
 					.map((member) => ({ ...member, isInstructor: false, isTeacherAssistant: false }))
@@ -276,7 +305,10 @@
 			...teacherAssistantEntries,
 			...members
 				.filter((member) => {
-					const memberIdentifiers = [normalizeIdentifier(member.id), normalizeIdentifier(member.email)].filter(Boolean);
+					const memberIdentifiers = [
+						normalizeIdentifier(member.id),
+						normalizeIdentifier(member.email)
+					].filter(Boolean);
 					return !memberIdentifiers.some((identifier) => managerIdentifiers.has(identifier));
 				})
 				.map((member) => ({
@@ -308,28 +340,44 @@
 		if (!selectedCourse) {
 			return false;
 		}
-		const instructorIdentifiers = [selectedCourse.instructorId, selectedCourse.instructorEmail].map(normalizeIdentifier).filter(Boolean);
-		const teacherAssistantIdentifiers = [...(selectedCourse.taIds || []), ...(selectedCourse.taEmails || [])]
+		const instructorIdentifiers = [selectedCourse.instructorId, selectedCourse.instructorEmail]
+			.map(normalizeIdentifier)
+			.filter(Boolean);
+		const teacherAssistantIdentifiers = [
+			...(selectedCourse.taIds || []),
+			...(selectedCourse.taEmails || [])
+		]
 			.map(normalizeIdentifier)
 			.filter(Boolean);
 		const managerIdentifiers = [...instructorIdentifiers, ...teacherAssistantIdentifiers];
-		const currentIdentifiers = [currentUserId, currentUserEmail].map(normalizeIdentifier).filter(Boolean);
+		const currentIdentifiers = [currentUserId, currentUserEmail]
+			.map(normalizeIdentifier)
+			.filter(Boolean);
 		return currentIdentifiers.some((identifier) => managerIdentifiers.includes(identifier));
 	}
 
 	function memberMatchesCurrentUser(member: CourseDetail['members'][number]): boolean {
-		const currentUserIdentifiers = [currentUserId, currentUserEmail].map(normalizeIdentifier).filter(Boolean);
-		const memberIdentifiers = [normalizeIdentifier(member.id), normalizeIdentifier(member.email)].filter(Boolean);
+		const currentUserIdentifiers = [currentUserId, currentUserEmail]
+			.map(normalizeIdentifier)
+			.filter(Boolean);
+		const memberIdentifiers = [
+			normalizeIdentifier(member.id),
+			normalizeIdentifier(member.email)
+		].filter(Boolean);
 		return currentUserIdentifiers.some((identifier) => memberIdentifiers.includes(identifier));
 	}
 
 	function groupContainsCurrentUser(group: CourseGroup): boolean {
-		const currentUserIdentifiers = [currentUserId, currentUserEmail].map(normalizeIdentifier).filter(Boolean);
+		const currentUserIdentifiers = [currentUserId, currentUserEmail]
+			.map(normalizeIdentifier)
+			.filter(Boolean);
 		const groupMemberIds = group.memberIds.map(normalizeIdentifier);
 		return currentUserIdentifiers.some((identifier) => groupMemberIds.includes(identifier));
 	}
 
-	function resolveMemberByIdentifier(identifier: string): CourseDetail['members'][number] | undefined {
+	function resolveMemberByIdentifier(
+		identifier: string
+	): CourseDetail['members'][number] | undefined {
 		const normalizedIdentifier = normalizeIdentifier(identifier);
 		return (selectedDetail?.members || []).find((member) => {
 			return (
@@ -383,12 +431,18 @@
 
 	function buildKeySlots(limit: number, keys: CourseApiKeySummary[]): KeySlot[] {
 		const storedKeys = keys.filter((key) => key.hasHash !== false);
-		const highestStoredSlot = storedKeys.reduce((maxSlot, key) => (key.slotIndex > maxSlot ? key.slotIndex : maxSlot), 0);
+		const highestStoredSlot = storedKeys.reduce(
+			(maxSlot, key) => (key.slotIndex > maxSlot ? key.slotIndex : maxSlot),
+			0
+		);
 		const totalSlots = Math.max(0, limit, highestStoredSlot, storedKeys.length);
 		if (totalSlots === 0) {
 			return [];
 		}
-		const slotEntries: Array<CourseApiKeySummary | null> = Array.from({ length: totalSlots }, () => null);
+		const slotEntries: Array<CourseApiKeySummary | null> = Array.from(
+			{ length: totalSlots },
+			() => null
+		);
 		const orderedKeys = [...storedKeys].sort((a, b) => {
 			const aSlot = a.slotIndex > 0 ? a.slotIndex : Number.MAX_SAFE_INTEGER;
 			const bSlot = b.slotIndex > 0 ? b.slotIndex : Number.MAX_SAFE_INTEGER;
@@ -429,7 +483,11 @@
 		});
 	}
 
-	function getSlotStateId(ownerType: 'person' | 'group', ownerId: string, slotIndex: number): string {
+	function getSlotStateId(
+		ownerType: 'person' | 'group',
+		ownerId: string,
+		slotIndex: number
+	): string {
 		return `${ownerType}:${normalizeIdentifier(ownerId)}:${slotIndex}`;
 	}
 
@@ -488,12 +546,12 @@
 		ownerId: string,
 		slotIndex: number,
 		fallbackKeyName: string
-	) {
+	): Promise<boolean> {
 		if (!ensureCourseIsEditable()) {
-			return;
+			return false;
 		}
 		if (!selectedCourse) {
-			return;
+			return false;
 		}
 
 		const slotStateId = getSlotStateId(ownerType, ownerId, slotIndex);
@@ -509,23 +567,29 @@
 				slotIndex: slotIndex + 1
 			});
 			const responseKey = response.key;
-			const responseOwnerType = normalizeIdentifier(responseKey?.owner_type) === 'group' ? 'group' : 'person';
+			const responseOwnerType =
+				normalizeIdentifier(responseKey?.owner_type) === 'group' ? 'group' : 'person';
 			const responseOwnerId = normalizeIdentifier(responseKey?.owner_id || ownerId);
 			const responseKeyName = normalizeIdentifier(responseKey?.key_name || keyName);
-			const responseSlotIndex = typeof responseKey?.slot_index === 'number' ? responseKey.slot_index : slotIndex + 1;
+			const responseSlotIndex =
+				typeof responseKey?.slot_index === 'number' ? responseKey.slot_index : slotIndex + 1;
 			courseApiKeys = courseApiKeys.map((entry) =>
 				normalizeIdentifier(entry.ownerId) === responseOwnerId &&
-				((entry.slotIndex > 0 && entry.slotIndex === responseSlotIndex) || normalizeIdentifier(entry.keyName) === responseKeyName) &&
+				((entry.slotIndex > 0 && entry.slotIndex === responseSlotIndex) ||
+					normalizeIdentifier(entry.keyName) === responseKeyName) &&
 				entry.ownerType === responseOwnerType
 					? {
-						...entry,
-						hasHash: false,
-						isActive: false
-					}
+							...entry,
+							hasHash: false,
+							isActive: false
+						}
 					: entry
 			);
+			return true;
 		} catch (err) {
 			apiKeyActionError = err instanceof Error ? err.message : 'Unable to remove key.';
+			showErrorFeedback(apiKeyActionError);
+			return false;
 		}
 	}
 
@@ -563,9 +627,9 @@
 				((entry.slotIndex > 0 && entry.slotIndex === slotIndex + 1) ||
 					normalizeIdentifier(entry.keyName) === normalizeIdentifier(keyName))
 					? {
-						...entry,
-						isActive: nextIsActive
-					}
+							...entry,
+							isActive: nextIsActive
+						}
 					: entry
 			);
 		} catch (err) {
@@ -573,9 +637,13 @@
 		}
 	}
 
-	function getGroupOwnedKeys(groupId: string, availableKeys: CourseApiKeySummary[]): CourseApiKeySummary[] {
+	function getGroupOwnedKeys(
+		groupId: string,
+		availableKeys: CourseApiKeySummary[]
+	): CourseApiKeySummary[] {
 		return availableKeys.filter(
-			(key) => key.hasHash !== false && normalizeIdentifier(key.ownerId) === normalizeIdentifier(groupId)
+			(key) =>
+				key.hasHash !== false && normalizeIdentifier(key.ownerId) === normalizeIdentifier(groupId)
 		);
 	}
 
@@ -603,12 +671,24 @@
 			);
 		});
 
-		return [course.instructorId, course.instructorEmail, instructorMember?.id, instructorMember?.email, requesterId, requesterEmail]
-			.map((value) => value?.trim() || '')
-			.find((value) => value.length > 0) || '';
+		return (
+			[
+				course.instructorId,
+				course.instructorEmail,
+				instructorMember?.id,
+				instructorMember?.email,
+				requesterId,
+				requesterEmail
+			]
+				.map((value) => value?.trim() || '')
+				.find((value) => value.length > 0) || ''
+		);
 	}
 
-	function getMemberOwnedKeys(member: CourseDetail['members'][number] | null, availableKeys: CourseApiKeySummary[]): CourseApiKeySummary[] {
+	function getMemberOwnedKeys(
+		member: CourseDetail['members'][number] | null,
+		availableKeys: CourseApiKeySummary[]
+	): CourseApiKeySummary[] {
 		if (!member) {
 			return [];
 		}
@@ -622,7 +702,10 @@
 		);
 	}
 
-	function getPersonOwnedKeys(ownerIdentifiers: Array<string | null | undefined>, availableKeys: CourseApiKeySummary[]): CourseApiKeySummary[] {
+	function getPersonOwnedKeys(
+		ownerIdentifiers: Array<string | null | undefined>,
+		availableKeys: CourseApiKeySummary[]
+	): CourseApiKeySummary[] {
 		const normalizedOwnerIdentifiers = ownerIdentifiers.map(normalizeIdentifier).filter(Boolean);
 		if (normalizedOwnerIdentifiers.length === 0) {
 			return [];
@@ -642,6 +725,8 @@
 	}
 
 	async function loadWorkspace() {
+		isLoading = true;
+		error = null;
 		try {
 			const requestList = [fetchCourses(), fetchCourseDetails(), fetchCourseGroups()] as const;
 			const [courses, details, groups] = await Promise.all(requestList);
@@ -674,10 +759,6 @@
 
 	onDestroy(() => {
 		clearSensitiveKeyState();
-		if (courseStatusPendingTimeoutId) {
-			clearTimeout(courseStatusPendingTimeoutId);
-			courseStatusPendingTimeoutId = null;
-		}
 	});
 
 	$: visibleCourses = baseVisibleCourses;
@@ -686,47 +767,74 @@
 	$: selectedGroups = selectedCourse ? groupsByCourseId[selectedCourse.id] || [] : [];
 	$: selectedGroupIds = new Set(selectedGroups.map((group) => group.id));
 	$: nonAdminUsers = allUsers.filter((user) => !user.isAdmin);
-	$: accountUsers = allUsers.filter((user) => !user.isAdmin && user.email && user.email.trim() && user.email !== 'N/A');
+	$: accountUsers = allUsers.filter(
+		(user) => !user.isAdmin && user.email && user.email.trim() && user.email !== 'N/A'
+	);
 	$: currentUserId = $page.data.currentUser?.id?.trim() || '';
 	$: currentUserEmail = $page.data.currentUser?.email?.trim().toLowerCase() || '';
 	$: isCurrentUserAdmin = Boolean($page.data.currentUser?.isAdmin);
 	$: baseVisibleCourses = isCurrentUserAdmin
 		? allCourses
 		: allCourses.filter((course) => {
-				const managerIdentifiers = [course.instructorId, course.instructorEmail, ...(course.taIds || []), ...(course.taEmails || [])]
+				const managerIdentifiers = [
+					course.instructorId,
+					course.instructorEmail,
+					...(course.taIds || []),
+					...(course.taEmails || [])
+				]
 					.map(normalizeIdentifier)
 					.filter(Boolean);
-				if (managerIdentifiers.includes(normalizeIdentifier(currentUserId)) || managerIdentifiers.includes(currentUserEmail)) {
+				if (
+					managerIdentifiers.includes(normalizeIdentifier(currentUserId)) ||
+					managerIdentifiers.includes(currentUserEmail)
+				) {
 					return true;
 				}
 				const members = detailsByCourseId[course.id]?.members || [];
 				return members.some((member) => {
 					const memberId = normalizeIdentifier(member.id);
 					const memberEmail = normalizeIdentifier(member.email);
-					return memberId === normalizeIdentifier(currentUserId) || memberEmail === currentUserEmail;
+					return (
+						memberId === normalizeIdentifier(currentUserId) || memberEmail === currentUserEmail
+					);
 				});
-		  });
+			});
 	$: isCurrentUserCourseInstructor = Boolean(
 		selectedCourse &&
-		[normalizeIdentifier(selectedCourse.instructorId), normalizeIdentifier(selectedCourse.instructorEmail)]
+		[
+			normalizeIdentifier(selectedCourse.instructorId),
+			normalizeIdentifier(selectedCourse.instructorEmail)
+		]
 			.filter(Boolean)
-			.some((identifier) => identifier === normalizeIdentifier(currentUserId) || identifier === currentUserEmail)
+			.some(
+				(identifier) =>
+					identifier === normalizeIdentifier(currentUserId) || identifier === currentUserEmail
+			)
 	);
 	$: isCurrentUserCourseTeacherAssistant = Boolean(
 		selectedCourse &&
-		[...(selectedCourse.taIds || []).map(normalizeIdentifier), ...(selectedCourse.taEmails || []).map(normalizeIdentifier)]
+		[
+			...(selectedCourse.taIds || []).map(normalizeIdentifier),
+			...(selectedCourse.taEmails || []).map(normalizeIdentifier)
+		]
 			.filter(Boolean)
-			.some((identifier) => identifier === normalizeIdentifier(currentUserId) || identifier === currentUserEmail)
+			.some(
+				(identifier) =>
+					identifier === normalizeIdentifier(currentUserId) || identifier === currentUserEmail
+			)
 	);
 	$: isCurrentUserClient = !isCurrentUserAdmin;
 	$: canEditCourse = isCurrentUserAdmin;
-	$: canEditPeopleAndGroups = isCurrentUserAdmin || isCurrentUserCourseInstructor || isCurrentUserCourseTeacherAssistant;
+	$: canEditPeopleAndGroups =
+		isCurrentUserAdmin || isCurrentUserCourseInstructor || isCurrentUserCourseTeacherAssistant;
 	$: studentGroup = selectedGroups.find((group) => groupContainsCurrentUser(group)) || null;
 	$: studentMembers = selectedDetail?.members || [];
 	$: groupedStudentIdSet = new Set(
 		selectedGroups.flatMap((group) => group.memberIds.map((id) => normalizeIdentifier(id)))
 	);
-	$: ungroupedStudentMembers = studentMembers.filter((member) => !groupedStudentIdSet.has(getMemberIdentifier(member)));
+	$: ungroupedStudentMembers = studentMembers.filter(
+		(member) => !groupedStudentIdSet.has(getMemberIdentifier(member))
+	);
 	$: memberByIdentifier = (() => {
 		const lookup = new Map<string, CourseDetail['members'][number]>();
 		for (const member of selectedDetail?.members || []) {
@@ -756,14 +864,21 @@
 			.map((id) => memberByIdentifier.get(normalizeIdentifier(id)))
 			.filter((member): member is NonNullable<typeof member> => Boolean(member))
 	}));
-	$: canViewManagerApiData = isCurrentUserAdmin || isCurrentUserCourseInstructor || isCurrentUserCourseTeacherAssistant;
+	$: canViewManagerApiData =
+		isCurrentUserAdmin || isCurrentUserCourseInstructor || isCurrentUserCourseTeacherAssistant;
 	$: canViewCourseApiHistory = isCurrentUserAdmin;
-	$: canViewPersonalApiData = isCurrentUserClient && !isCurrentUserCourseInstructor && !isCurrentUserCourseTeacherAssistant && !studentGroup;
+	$: canViewPersonalApiData =
+		isCurrentUserClient &&
+		!isCurrentUserCourseInstructor &&
+		!isCurrentUserCourseTeacherAssistant &&
+		!studentGroup;
 	$: personalOwnedKeys = courseApiKeys.filter(
 		(key) =>
 			key.hasHash !== false &&
 			key.ownerType === 'person' &&
-			[normalizeIdentifier(currentUserId), currentUserEmail].includes(normalizeIdentifier(key.ownerId))
+			[normalizeIdentifier(currentUserId), currentUserEmail].includes(
+				normalizeIdentifier(key.ownerId)
+			)
 	);
 	$: groupOwnedKeys = courseApiKeys.filter(
 		(key) => key.hasHash !== false && key.ownerType === 'group' && selectedGroupIds.has(key.ownerId)
@@ -772,7 +887,11 @@
 	$: instructorVisibleStudents = studentMembers;
 	$: if (instructorVisibleStudents.length === 0) {
 		selectedInstructorStudentId = '';
-	} else if (!instructorVisibleStudents.some((member) => getMemberIdentifier(member) === selectedInstructorStudentId)) {
+	} else if (
+		!instructorVisibleStudents.some(
+			(member) => getMemberIdentifier(member) === selectedInstructorStudentId
+		)
+	) {
 		selectedInstructorStudentId = getMemberIdentifier(instructorVisibleStudents[0]);
 	}
 	$: if (selectedGroups.length === 0) {
@@ -781,30 +900,48 @@
 		selectedInstructorGroupId = selectedGroups[0].id;
 	}
 	$: selectedInstructorStudent =
-		instructorVisibleStudents.find((member) => getMemberIdentifier(member) === selectedInstructorStudentId) || null;
+		instructorVisibleStudents.find(
+			(member) => getMemberIdentifier(member) === selectedInstructorStudentId
+		) || null;
 	$: selectedInstructorStudentOwnerId = getMemberOwnerId(selectedInstructorStudent);
 	$: selectedInstructorStudentKeys = getMemberOwnedKeys(selectedInstructorStudent, courseApiKeys);
 	$: instructorStudentKeyLimit = selectedInstructorStudent?.keyLimit ?? 0;
 	$: instructorStudentKeySlots = selectedInstructorStudent
 		? buildKeySlots(instructorStudentKeyLimit, selectedInstructorStudentKeys)
 		: [];
-	$: selectedInstructorGroup = selectedGroups.find((group) => group.id === selectedInstructorGroupId) || null;
+	$: selectedInstructorGroup =
+		selectedGroups.find((group) => group.id === selectedInstructorGroupId) || null;
 	$: instructorGroupKeySlots = selectedInstructorGroup
-		? buildKeySlots(selectedInstructorGroup.keyLimit, getGroupOwnedKeys(selectedInstructorGroup.id, groupOwnedKeys))
+		? buildKeySlots(
+				selectedInstructorGroup.keyLimit,
+				getGroupOwnedKeys(selectedInstructorGroup.id, groupOwnedKeys)
+			)
 		: [];
-	$: courseInstructorOwnerId = getCourseInstructorOwnerId(selectedCourse, selectedDetail, currentUserId, currentUserEmail);
+	$: courseInstructorOwnerId = getCourseInstructorOwnerId(
+		selectedCourse,
+		selectedDetail,
+		currentUserId,
+		currentUserEmail
+	);
 	$: courseInstructorKeyLimit = Math.max(0, selectedCourse?.instructorKeyLimit ?? 2);
-	$: courseInstructorKeySlots = buildKeySlots(courseInstructorKeyLimit, getPersonOwnedKeys([courseInstructorOwnerId], courseApiKeys));
-	$: currentUserMember = (selectedDetail?.members || []).find((member) => memberMatchesCurrentUser(member)) || null;
+	$: courseInstructorKeySlots = buildKeySlots(
+		courseInstructorKeyLimit,
+		getPersonOwnedKeys([courseInstructorOwnerId], courseApiKeys)
+	);
+	$: currentUserMember =
+		(selectedDetail?.members || []).find((member) => memberMatchesCurrentUser(member)) || null;
 	$: studentPersonalKeyOwnerId = normalizeIdentifier(currentUserId) || currentUserEmail;
 	$: personalKeyLimit = currentUserMatchesCourseManager()
 		? Math.max(0, selectedCourse?.instructorKeyLimit ?? 2)
-		: currentUserMember?.keyLimit ?? 0;
+		: (currentUserMember?.keyLimit ?? 0);
 	$: personalKeySlots = buildKeySlots(personalKeyLimit, personalOwnedKeys);
 	$: studentGroupTabs = studentVisibleGroups.map((group) => `group:${group.id}` as CourseTab);
 	$: activeStudentGroup = resolveActiveStudentGroup(activeTab);
 	$: activeStudentGroupKeySlots = activeStudentGroup
-		? buildKeySlots(activeStudentGroup.keyLimit, getGroupOwnedKeys(activeStudentGroup.id, groupOwnedKeys))
+		? buildKeySlots(
+				activeStudentGroup.keyLimit,
+				getGroupOwnedKeys(activeStudentGroup.id, groupOwnedKeys)
+			)
 		: [];
 	$: courseStudentKeyLimit = Math.max(0, selectedCourse?.instructorHandoutLimit ?? 2);
 	$: if (selectedCourse) {
@@ -813,12 +950,10 @@
 	}
 	$: canGenerateApiKey = Boolean(
 		selectedCourse &&
-		(
-			isCurrentUserAdmin ||
+		(isCurrentUserAdmin ||
 			isCurrentUserCourseInstructor ||
 			isCurrentUserCourseTeacherAssistant ||
-			(selectedDetail?.members || []).some((member) => memberMatchesCurrentUser(member))
-		)
+			(selectedDetail?.members || []).some((member) => memberMatchesCurrentUser(member)))
 	);
 	$: showCourseTabBar = availableTabs.length > 0;
 	$: selectableGroupMembers = selectedDetail?.members || [];
@@ -830,7 +965,7 @@
 				'edit-roster',
 				'edit-groups',
 				...(canEditCourse ? (['course-settings'] as CourseTab[]) : [])
-		  ] as CourseTab[])
+			] as CourseTab[])
 		: (['home', ...studentGroupTabs] as CourseTab[]);
 	$: if (!availableTabs.includes(activeTab)) {
 		activeTab = 'home';
@@ -839,17 +974,28 @@
 		selectedCourseId.set(visibleCourses[0].id);
 	}
 	$: if (selectedCourse) {
-		const matchingUserByName = nonAdminUsers.find((user) => user.displayName === selectedCourse.instructor);
+		const matchingUserByName = nonAdminUsers.find(
+			(user) => user.displayName === selectedCourse.instructor
+		);
 		const matchingUserByEmail = selectedCourse.instructorEmail
-			? allUsers.find((user) => normalizeIdentifier(user.email) === normalizeIdentifier(selectedCourse.instructorEmail))
+			? allUsers.find(
+					(user) =>
+						normalizeIdentifier(user.email) === normalizeIdentifier(selectedCourse.instructorEmail)
+				)
 			: undefined;
-		const normalizedCourseTaIds = (selectedCourse.taIds || []).map(normalizeIdentifier).filter(Boolean);
-		const normalizedCourseTaEmails = (selectedCourse.taEmails || []).map(normalizeIdentifier).filter(Boolean);
+		const normalizedCourseTaIds = (selectedCourse.taIds || [])
+			.map(normalizeIdentifier)
+			.filter(Boolean);
+		const normalizedCourseTaEmails = (selectedCourse.taEmails || [])
+			.map(normalizeIdentifier)
+			.filter(Boolean);
 		const matchedTaIds = allUsers
 			.filter((user) => {
 				const userId = normalizeIdentifier(user.id);
 				const userEmail = normalizeIdentifier(user.email);
-				return normalizedCourseTaIds.includes(userId) || normalizedCourseTaEmails.includes(userEmail);
+				return (
+					normalizedCourseTaIds.includes(userId) || normalizedCourseTaEmails.includes(userEmail)
+				);
 			})
 			.map((user) => user.id);
 		editCourseForm = {
@@ -857,11 +1003,16 @@
 			code: selectedCourse.code,
 			semester: selectedCourse.semester,
 			color: selectedCourse.color,
-			instructorId: selectedCourse.instructorId || matchingUserByEmail?.id || matchingUserByName?.id || '',
+			instructorId:
+				selectedCourse.instructorId || matchingUserByEmail?.id || matchingUserByName?.id || '',
 			taIds: [...new Set(matchedTaIds)]
 		};
 	}
-	$: if (selectedCourse && canViewCourseApiHistory && loadedCourseApiHistoryForId !== selectedCourse.id) {
+	$: if (
+		selectedCourse &&
+		canViewCourseApiHistory &&
+		loadedCourseApiHistoryForId !== selectedCourse.id
+	) {
 		void loadCourseApiHistory(selectedCourse.id);
 	}
 	$: if (selectedCourse && loadedCourseApiKeysForId !== selectedCourse.id) {
@@ -886,12 +1037,14 @@
 
 	function setSelectedCourseHasApiKey(
 		hasApiKey: boolean,
-		keyState?: {
-			apiKeyOwnerType?: 'person' | 'group' | null;
-			apiKeyOwnerId?: string | null;
-			apiKeyGroupCreatedBy?: string | null;
-			apiKeyCreated?: string | null;
-		}
+		keyState:
+			| {
+					apiKeyOwnerType?: 'person' | 'group' | null;
+					apiKeyOwnerId?: string | null;
+					apiKeyGroupCreatedBy?: string | null;
+					apiKeyCreated?: string | null;
+			  }
+			| undefined = undefined
 	) {
 		if (!selectedCourse) {
 			return;
@@ -906,7 +1059,7 @@
 						apiKeyOwnerId: keyState?.apiKeyOwnerId ?? null,
 						apiKeyGroupCreatedBy: keyState?.apiKeyGroupCreatedBy ?? null,
 						apiKeyCreated: keyState?.apiKeyCreated ?? null
-				  }
+					}
 				: course
 		);
 	}
@@ -926,7 +1079,9 @@
 				ownerId: entry.owner_id?.trim() || '',
 				keyName: entry.key_name?.trim() || 'key-1',
 				slotIndex:
-					typeof entry.slot_index === 'number' && Number.isInteger(entry.slot_index) && entry.slot_index > 0
+					typeof entry.slot_index === 'number' &&
+					Number.isInteger(entry.slot_index) &&
+					entry.slot_index > 0
 						? entry.slot_index
 						: parseSlotIndexFromKeyName(entry.key_name),
 				created: entry.created?.trim() || '',
@@ -937,7 +1092,9 @@
 			.filter((entry) => entry.ownerId.length > 0 && entry.keyName.length > 0);
 	}
 
-	function upsertGeneratedApiKeySummary(response: NonNullable<Awaited<ReturnType<typeof regenerateCourseApiKey>>>) {
+	function upsertGeneratedApiKeySummary(
+		response: NonNullable<Awaited<ReturnType<typeof regenerateCourseApiKey>>>
+	) {
 		const ownerType = (response.owner_type === 'group' ? 'group' : 'person') as 'person' | 'group';
 		const ownerId = response.owner_id?.trim() || '';
 		const keyName = response.key_name?.trim() || 'key-1';
@@ -952,11 +1109,14 @@
 			ownerId,
 			keyName,
 			slotIndex:
-				typeof response.slot_index === 'number' && Number.isInteger(response.slot_index) && response.slot_index > 0
+				typeof response.slot_index === 'number' &&
+				Number.isInteger(response.slot_index) &&
+				response.slot_index > 0
 					? response.slot_index
 					: parseSlotIndexFromKeyName(response.key_name),
 			created: response.created?.trim() || '',
-			courseId: typeof response.course_id === 'number' ? response.course_id : selectedCourse?.id || 0,
+			courseId:
+				typeof response.course_id === 'number' ? response.course_id : selectedCourse?.id || 0,
 			hasHash: true,
 			isActive: true
 		};
@@ -1090,7 +1250,9 @@
 		const idMatches = csvText.match(/(?:KSUID|WLID)\d{9}/gi) || [];
 		const parsedIds = [...new Set(idMatches.map((value) => value.trim()))];
 		const nonAdminIds = parsedIds.filter((id) => {
-			const matchingUser = allUsers.find((user) => normalizeIdentifier(user.id) === normalizeIdentifier(id));
+			const matchingUser = allUsers.find(
+				(user) => normalizeIdentifier(user.id) === normalizeIdentifier(id)
+			);
 			return !matchingUser?.isAdmin;
 		});
 		if (nonAdminIds.length !== parsedIds.length) {
@@ -1142,7 +1304,9 @@
 				semester: editCourseForm.semester.trim() || selectedCourse.semester,
 				color: editCourseForm.color.trim() || selectedCourse.color,
 				instructorId: normalizedInstructorId || currentInstructorId,
-				taIds: editCourseForm.taIds.filter((id) => id !== (normalizedInstructorId || currentInstructorId))
+				taIds: editCourseForm.taIds.filter(
+					(id) => id !== (normalizedInstructorId || currentInstructorId)
+				)
 			});
 			await refreshAfterWrite();
 		} catch {
@@ -1271,7 +1435,9 @@
 		if (!selectedCourse) {
 			return;
 		}
-		const keyName = (newGroupKeyNameByGroupId[groupId] || '').trim() || `key-${groupOwnedKeys.filter((key) => key.ownerId === groupId).length + 1}`;
+		const keyName =
+			(newGroupKeyNameByGroupId[groupId] || '').trim() ||
+			`key-${groupOwnedKeys.filter((key) => key.ownerId === groupId).length + 1}`;
 		try {
 			apiKeyActionError = null;
 			const response = await regenerateCourseApiKey(selectedCourse.id, {
@@ -1302,7 +1468,9 @@
 			return;
 		}
 		if (keyLimit > courseStudentKeyLimit) {
-			showErrorFeedback(`Member key limit cannot exceed the student key limit (${courseStudentKeyLimit}).`);
+			showErrorFeedback(
+				`Member key limit cannot exceed the student key limit (${courseStudentKeyLimit}).`
+			);
 			pendingMemberKeyLimitById = {
 				...pendingMemberKeyLimitById,
 				[memberId]: courseStudentKeyLimit
@@ -1411,7 +1579,9 @@
 	}
 
 	function getAvailableMembersForGroup(group: CourseGroup) {
-		return selectableGroupMembers.filter((member) => !group.memberIds.map(normalizeIdentifier).includes(getMemberIdentifier(member)));
+		return selectableGroupMembers.filter(
+			(member) => !group.memberIds.map(normalizeIdentifier).includes(getMemberIdentifier(member))
+		);
 	}
 
 	function getCourseStatusActionLabel(): string {
@@ -1433,21 +1603,13 @@
 
 		courseStatusActionPending = true;
 		pendingCourseStatusValue = nextIsActive;
-		if (courseStatusPendingTimeoutId) {
-			clearTimeout(courseStatusPendingTimeoutId);
-		}
-		courseStatusPendingTimeoutId = setTimeout(() => {
-			courseStatusActionPending = false;
-			pendingCourseStatusValue = null;
-			courseStatusPendingTimeoutId = null;
-		}, 8000);
 
 		allCourses = allCourses.map((course) =>
 			course.id === targetCourseId
 				? {
 						...course,
 						isActive: nextIsActive
-				  }
+					}
 				: course
 		);
 		courseApiKeys = courseApiKeys.map((entry) =>
@@ -1455,22 +1617,18 @@
 				? {
 						...entry,
 						isActive: nextIsActive
-				  }
+					}
 				: entry
 		);
 
 		try {
 			await updateCourseActiveStatus(targetCourseId, nextIsActive);
-				void refreshAfterWrite();
+			void refreshAfterWrite();
 		} catch {
 			allCourses = previousCourses;
 			courseApiKeys = previousKeys;
 			// API layer already shows user-facing feedback.
 		} finally {
-			if (courseStatusPendingTimeoutId) {
-				clearTimeout(courseStatusPendingTimeoutId);
-				courseStatusPendingTimeoutId = null;
-			}
 			courseStatusActionPending = false;
 			pendingCourseStatusValue = null;
 		}
@@ -1485,6 +1643,7 @@
 	{:else if error}
 		<div class="empty-state">
 			<p><strong>Error:</strong> {error}</p>
+			<button type="button" class="view-btn" onclick={loadWorkspace}>Try Again</button>
 		</div>
 	{:else if visibleCourses.length === 0}
 		<div class="empty-state">
@@ -1496,7 +1655,9 @@
 				<h2>Select a Course</h2>
 			</div>
 			<div class="section-content">
-				<p class="section-text">Choose a course from Dashboard cards or from the Courses tab popout list.</p>
+				<p class="section-text">
+					Choose a course from Dashboard cards or from the Courses tab popout list.
+				</p>
 			</div>
 		</section>
 	{:else}
@@ -1515,7 +1676,12 @@
 			{#if showCourseTabBar}
 				<div class="course-tab-bar">
 					{#each availableTabs as tab}
-						<button type="button" class="view-btn" class:course-tab-active={activeTab === tab} onclick={() => (activeTab = tab)}>
+						<button
+							type="button"
+							class="view-btn"
+							class:course-tab-active={activeTab === tab}
+							onclick={() => (activeTab = tab)}
+						>
 							{getTabLabel(tab)}
 						</button>
 					{/each}
@@ -1528,32 +1694,53 @@
 						<p>Loading key slots...</p>
 					{:else if courseApiKeysError}
 						<p><strong>Error:</strong> {courseApiKeysError}</p>
+					{:else if personalKeySlots.length}
+						{#each personalKeySlots as slot (getSlotStateId('person', studentPersonalKeyOwnerId, slot.slotIndex))}
+							{@const slotStateId = getSlotStateId(
+								'person',
+								studentPersonalKeyOwnerId,
+								slot.slotIndex
+							)}
+							<CourseKeySlotCard
+								title={`Personal Key ${slot.slotIndex + 1}`}
+								keyName={getSlotKeyName(slotStateId, slot.baseKeyName)}
+								hasExistingKey={slot.hasExistingKey}
+								maskedPreview={slot.hasExistingKey ? buildMaskedApiKeyPreview(30) : ''}
+								placeholderText="No key exists for this slot yet."
+								slotIdentity={slotStateId}
+								readOnly={isSelectedCourseClosed}
+								generateDisabled={isSelectedCourseClosed}
+								onKeyNameChange={(nextName) => setSlotKeyName(slotStateId, nextName)}
+								onGenerate={() =>
+									generateKeyForSlot(
+										'person',
+										studentPersonalKeyOwnerId,
+										slot.slotIndex,
+										slot.baseKeyName
+									)}
+								removeDisabled={!slot.hasExistingKey || isSelectedCourseClosed}
+								onRemove={() =>
+									removeKeyForSlot(
+										'person',
+										studentPersonalKeyOwnerId,
+										slot.slotIndex,
+										slot.baseKeyName
+									)}
+								showToggleActive={false}
+								isKeyActive={slot.isActive}
+								toggleActiveDisabled={!slot.hasExistingKey || isSelectedCourseClosed}
+								onToggleActive={() =>
+									setSlotActiveState(
+										'person',
+										studentPersonalKeyOwnerId,
+										slot.slotIndex,
+										slot.baseKeyName,
+										!slot.isActive
+									)}
+							/>
+						{/each}
 					{:else}
-						{#if personalKeySlots.length}
-							{#each personalKeySlots as slot (getSlotStateId('person', studentPersonalKeyOwnerId, slot.slotIndex))}
-								{@const slotStateId = getSlotStateId('person', studentPersonalKeyOwnerId, slot.slotIndex)}
-								<CourseKeySlotCard
-									title={`Personal Key ${slot.slotIndex + 1}`}
-									keyName={getSlotKeyName(slotStateId, slot.baseKeyName)}
-									hasExistingKey={slot.hasExistingKey}
-									maskedPreview={slot.hasExistingKey ? buildMaskedApiKeyPreview(30) : ''}
-									placeholderText="No key exists for this slot yet."
-									slotIdentity={slotStateId}
-									readOnly={isSelectedCourseClosed}
-									generateDisabled={isSelectedCourseClosed}
-									onKeyNameChange={(nextName) => setSlotKeyName(slotStateId, nextName)}
-									onGenerate={() => generateKeyForSlot('person', studentPersonalKeyOwnerId, slot.slotIndex, slot.baseKeyName)}
-									removeDisabled={!slot.hasExistingKey || isSelectedCourseClosed}
-									onRemove={() => removeKeyForSlot('person', studentPersonalKeyOwnerId, slot.slotIndex, slot.baseKeyName)}
-									showToggleActive={false}
-									isKeyActive={slot.isActive}
-									toggleActiveDisabled={!slot.hasExistingKey || isSelectedCourseClosed}
-									onToggleActive={() => setSlotActiveState('person', studentPersonalKeyOwnerId, slot.slotIndex, slot.baseKeyName, !slot.isActive)}
-								/>
-							{/each}
-						{:else}
-							<p class="section-text">No personal keys are configured for this course member.</p>
-						{/if}
+						<p class="section-text">No personal keys are configured for this course member.</p>
 					{/if}
 				</div>
 			{:else if activeTab === 'home' && canEditPeopleAndGroups}
@@ -1562,32 +1749,55 @@
 						<p>Loading key slots...</p>
 					{:else if courseApiKeysError}
 						<p><strong>Error:</strong> {courseApiKeysError}</p>
+					{:else if courseInstructorKeySlots.length}
+						{#each courseInstructorKeySlots as slot (getSlotStateId('person', courseInstructorOwnerId, slot.slotIndex))}
+							{@const slotStateId = getSlotStateId(
+								'person',
+								courseInstructorOwnerId,
+								slot.slotIndex
+							)}
+							<CourseKeySlotCard
+								title={`Instructor Key ${slot.slotIndex + 1}`}
+								keyName={getSlotKeyName(slotStateId, slot.baseKeyName)}
+								hasExistingKey={slot.hasExistingKey}
+								maskedPreview={slot.hasExistingKey ? buildMaskedApiKeyPreview(30) : ''}
+								placeholderText="No key exists for this slot yet."
+								slotIdentity={slotStateId}
+								readOnly={isSelectedCourseClosed}
+								generateDisabled={isSelectedCourseClosed}
+								onKeyNameChange={(nextName) => setSlotKeyName(slotStateId, nextName)}
+								onGenerate={() =>
+									generateKeyForSlot(
+										'person',
+										courseInstructorOwnerId,
+										slot.slotIndex,
+										slot.baseKeyName
+									)}
+								removeDisabled={!slot.hasExistingKey || isSelectedCourseClosed}
+								onRemove={() =>
+									removeKeyForSlot(
+										'person',
+										courseInstructorOwnerId,
+										slot.slotIndex,
+										slot.baseKeyName
+									)}
+								showToggleActive={true}
+								isKeyActive={slot.isActive}
+								toggleActiveDisabled={!slot.hasExistingKey || isSelectedCourseClosed}
+								onToggleActive={() =>
+									setSlotActiveState(
+										'person',
+										courseInstructorOwnerId,
+										slot.slotIndex,
+										slot.baseKeyName,
+										!slot.isActive
+									)}
+							/>
+						{/each}
 					{:else}
-						{#if courseInstructorKeySlots.length}
-							{#each courseInstructorKeySlots as slot (getSlotStateId('person', courseInstructorOwnerId, slot.slotIndex))}
-								{@const slotStateId = getSlotStateId('person', courseInstructorOwnerId, slot.slotIndex)}
-								<CourseKeySlotCard
-									title={`Instructor Key ${slot.slotIndex + 1}`}
-									keyName={getSlotKeyName(slotStateId, slot.baseKeyName)}
-									hasExistingKey={slot.hasExistingKey}
-									maskedPreview={slot.hasExistingKey ? buildMaskedApiKeyPreview(30) : ''}
-									placeholderText="No key exists for this slot yet."
-									slotIdentity={slotStateId}
-									readOnly={isSelectedCourseClosed}
-									generateDisabled={isSelectedCourseClosed}
-									onKeyNameChange={(nextName) => setSlotKeyName(slotStateId, nextName)}
-									onGenerate={() => generateKeyForSlot('person', courseInstructorOwnerId, slot.slotIndex, slot.baseKeyName)}
-									removeDisabled={!slot.hasExistingKey || isSelectedCourseClosed}
-									onRemove={() => removeKeyForSlot('person', courseInstructorOwnerId, slot.slotIndex, slot.baseKeyName)}
-									showToggleActive={true}
-									isKeyActive={slot.isActive}
-									toggleActiveDisabled={!slot.hasExistingKey || isSelectedCourseClosed}
-									onToggleActive={() => setSlotActiveState('person', courseInstructorOwnerId, slot.slotIndex, slot.baseKeyName, !slot.isActive)}
-								/>
-							{/each}
-						{:else}
-							<p class="section-text">No instructor key slots are available for this user in this course.</p>
-						{/if}
+						<p class="section-text">
+							No instructor key slots are available for this user in this course.
+						</p>
 					{/if}
 				</div>
 			{:else if activeTab === 'students'}
@@ -1617,7 +1827,11 @@
 							<p><strong>Error:</strong> {courseApiKeysError}</p>
 						{:else}
 							{#each instructorStudentKeySlots as slot (getSlotStateId('person', selectedInstructorStudentOwnerId, slot.slotIndex))}
-								{@const slotStateId = getSlotStateId('person', selectedInstructorStudentOwnerId, slot.slotIndex)}
+								{@const slotStateId = getSlotStateId(
+									'person',
+									selectedInstructorStudentOwnerId,
+									slot.slotIndex
+								)}
 								<CourseKeySlotCard
 									title={`${selectedInstructorStudent ? getMemberDisplayName(selectedInstructorStudent) : 'Student'} Key ${slot.slotIndex + 1}`}
 									keyName={getSlotKeyName(slotStateId, slot.baseKeyName)}
@@ -1629,15 +1843,31 @@
 									generateDisabled={isSelectedCourseClosed}
 									onKeyNameChange={(nextName) => setSlotKeyName(slotStateId, nextName)}
 									onGenerate={() =>
-										generateKeyForSlot('person', selectedInstructorStudentOwnerId, slot.slotIndex, slot.baseKeyName)}
+										generateKeyForSlot(
+											'person',
+											selectedInstructorStudentOwnerId,
+											slot.slotIndex,
+											slot.baseKeyName
+										)}
 									removeDisabled={!slot.hasExistingKey || isSelectedCourseClosed}
 									onRemove={() =>
-										removeKeyForSlot('person', selectedInstructorStudentOwnerId, slot.slotIndex, slot.baseKeyName)}
+										removeKeyForSlot(
+											'person',
+											selectedInstructorStudentOwnerId,
+											slot.slotIndex,
+											slot.baseKeyName
+										)}
 									showToggleActive={true}
 									isKeyActive={slot.isActive}
 									toggleActiveDisabled={!slot.hasExistingKey || isSelectedCourseClosed}
 									onToggleActive={() =>
-										setSlotActiveState('person', selectedInstructorStudentOwnerId, slot.slotIndex, slot.baseKeyName, !slot.isActive)}
+										setSlotActiveState(
+											'person',
+											selectedInstructorStudentOwnerId,
+											slot.slotIndex,
+											slot.baseKeyName,
+											!slot.isActive
+										)}
 								/>
 							{/each}
 						{/if}
@@ -1668,7 +1898,11 @@
 							<p><strong>Error:</strong> {courseApiKeysError}</p>
 						{:else}
 							{#each instructorGroupKeySlots as slot (getSlotStateId('group', selectedInstructorGroupId, slot.slotIndex))}
-								{@const slotStateId = getSlotStateId('group', selectedInstructorGroupId, slot.slotIndex)}
+								{@const slotStateId = getSlotStateId(
+									'group',
+									selectedInstructorGroupId,
+									slot.slotIndex
+								)}
 								<CourseKeySlotCard
 									title={`${selectedInstructorGroup ? selectedInstructorGroup.name : 'Group'} Key ${slot.slotIndex + 1}`}
 									keyName={getSlotKeyName(slotStateId, slot.baseKeyName)}
@@ -1680,15 +1914,31 @@
 									generateDisabled={isSelectedCourseClosed}
 									onKeyNameChange={(nextName) => setSlotKeyName(slotStateId, nextName)}
 									onGenerate={() =>
-										generateKeyForSlot('group', selectedInstructorGroupId, slot.slotIndex, slot.baseKeyName)}
+										generateKeyForSlot(
+											'group',
+											selectedInstructorGroupId,
+											slot.slotIndex,
+											slot.baseKeyName
+										)}
 									removeDisabled={!slot.hasExistingKey || isSelectedCourseClosed}
 									onRemove={() =>
-										removeKeyForSlot('group', selectedInstructorGroupId, slot.slotIndex, slot.baseKeyName)}
+										removeKeyForSlot(
+											'group',
+											selectedInstructorGroupId,
+											slot.slotIndex,
+											slot.baseKeyName
+										)}
 									showToggleActive={true}
 									isKeyActive={slot.isActive}
 									toggleActiveDisabled={!slot.hasExistingKey || isSelectedCourseClosed}
 									onToggleActive={() =>
-										setSlotActiveState('group', selectedInstructorGroupId, slot.slotIndex, slot.baseKeyName, !slot.isActive)}
+										setSlotActiveState(
+											'group',
+											selectedInstructorGroupId,
+											slot.slotIndex,
+											slot.baseKeyName,
+											!slot.isActive
+										)}
 								/>
 							{/each}
 						{/if}
@@ -1710,16 +1960,10 @@
 								maskedPreview={slot.hasExistingKey ? buildMaskedApiKeyPreview(30) : ''}
 								placeholderText="No key exists for this slot yet."
 								slotIdentity={slotStateId}
-								readOnly={isSelectedCourseClosed}
-								generateDisabled={isSelectedCourseClosed}
-								onKeyNameChange={(nextName) => setSlotKeyName(slotStateId, nextName)}
-								onGenerate={() => generateKeyForSlot('group', activeStudentGroup.id, slot.slotIndex, slot.baseKeyName)}
-								removeDisabled={!slot.hasExistingKey || isSelectedCourseClosed}
-								onRemove={() => removeKeyForSlot('group', activeStudentGroup.id, slot.slotIndex, slot.baseKeyName)}
+								readOnly={true}
+								readOnlyMessage="Group keys are managed by your course instructor or teaching assistant."
 								showToggleActive={false}
 								isKeyActive={slot.isActive}
-								toggleActiveDisabled={!slot.hasExistingKey || isSelectedCourseClosed}
-								onToggleActive={() => setSlotActiveState('group', activeStudentGroup.id, slot.slotIndex, slot.baseKeyName, !slot.isActive)}
 							/>
 						{/each}
 					{/if}
@@ -1727,9 +1971,16 @@
 			{:else if activeTab === 'edit-roster' && canEditPeopleAndGroups}
 				<div class="section-content">
 					<div class="course-people-actions">
-						<input type="text" placeholder="Search users" bind:value={searchQuery} class="view-btn"/>
+						<input
+							type="text"
+							placeholder="Search users"
+							bind:value={searchQuery}
+							class="view-btn"
+						/>
 						<button type="button" class="view-btn" onclick={openAddEmailPopup}>Add Email</button>
-						<button type="button" class="view-btn" onclick={triggerCsvImportPicker}>Import Canvas CSV</button>
+						<button type="button" class="view-btn" onclick={triggerCsvImportPicker}
+							>Import Canvas CSV</button
+						>
 						<input
 							class="course-hidden-input"
 							type="file"
@@ -1738,7 +1989,6 @@
 							onchange={importPeopleFromCanvasCsv}
 						/>
 					</div>
-
 
 					<div class="table-container">
 						<table class="data-table course-people-table">
@@ -1751,7 +2001,10 @@
 							</colgroup>
 							<thead>
 								<tr>
-									<th style="cursor: pointer; user-select: none;" onclick={() => (sortByName = !sortByName)} >Name {sortByName ? '▲' : '▼'}</th>
+									<th
+										style="cursor: pointer; user-select: none;"
+										onclick={() => (sortByName = !sortByName)}>Name {sortByName ? '▲' : '▼'}</th
+									>
 									<th>Email</th>
 									<th>Role</th>
 									<th>Keys</th>
@@ -1763,64 +2016,85 @@
 									{#each sortedMembers as member}
 										{@const memberIdentifier = getMemberIdentifier(member)}
 										<tr>
-											<td>{member.isInstructor ? (selectedCourse.instructor || 'Unknown Instructor') : getMemberDisplayName(member)}</td>
+											<td
+												>{member.isInstructor
+													? selectedCourse.instructor || 'Unknown Instructor'
+													: getMemberDisplayName(member)}</td
+											>
 											<td>{member.email}</td>
 											<td>{getRosterRole(member)}</td>
 											<td>
 												{#if member.isInstructor}
 													{#if isCurrentUserAdmin}
 														<div class="course-group-add-row">
-																{#if isSelectedCourseClosed}
-																	<div class="text-input course-locked-field">{pendingInstructorKeyLimit}</div>
-																{:else}
-																	<input
-																		class="text-input"
-																		type="number"
-																		min="0"
-																		value={pendingInstructorKeyLimit}
-																		onchange={(event) => {
-																			const target = event.currentTarget as HTMLInputElement;
-																			pendingInstructorKeyLimit = Number.isFinite(Number(target.value)) ? Math.max(0, Number(target.value)) : 0;
-																		}}
-																	/>
-																{/if}
-																	{#if !isSelectedCourseClosed}
-																		<button type="button" class="list-go-btn" onclick={saveInstructorKeyLimit}>Save</button>
-																	{/if}
-															</div>
+															{#if isSelectedCourseClosed}
+																<div class="text-input course-locked-field">
+																	{pendingInstructorKeyLimit}
+																</div>
+															{:else}
+																<input
+																	class="text-input"
+																	type="number"
+																	min="0"
+																	value={pendingInstructorKeyLimit}
+																	onchange={(event) => {
+																		const target = event.currentTarget as HTMLInputElement;
+																		pendingInstructorKeyLimit = Number.isFinite(
+																			Number(target.value)
+																		)
+																			? Math.max(0, Number(target.value))
+																			: 0;
+																	}}
+																/>
+															{/if}
+															{#if !isSelectedCourseClosed}
+																<button
+																	type="button"
+																	class="list-go-btn"
+																	onclick={saveInstructorKeyLimit}>Save</button
+																>
+															{/if}
+														</div>
 													{:else}
 														<span class="section-text">{getRosterKeyLimit(member)}</span>
 													{/if}
 												{:else if member.isTeacherAssistant}
 													<span class="section-text">{getRosterKeyLimit(member)}</span>
+												{:else if canEditPeopleAndGroups}
+													<div class="course-group-add-row">
+														{#if isSelectedCourseClosed}
+															<div class="text-input course-locked-field">
+																{pendingMemberKeyLimitById[memberIdentifier] ?? member.keyLimit}
+															</div>
+														{:else}
+															<input
+																class="text-input"
+																type="number"
+																min="0"
+																max={courseStudentKeyLimit}
+																value={pendingMemberKeyLimitById[memberIdentifier] ??
+																	member.keyLimit}
+																onchange={(event) => {
+																	const target = event.currentTarget as HTMLInputElement;
+																	pendingMemberKeyLimitById = {
+																		...pendingMemberKeyLimitById,
+																		[memberIdentifier]: Number.isFinite(Number(target.value))
+																			? Math.max(0, Number(target.value))
+																			: 0
+																	};
+																}}
+															/>
+														{/if}
+														{#if !isSelectedCourseClosed}
+															<button
+																type="button"
+																class="list-go-btn"
+																onclick={() => saveMemberKeyLimit(memberIdentifier)}>Save</button
+															>
+														{/if}
+													</div>
 												{:else}
-													{#if canEditPeopleAndGroups}
-														<div class="course-group-add-row">
-																{#if isSelectedCourseClosed}
-																<div class="text-input course-locked-field">{pendingMemberKeyLimitById[memberIdentifier] ?? member.keyLimit}</div>
-																{:else}
-																	<input
-																		class="text-input"
-																		type="number"
-																		min="0"
-																		max={courseStudentKeyLimit}
-																	value={pendingMemberKeyLimitById[memberIdentifier] ?? member.keyLimit}
-																		onchange={(event) => {
-																			const target = event.currentTarget as HTMLInputElement;
-																			pendingMemberKeyLimitById = {
-																				...pendingMemberKeyLimitById,
-																				[memberIdentifier]: Number.isFinite(Number(target.value)) ? Math.max(0, Number(target.value)) : 0
-																			};
-																		}}
-																	/>
-																{/if}
-																	{#if !isSelectedCourseClosed}
-																		<button type="button" class="list-go-btn" onclick={() => saveMemberKeyLimit(memberIdentifier)}>Save</button>
-																	{/if}
-														</div>
-													{:else}
-														<span class="section-text">{member.keyLimit}</span>
-													{/if}
+													<span class="section-text">{member.keyLimit}</span>
 												{/if}
 											</td>
 											<td class="table-actions-cell">
@@ -1829,22 +2103,26 @@
 												{:else if member.isTeacherAssistant}
 													<span class="section-text">Teacher assistant</span>
 												{:else if canEditPeopleAndGroups}
-														{#if isSelectedCourseClosed}
-															<span class="section-text">Read-only</span>
-														{:else}
-															<button type="button" class="list-go-btn" onclick={() => removeMember(memberIdentifier)}>Remove</button>
-														{/if}
+													{#if isSelectedCourseClosed}
+														<span class="section-text">Read-only</span>
+													{:else}
+														<button
+															type="button"
+															class="list-go-btn"
+															onclick={() => removeMember(memberIdentifier)}>Remove</button
+														>
+													{/if}
 												{:else}
 													<span class="section-text">Member</span>
 												{/if}
 											</td>
 										</tr>
-											{/each}
-										{:else}
-											<tr>
-												<td colspan="5">No members in this course yet.</td>
-											</tr>
-										{/if}
+									{/each}
+								{:else}
+									<tr>
+										<td colspan="5">No members in this course yet.</td>
+									</tr>
+								{/if}
 							</tbody>
 						</table>
 					</div>
@@ -1856,7 +2134,12 @@
 							{#if isSelectedCourseClosed}
 								<div class="text-input course-locked-field">{newGroupName || 'New group name'}</div>
 							{:else}
-								<input class="text-input" type="text" bind:value={newGroupName} placeholder="New group name" />
+								<input
+									class="text-input"
+									type="text"
+									bind:value={newGroupName}
+									placeholder="New group name"
+								/>
 							{/if}
 							{#if !isSelectedCourseClosed}
 								<button type="button" class="view-btn" onclick={createGroup}>Create Group</button>
@@ -1892,7 +2175,12 @@
 															<li>
 																{member ? getMemberDisplayName(member) : 'Unknown user'}
 																{#if !isSelectedCourseClosed}
-																	<button type="button" class="list-go-btn" onclick={() => removeGroupMember(group.id, memberId)}>Remove</button>
+																	<button
+																		type="button"
+																		class="list-go-btn"
+																		onclick={() => removeGroupMember(group.id, memberId)}
+																		>Remove</button
+																	>
 																{/if}
 															</li>
 														{/each}
@@ -1904,7 +2192,9 @@
 											<td>
 												<div class="course-group-add-row">
 													{#if isSelectedCourseClosed}
-														<div class="text-input course-locked-field">{pendingGroupKeyLimitById[group.id] ?? group.keyLimit}</div>
+														<div class="text-input course-locked-field">
+															{pendingGroupKeyLimitById[group.id] ?? group.keyLimit}
+														</div>
 													{:else}
 														<input
 															class="text-input"
@@ -1916,14 +2206,20 @@
 																const target = event.currentTarget as HTMLInputElement;
 																pendingGroupKeyLimitById = {
 																	...pendingGroupKeyLimitById,
-																	[group.id]: Number.isFinite(Number(target.value)) ? Math.max(0, Number(target.value)) : 0
+																	[group.id]: Number.isFinite(Number(target.value))
+																		? Math.max(0, Number(target.value))
+																		: 0
 																};
 															}}
 														/>
 													{/if}
-															{#if !isSelectedCourseClosed}
-																<button type="button" class="list-go-btn" onclick={() => saveGroupKeyLimit(group.id)}>Save</button>
-															{/if}
+													{#if !isSelectedCourseClosed}
+														<button
+															type="button"
+															class="list-go-btn"
+															onclick={() => saveGroupKeyLimit(group.id)}>Save</button
+														>
+													{/if}
 												</div>
 											</td>
 											<td>
@@ -1946,12 +2242,18 @@
 														>
 															<option value="">Select course member</option>
 															{#each getAvailableMembersForGroup(group) as member}
-																<option value={getMemberIdentifier(member)}>{getMemberDisplayName(member)}</option>
+																<option value={getMemberIdentifier(member)}
+																	>{getMemberDisplayName(member)}</option
+																>
 															{/each}
 														</select>
 													{/if}
 													{#if !isSelectedCourseClosed}
-														<button type="button" class="list-go-btn" onclick={() => addGroupMember(group.id)}>Add</button>
+														<button
+															type="button"
+															class="list-go-btn"
+															onclick={() => addGroupMember(group.id)}>Add</button
+														>
 													{/if}
 												</div>
 											</td>
@@ -1984,7 +2286,12 @@
 						<h3>Course Status</h3>
 						<p class="section-text">Closing a course makes it read-only until reopened.</p>
 						{#if isCurrentUserAdmin}
-							<button type="button" class="view-btn" onclick={toggleSelectedCourseActiveStatus} disabled={courseStatusActionPending}>
+							<button
+								type="button"
+								class="view-btn"
+								onclick={toggleSelectedCourseActiveStatus}
+								disabled={courseStatusActionPending}
+							>
 								{getCourseStatusActionLabel()}
 							</button>
 						{/if}
@@ -1992,7 +2299,9 @@
 					{#if isCurrentUserAdmin}
 						<div class="course-panel">
 							<h3>Max Student Keys</h3>
-							<p class="section-text">Caps the key allowance for each student and group in this course.</p>
+							<p class="section-text">
+								Caps the key allowance for each student and group in this course.
+							</p>
 							<div class="course-group-add-row">
 								{#if isSelectedCourseClosed}
 									<div class="text-input course-locked-field">{pendingInstructorHandoutLimit}</div>
@@ -2000,45 +2309,48 @@
 									<input
 										class="text-input"
 										type="number"
-												min="0"
+										min="0"
 										value={pendingInstructorHandoutLimit}
 										onchange={(event) => {
 											const target = event.currentTarget as HTMLInputElement;
-													pendingInstructorHandoutLimit = Number.isFinite(Number(target.value)) ? Math.max(0, Number(target.value)) : 0;
+											pendingInstructorHandoutLimit = Number.isFinite(Number(target.value))
+												? Math.max(0, Number(target.value))
+												: 0;
 										}}
 									/>
-									<button type="button" class="list-go-btn" onclick={saveInstructorHandoutLimit}>Save</button>
+									<button type="button" class="list-go-btn" onclick={saveInstructorHandoutLimit}
+										>Save</button
+									>
 								{/if}
 							</div>
 						</div>
 					{/if}
 				</div>
 			{/if}
-
 		</section>
 	{/if}
 	{#if showAddEmailPopup}
-	<div class="popup-backdrop">
-		<div class="popup-card">
-			<h3>Add User by Email</h3>
-			<p class="section-text">Enter a user email to add them to this course.</p>
+		<div class="popup-backdrop">
+			<div class="popup-card">
+				<h3>Add User by Email</h3>
+				<p class="section-text">Enter a user email to add them to this course.</p>
 
-			<input
-				class="text-input"
-				type="email"
-				bind:value={newMemberEmail}
-				placeholder="student@kent.edu"
-			/>
+				<input
+					class="text-input"
+					type="email"
+					bind:value={newMemberEmail}
+					placeholder="student@kent.edu"
+				/>
 
-			{#if addEmailError}
-				<p class="popup-error">{addEmailError}</p>
-			{/if}
+				{#if addEmailError}
+					<p class="popup-error">{addEmailError}</p>
+				{/if}
 
-			<div class="popup-actions">
-				<button type="button" class="view-btn" onclick={closeAddEmailPopup}>Cancel</button>
-				<button type="button" class="view-btn" onclick={submitAddEmailPopup}>Add User</button>
+				<div class="popup-actions">
+					<button type="button" class="view-btn" onclick={closeAddEmailPopup}>Cancel</button>
+					<button type="button" class="view-btn" onclick={submitAddEmailPopup}>Add User</button>
+				</div>
 			</div>
 		</div>
-	</div>
-{/if}
+	{/if}
 </ViewShell>

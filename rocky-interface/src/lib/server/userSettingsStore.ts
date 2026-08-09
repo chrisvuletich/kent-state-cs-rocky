@@ -1,5 +1,9 @@
 import { API_BASE_URL } from '$lib/config/env';
-import { sanitizeUserSettings, type UserSettingKey, type UserSettings } from '$lib/settings/userSettings';
+import {
+	sanitizeUserSettings,
+	type UserSettingKey,
+	type UserSettings
+} from '$lib/settings/userSettings';
 import type { User } from '$lib/types/user';
 import { internalProxyHeaders } from '$lib/server/backendSecurity';
 
@@ -56,7 +60,10 @@ export async function updateSettingForUser<K extends UserSettingKey>(
 	return parseRemoteSettingsResponse(response);
 }
 
-export async function updateSettingsPatchForUser(user: User, patch: Partial<UserSettings>): Promise<UserSettings> {
+export async function updateSettingsPatchForUser(
+	user: User,
+	patch: Partial<UserSettings>
+): Promise<UserSettings> {
 	const identity = buildIdentity(user);
 	const response = await fetch(`${API_BASE_URL}/user-settings`, {
 		method: 'PATCH',

@@ -9,7 +9,9 @@
 	font-weight: var(--font-weight-medium);
 	cursor: pointer;
 	flex-shrink: 0;
-	transition: background var(--transition-fast), border-color var(--transition-fast);
+	transition:
+		background var(--transition-fast),
+		border-color var(--transition-fast);
 }
 
 .list-go-btn:hover {
@@ -29,7 +31,9 @@
 	font-weight: var(--font-weight-medium);
 	color: var(--color-text-primary);
 	cursor: pointer;
-	transition: background var(--transition-base), border-color var(--transition-base);
+	transition:
+		background var(--transition-base),
+		border-color var(--transition-base);
 }
 
 .view-btn:hover {

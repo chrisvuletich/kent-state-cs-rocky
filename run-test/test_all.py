@@ -2,23 +2,24 @@ from __future__ import annotations
 
 import importlib
 import unittest
+from pathlib import Path
 
 
-TEST_MODULES = [
-    "backend.test_seed_data_shape",
-    "backend.test_backend_validation",
-    "backend.test_user_settings",
-    "backend.test_course_api_history",
-    "backend.test_oauth_microsoft",
-    "frontend.test_preview_login_chromedriver",
-    "frontend.test_view_titles_chromedriver",
-]
+ROOT = Path(__file__).resolve().parent
+
+
+def test_modules(package: str) -> list[str]:
+    return [
+        f"{package}.{path.stem}"
+        for path in sorted((ROOT / package).glob("test_*.py"))
+        if path.stem != "test_support"
+    ]
 
 
 def load_suite() -> unittest.TestSuite:
     loader = unittest.defaultTestLoader
     suite = unittest.TestSuite()
-    for module_name in TEST_MODULES:
+    for module_name in test_modules("backend") + test_modules("frontend"):
         module = importlib.import_module(module_name)
         suite.addTests(loader.loadTestsFromModule(module))
     return suite

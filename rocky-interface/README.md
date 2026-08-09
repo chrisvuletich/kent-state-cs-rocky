@@ -90,7 +90,7 @@ endpoints. It provides:
 - selectable `15m`, `1h`, `6h`, `24h`, `7d`, and `30d` windows;
 - request/token throughput, model timing, token throughput, outcomes, and latency;
 - breakdowns by user, course, API key, group, model, source, and outcome;
-- a filterable administrative review queue and complete sanitized
+- a filterable administrative review queue and complete stored
   request/response inspection;
 - review controls for flags, structured reasons, workflow status, and notes;
 - bounded Granite GPU, VRAM, temperature, CPU, and RAM history synchronized
@@ -105,6 +105,14 @@ filter are reflected in the URL as `analytics_window`, `analytics_dimension`,
 `analytics_request`, `analytics_outcome`, and `analytics_review`, so a reload
 restores the same analytical view. These values contain identifiers and view
 choices only; request content and review notes are never placed in the URL.
+
+## Built-in chat cancellation
+
+While Rocky is generating, the composer displays a Stop control. Stopping
+aborts the browser request, keeps the student's prompt available for editing,
+and ignores a late browser response. This is intentionally client-side only:
+work that already reached Granite or Ollama may still finish and remains part
+of the required institutional audit record.
 
 ## Key folders
 

@@ -82,6 +82,8 @@ class TelemetryStore:
         indexes = (
             ([('state', 1), ('received_at', 1)],
              {"name": "telemetry_state_received_at"}),
+            ([('operation', 1), ('received_at', -1)],
+             {"name": "telemetry_operation_received_at"}),
             ([('actor.user_id', 1), ('received_at', -1)],
              {"name": "telemetry_actor_received_at"}),
             ([('credential.key_id', 1), ('received_at', -1)],

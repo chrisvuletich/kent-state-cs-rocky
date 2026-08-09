@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import csv
+import io
+import json
 from datetime import datetime, timezone
 from html import escape as html_escape
 from typing import Any
 
-from flask import jsonify, render_template, request
+from flask import Response, jsonify, render_template, request
 
 from backend.telemetry_analytics import (
     AnalyticsQueryError,
@@ -12,17 +15,22 @@ from backend.telemetry_analytics import (
     BREAKDOWN_DIMENSIONS,
     MAX_BREAKDOWN_ROWS,
     MAX_REQUEST_ROWS,
+    OPERATIONS,
     OUTCOMES,
     bounded_int,
     breakdown,
     current_snapshot,
     documents_in_range,
+    filter_requests,
     recent_requests,
     request_detail,
     open_interaction_counts,
+    outcome,
+    received_at,
     resolve_bucket,
     summary,
     timeseries,
+    user_usage_summary,
     window_range,
 )
 from backend.telemetry_review import (
@@ -89,7 +97,7 @@ def index_page(deps: dict[str, Any]):
         },
         "api_history": {
             "docs": _redact_inspector_value(_get_collection_snapshot(api_history)),
-            "description": "Per-course API request history.",
+            "description": "Administrative and course audit events.",
         },
     }
     return render_template(
@@ -107,13 +115,56 @@ def _require_analytics_admin(deps: dict[str, Any]):
 
 
 def _analytics_rows(deps: dict[str, Any]):
+    return _analytics_rows_with_projection(deps, ANALYTICS_ROW_PROJECTION)
+
+
+def _bounded_filter(name: str, maximum: int = 256) -> str | None:
+    value = (request.args.get(name) or "").strip()
+    if len(value) > maximum:
+        raise AnalyticsQueryError(f"{name} must contain at most {maximum} characters.")
+    return value or None
+
+
+def _analytics_filter_values() -> dict[str, Any]:
+    operation = (_bounded_filter("operation", 64) or "").lower() or None
+    if operation and operation not in OPERATIONS:
+        raise AnalyticsQueryError(
+            "operation must be models.list, responses.create, or unknown."
+        )
+    requested_outcome = (_bounded_filter("outcome", 32) or "").lower() or None
+    if requested_outcome not in (*OUTCOMES, "active", None):
+        raise AnalyticsQueryError(
+            "outcome must be active, completed, rejected, failed, or timed_out."
+        )
+    review_status = (_bounded_filter("review_status", 32) or "").lower() or None
+    if review_status not in (*REVIEW_STATUSES, None):
+        raise AnalyticsQueryError(
+            "review_status must be unreviewed, in_review, or resolved."
+        )
+    return {
+        "requested_outcome": requested_outcome,
+        "user_id": _bounded_filter("user_id"),
+        "course_id": _bounded_filter("course_id"),
+        "key_id": _bounded_filter("key_id"),
+        "model": _bounded_filter("model"),
+        "source": _bounded_filter("source", 128),
+        "operation": operation,
+        "flagged": _optional_bool(request.args.get("flagged")),
+        "review_status": review_status,
+    }
+
+
+def _analytics_rows_with_projection(
+    deps: dict[str, Any], projection: dict[str, int] | None
+):
     window, start, end = window_range(request.args.get("window"))
     rows = documents_in_range(
         deps["telemetry_interactions"],
         start,
         end,
-        ANALYTICS_ROW_PROJECTION,
+        projection,
     )
+    rows = filter_requests(rows, **_analytics_filter_values())
     return rows, window, start, end
 
 
@@ -152,6 +203,21 @@ def get_analytics_current(deps: dict[str, Any]):
             deps["telemetry_interactions"], generated_at
         )
         return jsonify(current_snapshot(document, generated_at, open_counts))
+    except Exception as error:
+        return _analytics_failure(deps, error)
+
+
+def get_my_usage(deps: dict[str, Any]):
+    identity = deps["require_requester_identity"]()
+    if identity[0] is None:
+        return jsonify({"error": "Authentication headers are required."}), 401
+    email, _ = identity
+    user_id = deps["_resolve_requester_user_id"](email)
+    try:
+        return jsonify(user_usage_summary(
+            deps["telemetry_interactions"],
+            [identifier for identifier in (user_id, email) if identifier],
+        ))
     except Exception as error:
         return _analytics_failure(deps, error)
 
@@ -238,16 +304,6 @@ def get_analytics_requests(deps: dict[str, Any]):
         return unauthorized
     try:
         limit = bounded_int(request.args.get("limit"), 50, MAX_REQUEST_ROWS)
-        requested_outcome = (request.args.get("outcome") or "").strip().lower() or None
-        if requested_outcome not in (*OUTCOMES, "active", None):
-            raise AnalyticsQueryError(
-                "outcome must be active, completed, rejected, failed, or timed_out."
-            )
-        review_status = (request.args.get("review_status") or "").strip().lower() or None
-        if review_status not in (*REVIEW_STATUSES, None):
-            raise AnalyticsQueryError(
-                "review_status must be unreviewed, in_review, or resolved."
-            )
         rows, window, start, end = _analytics_rows(deps)
         return jsonify(recent_requests(
             rows,
@@ -255,11 +311,6 @@ def get_analytics_requests(deps: dict[str, Any]):
             start,
             end,
             limit,
-            requested_outcome=requested_outcome,
-            user_id=(request.args.get("user_id") or "").strip() or None,
-            course_id=(request.args.get("course_id") or "").strip() or None,
-            flagged=_optional_bool(request.args.get("flagged")),
-            review_status=review_status,
         ))
     except AnalyticsQueryError as error:
         return _analytics_error(error)
@@ -280,6 +331,151 @@ def get_analytics_request(deps: dict[str, Any], request_id: str):
     if detail is None:
         return jsonify({"error": "Telemetry request not found."}), 404
     return jsonify(detail)
+
+
+MAX_EXPORT_ROWS = 10_000
+EXPORT_FORMATS = {"json", "csv"}
+EXPORT_COLUMNS = (
+    "request_id",
+    "received_at",
+    "terminal_at",
+    "user_id",
+    "user_email",
+    "user_name",
+    "course_id",
+    "course_code",
+    "key_id",
+    "key_name",
+    "source",
+    "operation",
+    "public_model",
+    "actual_model",
+    "outcome",
+    "http_status",
+    "request_latency_ms",
+    "input_tokens",
+    "output_tokens",
+    "total_tokens",
+    "prompt",
+    "response",
+    "error_stage",
+    "error_type",
+)
+
+
+def _csv_safe(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, (dict, list)):
+        rendered = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    else:
+        rendered = str(value)
+    return f"'{rendered}" if rendered.startswith(("=", "+", "-", "@")) else rendered
+
+
+def _export_row(row: dict[str, Any]) -> dict[str, Any]:
+    actor = row.get("actor") if isinstance(row.get("actor"), dict) else {}
+    course = row.get("course") if isinstance(row.get("course"), dict) else {}
+    credential = row.get("credential") if isinstance(row.get("credential"), dict) else {}
+    model = row.get("model") if isinstance(row.get("model"), dict) else {}
+    usage = row.get("usage") if isinstance(row.get("usage"), dict) else {}
+    performance = row.get("performance") if isinstance(row.get("performance"), dict) else {}
+    request_record = row.get("request") if isinstance(row.get("request"), dict) else {}
+    response_record = row.get("response") if isinstance(row.get("response"), dict) else {}
+    prompt = request_record.get("input_text", request_record.get("body"))
+    response_content = response_record.get("output_text", response_record.get("body"))
+    return {
+        "request_id": row.get("request_id") or row.get("_id"),
+        "received_at": row.get("received_at") or row.get("accepted_at"),
+        "terminal_at": row.get("terminal_at"),
+        "user_id": actor.get("user_id"),
+        "user_email": actor.get("email"),
+        "user_name": actor.get("name"),
+        "course_id": course.get("course_id"),
+        "course_code": course.get("course_code"),
+        "key_id": credential.get("key_id"),
+        "key_name": credential.get("key_name"),
+        "source": row.get("source"),
+        "operation": row.get("operation") or "responses.create",
+        "public_model": model.get("public_model") or request_record.get("model"),
+        "actual_model": model.get("actual_model") or row.get("actual_model"),
+        "outcome": outcome(row),
+        "http_status": row.get("http_status"),
+        "request_latency_ms": performance.get("request_latency_ms") or row.get("request_latency_ms"),
+        "input_tokens": usage.get("input_tokens") or row.get("prompt_eval_count"),
+        "output_tokens": usage.get("output_tokens") or row.get("eval_count"),
+        "total_tokens": usage.get("total_tokens"),
+        "prompt": prompt,
+        "response": response_content,
+        "error_stage": row.get("error_stage"),
+        "error_type": row.get("error_type"),
+    }
+
+
+def get_analytics_export(deps: dict[str, Any]):
+    unauthorized = _require_analytics_admin(deps)
+    if unauthorized:
+        return unauthorized
+    export_format = (request.args.get("format") or "json").strip().lower()
+    if export_format not in EXPORT_FORMATS:
+        return jsonify({"error": "format must be json or csv."}), 400
+    try:
+        limit = bounded_int(request.args.get("limit"), MAX_EXPORT_ROWS, MAX_EXPORT_ROWS)
+        rows, window, start, end = _analytics_rows_with_projection(deps, None)
+    except AnalyticsQueryError as error:
+        return _analytics_error(error)
+    except Exception as error:
+        return _analytics_failure(deps, error)
+    if len(rows) > limit:
+        return jsonify({
+            "error": (
+                f"This export contains {len(rows):,} rows, which exceeds the {limit:,}-row limit. "
+                "Choose a shorter range or add filters."
+            )
+        }), 413
+
+    rows.sort(
+        key=lambda row: received_at(row) or datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True,
+    )
+    exported_rows = [_export_row(row) for row in rows]
+    try:
+        deps["record_audit_event"](
+            deps,
+            "analytics-export",
+            target_type="telemetry",
+            target_id=window,
+            metadata={"format": export_format, "row_count": len(exported_rows), "filters": _analytics_filter_values()},
+        )
+    except Exception as error:
+        deps["logger"].error("analytics.export_audit_failed error_type=%s", type(error).__name__)
+
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    filename = f"rocky-analytics-{stamp}.{export_format}"
+    if export_format == "json":
+        payload = {
+            "exported_at": datetime.now(timezone.utc),
+            "window": window,
+            "start": start,
+            "end": end,
+            "count": len(exported_rows),
+            "records": exported_rows,
+        }
+        return Response(
+            json.dumps(payload, default=str, ensure_ascii=False, indent=2),
+            mimetype="application/json",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    output = io.StringIO(newline="")
+    writer = csv.DictWriter(output, fieldnames=EXPORT_COLUMNS, extrasaction="ignore")
+    writer.writeheader()
+    writer.writerows({key: _csv_safe(value) for key, value in row.items()} for row in exported_rows)
+    return Response(
+        output.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 def patch_analytics_request_review(deps: dict[str, Any], request_id: str):
@@ -367,24 +563,18 @@ def patch_analytics_request_review(deps: dict[str, Any], request_id: str):
 
     try:
         course = row.get("course") if isinstance(row.get("course"), dict) else {}
-        deps["api_history"].insert_one({
-            "u_id": reviewer_id or email,
-            "c_id": course.get("course_code") or "",
-            "course_id": course.get("course_id"),
-            "group_id": course.get("group_id"),
-            "is_group_member": bool(course.get("group_id")),
-            "event_type": "telemetry-review",
-            "created": updated["reviewed_at"].isoformat(),
-            "meta": {
-                "path": request.path,
-                "request_id": request_id,
-                "previous_status": previous["status"],
-                "status": updated["status"],
-                "previous_flagged": previous["flagged"],
-                "flagged": updated["flagged"],
+        deps["record_audit_event"](
+            deps,
+            "telemetry-review",
+            course={"id": course.get("course_id"), "code": course.get("course_code") or ""},
+            target_type="telemetry-request",
+            target_id=request_id,
+            changes={
+                "status": {"before": previous["status"], "after": updated["status"]},
+                "flagged": {"before": previous["flagged"], "after": updated["flagged"]},
                 "flag_reasons": updated["flag_reasons"],
             },
-        })
+        )
     except Exception as error:
         deps["logger"].error(
             "analytics.review_audit_failed error_type=%s", type(error).__name__

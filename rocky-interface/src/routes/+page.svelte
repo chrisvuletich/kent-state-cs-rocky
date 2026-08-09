@@ -2,7 +2,7 @@
 	import { browser } from '$app/environment';
 	import { page } from '$app/state';
 	import { onMount } from 'svelte';
-	import { currentFrame, frameMap } from '$lib/stores/frameStore';
+	import { currentFrame, frameMap, frameTitles } from '$lib/stores/frameStore';
 	import { canAccessFrame, type FrameName } from '$lib/types/frame';
 	import CourseComposerPopover from '$lib/components/CourseComposerPopover.svelte';
 	import '$lib/styles/foundation/global.css';
@@ -32,12 +32,36 @@
 			currentFrame.set(page.data.initialFrame);
 		}
 	});
+
+	$effect(() => {
+		const requestedDocumentation = page.url.searchParams.get('doc')?.trim();
+		if (browser && hasMounted && requestedDocumentation && $currentFrame !== 'help') {
+			currentFrame.set('help');
+		}
+	});
+
+	$effect(() => {
+		const requestedFrame = page.url.searchParams.get('frame')?.trim() as FrameName | undefined;
+		if (
+			browser &&
+			hasMounted &&
+			requestedFrame &&
+			canAccessFrame(requestedFrame, currentUser?.isAdmin ?? false) &&
+			$currentFrame !== requestedFrame
+		) {
+			currentFrame.set(requestedFrame);
+		}
+	});
 </script>
 
+<svelte:head>
+	<title>{frameTitles[resolvedFrame]} | Rocky</title>
+</svelte:head>
+
 {#if currentUser}
-	<div class="page-layout">
+	<div class:chat-page-layout={resolvedFrame === 'chat'} class="page-layout">
 		<CourseComposerPopover />
-		<div class="main-content">
+		<div class:chat-page-main={resolvedFrame === 'chat'} class="main-content">
 			<div class="view-wrapper">
 				<ActiveView />
 			</div>

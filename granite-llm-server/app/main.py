@@ -1,5 +1,6 @@
 import os
 import secrets
+import threading
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -13,7 +14,7 @@ load_dotenv(REPOSITORY_ROOT / ".env.local", override=True)
 load_dotenv(SERVICE_ROOT / ".env", override=False)
 load_dotenv(SERVICE_ROOT / ".env.local", override=True)
 
-from app.ollama_client import OllamaCallError, call_ollama_chat
+from app.ollama_client import OllamaCallError, call_ollama_chat, check_ollama_readiness
 from app.hardware_metrics import collect_hardware_snapshot
 from app.runtime_state import begin_inference, end_inference
 from app.request_parser import extract_model, extract_messages, extract_reasoning, extract_generation_options
@@ -24,11 +25,67 @@ GRANITE_HOST = os.getenv("ROCKY_GRANITE_HOST", "127.0.0.1")
 GRANITE_PORT = int(os.getenv("ROCKY_GRANITE_PORT", "5002"))
 APP_ENV = os.getenv("ROCKY_APP_ENV", "development").strip().lower()
 HARDWARE_METRICS_TOKEN = os.getenv("ROCKY_HARDWARE_METRICS_TOKEN", "").strip()
+GRANITE_AUTH_TOKEN = os.getenv("ROCKY_GRANITE_TOKEN", "").strip()
+MAX_CONCURRENT_INFERENCES = max(
+    1,
+    int(os.getenv("ROCKY_GRANITE_MAX_CONCURRENT", "1")),
+)
+QUEUE_WAIT_SECONDS = max(
+    0.0,
+    float(os.getenv("ROCKY_GRANITE_QUEUE_WAIT_SECONDS", "1")),
+)
+INFERENCE_GATE = threading.BoundedSemaphore(MAX_CONCURRENT_INFERENCES)
+
+if APP_ENV == "production" and len(GRANITE_AUTH_TOKEN) < 32:
+    raise RuntimeError(
+        "ROCKY_GRANITE_TOKEN must contain at least 32 characters in production."
+    )
+
+
+def granite_request_is_authorized():
+    if GRANITE_AUTH_TOKEN:
+        provided_token = request.headers.get("X-Rocky-Granite-Token", "")
+        return bool(provided_token) and secrets.compare_digest(
+            provided_token,
+            GRANITE_AUTH_TOKEN,
+        )
+    return APP_ENV != "production"
+
+
+def granite_authentication_error():
+    if GRANITE_AUTH_TOKEN:
+        return jsonify({
+            "error": {
+                "type": "authentication_error",
+                "message": "Granite authentication failed.",
+            }
+        }), 401
+    return jsonify({
+        "error": {
+            "type": "service_unavailable",
+            "message": "Granite authentication is not configured.",
+        }
+    }), 503
 
 
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"ok": True, "service": "granite-llm-server"}), 200
+
+
+@app.route("/ready", methods=["GET"])
+def ready():
+    if not granite_request_is_authorized():
+        return granite_authentication_error()
+
+    model = os.getenv("OLLAMA_MODEL", "gemma4:latest").strip() or "gemma4:latest"
+    ready_now = check_ollama_readiness(model)
+    return jsonify({
+        "ok": ready_now,
+        "service": "granite-llm-server",
+        "model": model,
+        "dependencies": {"ollama": ready_now, "model_available": ready_now},
+    }), 200 if ready_now else 503
 
 
 @app.route("/hardware", methods=["GET"])
@@ -47,6 +104,9 @@ def hardware():
 @app.route("/generate", methods=["POST"])
 
 def generate():
+    if not granite_request_is_authorized():
+        return granite_authentication_error()
+
     payload = request.get_json(silent=True)
 
     if payload is None:
@@ -71,6 +131,15 @@ def generate():
         }), 400
 
     think = reasoning["effort"] if reasoning is not None else None
+
+    acquired = INFERENCE_GATE.acquire(timeout=QUEUE_WAIT_SECONDS)
+    if not acquired:
+        return jsonify({
+            "error": {
+                "type": "model_busy",
+                "message": "The model is busy. Try again shortly.",
+            }
+        }), 503, {"Retry-After": "2"}
 
     begin_inference()
     try:
@@ -98,6 +167,7 @@ def generate():
         }), 502
     finally:
         end_inference()
+        INFERENCE_GATE.release()
     
     if reasoning is not None and not ollama_result["thinking_present"]:
         return jsonify({

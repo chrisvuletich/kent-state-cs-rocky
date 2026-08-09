@@ -1,7 +1,9 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
+	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import {
+		analyticsExportUrl,
 		fetchAnalyticsBreakdown,
 		fetchAnalyticsCurrent,
 		fetchAnalyticsHardware,
@@ -11,6 +13,18 @@
 		fetchAnalyticsTimeseries,
 		updateAnalyticsReview
 	} from '$lib/api/analytics';
+	import {
+		analyticsFilterCount,
+		analyticsFilterSignature,
+		analyticsOperations,
+		analyticsOutcomes,
+		analyticsUrl,
+		defaultAnalyticsFilters,
+		parseAnalyticsFilters,
+		type AnalyticsFilterState,
+		type AnalyticsOperation,
+		type AnalyticsReviewFilter
+	} from '$lib/analytics/filters';
 	import HardwareCorrelationChart from '$lib/components/analytics/HardwareCorrelationChart.svelte';
 	import ThroughputChart from '$lib/components/analytics/ThroughputChart.svelte';
 	import ViewShell from '$lib/components/ViewShell.svelte';
@@ -81,8 +95,17 @@
 	let lastUpdated: Date | null = null;
 	let search = '';
 	let outcomeFilter: AnalyticsOutcome | 'active' | '' = '';
-	let reviewFilter: 'all' | 'flagged' | AnalyticsReviewStatus = 'all';
+	let reviewFilter: AnalyticsReviewFilter = 'all';
+	let userFilter = '';
+	let courseFilter = '';
+	let keyFilter = '';
+	let modelFilter = '';
+	let operationFilter: AnalyticsOperation | '' = '';
+	let sourceFilter = '';
 	let requestListLoading = false;
+	let exportLoading: 'json' | 'csv' | null = null;
+	let exportMessage: string | null = null;
+	let linkMessage: string | null = null;
 	let mobilePanel: 'breakdown' | 'requests' = 'breakdown';
 	let loadRevision = 0;
 	let reviewFlagged = false;
@@ -94,46 +117,101 @@
 	let reviewError: string | null = null;
 	let reviewBaseline = '';
 	let detailRevision = 0;
+	let appliedFilterSignature = '';
+	let currentUrlFilterState: AnalyticsFilterState = defaultAnalyticsFilters;
+	let currentAnalyticsDataSignature = '';
 
 	$: filteredBreakdown = filterBreakdown(breakdown?.rows ?? [], search);
 	$: reviewDirty = Boolean(selectedRequest) && reviewSignature() !== reviewBaseline;
+	$: currentUrlFilterState = {
+		window: selectedWindow,
+		dimension: selectedDimension,
+		user: userFilter.trim(),
+		course: courseFilter.trim(),
+		key: keyFilter.trim(),
+		model: modelFilter.trim(),
+		operation: operationFilter,
+		outcome: outcomeFilter,
+		source: sourceFilter.trim(),
+		review: reviewFilter,
+		requestId: selectedRequestId || ''
+	};
+	$: currentAnalyticsDataSignature = JSON.stringify({
+		...currentUrlFilterState,
+		requestId: ''
+	});
+	$: activeFilterCount = analyticsFilterCount(currentUrlFilterState);
+	$: filtersDirty = appliedFilterSignature !== currentAnalyticsDataSignature;
 
 	onMount(() => {
-		restoreUrlState();
+		const initialState = parseAnalyticsFilters(new URLSearchParams(window.location.search));
+		applyUrlState(initialState);
+		appliedFilterSignature = analyticsDataSignature(initialState);
+		const canonicalUrl = analyticsUrl(new URL(window.location.href), filterState());
+		if (canonicalUrl.href !== window.location.href) {
+			void goto(canonicalUrl, { replaceState: true, noScroll: true, keepFocus: true });
+		}
 		void loadAnalytics();
+		const handlePopState = () => {
+			const previousSignature = analyticsFilterSignature(filterState());
+			const nextState = parseAnalyticsFilters(new URLSearchParams(window.location.search));
+			applyUrlState(nextState);
+			appliedFilterSignature = analyticsDataSignature(nextState);
+			detailDismissed = !nextState.requestId;
+			if (analyticsFilterSignature(nextState) !== previousSignature) void loadAnalytics();
+		};
+		window.addEventListener('popstate', handlePopState);
 		const interval = window.setInterval(() => {
 			if (document.visibilityState === 'visible') void loadAnalytics(true);
 		}, 30_000);
-		return () => window.clearInterval(interval);
+		return () => {
+			window.clearInterval(interval);
+			window.removeEventListener('popstate', handlePopState);
+		};
 	});
 
-	function restoreUrlState(): void {
-		if (!browser) return;
-		const params = new URLSearchParams(window.location.search);
-		const requestedWindow = params.get('analytics_window');
-		const requestedDimension = params.get('analytics_dimension');
-		const requestId = params.get('analytics_request');
-		const requestedOutcome = params.get('analytics_outcome');
-		const requestedReview = params.get('analytics_review');
-		if (analyticsWindows.includes(requestedWindow as AnalyticsWindow)) selectedWindow = requestedWindow as AnalyticsWindow;
-		if (analyticsDimensions.includes(requestedDimension as AnalyticsDimension)) selectedDimension = requestedDimension as AnalyticsDimension;
-		if (requestId?.trim()) selectedRequestId = requestId.trim();
-		if (['completed', 'rejected', 'failed', 'timed_out', 'active'].includes(requestedOutcome || '')) outcomeFilter = requestedOutcome as AnalyticsOutcome | 'active';
-		if (requestedReview === 'all' || requestedReview === 'flagged' || analyticsReviewStatuses.includes(requestedReview as AnalyticsReviewStatus)) reviewFilter = requestedReview as typeof reviewFilter;
+	function filterState(): AnalyticsFilterState {
+		return {
+			window: selectedWindow,
+			dimension: selectedDimension,
+			user: userFilter.trim(),
+			course: courseFilter.trim(),
+			key: keyFilter.trim(),
+			model: modelFilter.trim(),
+			operation: operationFilter,
+			outcome: outcomeFilter,
+			source: sourceFilter.trim(),
+			review: reviewFilter,
+			requestId: selectedRequestId || ''
+		};
 	}
 
-	function syncUrlState(): void {
+	function applyUrlState(state: AnalyticsFilterState): void {
+		selectedWindow = state.window;
+		selectedDimension = state.dimension;
+		userFilter = state.user;
+		courseFilter = state.course;
+		keyFilter = state.key;
+		modelFilter = state.model;
+		operationFilter = state.operation;
+		outcomeFilter = state.outcome;
+		sourceFilter = state.source;
+		reviewFilter = state.review;
+		selectedRequestId = state.requestId || null;
+		selectedRequest = null;
+	}
+
+	function analyticsDataSignature(state: AnalyticsFilterState = filterState()): string {
+		return JSON.stringify({ ...state, requestId: '' });
+	}
+
+	async function syncUrlState(replaceState = false): Promise<void> {
 		if (!browser) return;
-		const url = new URL(window.location.href);
-		url.searchParams.set('analytics_window', selectedWindow);
-		url.searchParams.set('analytics_dimension', selectedDimension);
-		if (selectedRequestId) url.searchParams.set('analytics_request', selectedRequestId);
-		else url.searchParams.delete('analytics_request');
-		if (outcomeFilter) url.searchParams.set('analytics_outcome', outcomeFilter);
-		else url.searchParams.delete('analytics_outcome');
-		if (reviewFilter !== 'all') url.searchParams.set('analytics_review', reviewFilter);
-		else url.searchParams.delete('analytics_review');
-		window.history.replaceState(window.history.state, '', url);
+		await goto(analyticsUrl(new URL(window.location.href), filterState()), {
+			replaceState,
+			noScroll: true,
+			keepFocus: true
+		});
 	}
 
 	async function loadAnalytics(background = false): Promise<void> {
@@ -142,14 +220,16 @@
 		else isLoading = true;
 		error = null;
 		try {
-			const [nextCurrent, nextSummary, nextSeries, nextHardware, nextBreakdown, nextRecent] = await Promise.all([
-				fetchAnalyticsCurrent(),
-				fetchAnalyticsSummary(selectedWindow),
-				fetchAnalyticsTimeseries(selectedWindow),
-				fetchAnalyticsHardware(selectedWindow),
-				fetchAnalyticsBreakdown(selectedWindow, selectedDimension),
-				fetchAnalyticsRequests(selectedWindow, requestFilters())
-			]);
+			const filters = requestFilters();
+			const [nextCurrent, nextSummary, nextSeries, nextHardware, nextBreakdown, nextRecent] =
+				await Promise.all([
+					fetchAnalyticsCurrent(),
+					fetchAnalyticsSummary(selectedWindow, filters),
+					fetchAnalyticsTimeseries(selectedWindow, filters),
+					fetchAnalyticsHardware(selectedWindow, filters),
+					fetchAnalyticsBreakdown(selectedWindow, selectedDimension, filters),
+					fetchAnalyticsRequests(selectedWindow, filters)
+				]);
 			if (revision !== loadRevision) return;
 			current = nextCurrent;
 			summary = nextSummary;
@@ -157,6 +237,7 @@
 			hardware = nextHardware;
 			breakdown = nextBreakdown;
 			recent = nextRecent;
+			appliedFilterSignature = analyticsDataSignature();
 			lastUpdated = new Date(nextCurrent.generated_at);
 			if (selectedRequestId) {
 				if (!reviewDirty && !reviewSaving && !detailLoading) {
@@ -183,7 +264,7 @@
 		selectedRequestId = null;
 		selectedRequest = null;
 		detailDismissed = false;
-		syncUrlState();
+		await syncUrlState();
 		await loadAnalytics();
 	}
 
@@ -191,9 +272,13 @@
 		if (dimension === selectedDimension) return;
 		selectedDimension = dimension;
 		search = '';
-		syncUrlState();
+		await syncUrlState();
 		try {
-			breakdown = await fetchAnalyticsBreakdown(selectedWindow, selectedDimension);
+			breakdown = await fetchAnalyticsBreakdown(
+				selectedWindow,
+				selectedDimension,
+				requestFilters()
+			);
 		} catch (caught) {
 			error = caught instanceof Error ? caught.message : 'Unable to load this breakdown.';
 		}
@@ -208,7 +293,7 @@
 		reviewBaseline = '';
 		detailDismissed = false;
 		detailLoading = true;
-		if (updateUrl) syncUrlState();
+		if (updateUrl) await syncUrlState();
 		try {
 			const detail = await fetchAnalyticsRequest(requestId);
 			if (selectedRequestId === requestId && revision === detailRevision) {
@@ -224,7 +309,13 @@
 
 	function requestFilters(): AnalyticsRequestFilters {
 		return {
+			user: userFilter.trim(),
+			course: courseFilter.trim(),
+			key: keyFilter.trim(),
+			model: modelFilter.trim(),
+			operation: operationFilter,
 			outcome: outcomeFilter,
+			source: sourceFilter.trim(),
 			flagged: reviewFilter === 'flagged' ? true : undefined,
 			reviewStatus: reviewFilter !== 'all' && reviewFilter !== 'flagged' ? reviewFilter : ''
 		};
@@ -232,13 +323,91 @@
 
 	async function refreshRequestQueue(): Promise<void> {
 		requestListLoading = true;
-		syncUrlState();
 		try {
 			recent = await fetchAnalyticsRequests(selectedWindow, requestFilters());
 		} catch (caught) {
 			error = caught instanceof Error ? caught.message : 'Unable to refresh the review queue.';
 		} finally {
 			requestListLoading = false;
+		}
+	}
+
+	async function applyFilters(): Promise<void> {
+		if (!canDiscardReview()) return;
+		detailRevision += 1;
+		selectedRequestId = null;
+		selectedRequest = null;
+		detailDismissed = false;
+		exportMessage = null;
+		await syncUrlState();
+		await loadAnalytics();
+	}
+
+	async function clearFilters(): Promise<void> {
+		if (!canDiscardReview()) return;
+		const preservedWindow = selectedWindow;
+		const preservedDimension = selectedDimension;
+		applyUrlState({
+			...defaultAnalyticsFilters,
+			window: preservedWindow,
+			dimension: preservedDimension
+		});
+		detailDismissed = false;
+		exportMessage = null;
+		await syncUrlState();
+		await loadAnalytics();
+	}
+
+	async function copyAnalyticsLink(): Promise<void> {
+		if (!browser) return;
+		if (filtersDirty) {
+			linkMessage = 'Apply the changed filters before copying this view.';
+			return;
+		}
+		try {
+			await navigator.clipboard.writeText(
+				analyticsUrl(new URL(window.location.href), filterState()).href
+			);
+			linkMessage = 'Analytics link copied.';
+		} catch {
+			linkMessage = 'Unable to copy the link. Copy it from the address bar instead.';
+		}
+		window.setTimeout(() => (linkMessage = null), 2500);
+	}
+
+	async function downloadExport(format: 'json' | 'csv'): Promise<void> {
+		if (!browser || exportLoading) return;
+		if (filtersDirty) {
+			exportMessage = 'Apply the changed filters before exporting this view.';
+			return;
+		}
+		exportLoading = format;
+		exportMessage = null;
+		try {
+			const response = await fetch(analyticsExportUrl(selectedWindow, format, requestFilters()), {
+				cache: 'no-store'
+			});
+			if (!response.ok) {
+				const payload = (await response.json().catch(() => null)) as { error?: unknown } | null;
+				throw new Error(
+					typeof payload?.error === 'string' ? payload.error : 'Unable to export analytics.'
+				);
+			}
+			const blob = await response.blob();
+			const disposition = response.headers.get('content-disposition') || '';
+			const filename =
+				disposition.match(/filename="?([^";]+)"?/i)?.[1] || `rocky-analytics.${format}`;
+			const objectUrl = URL.createObjectURL(blob);
+			const anchor = document.createElement('a');
+			anchor.href = objectUrl;
+			anchor.download = filename;
+			anchor.click();
+			URL.revokeObjectURL(objectUrl);
+			exportMessage = `${format.toUpperCase()} export downloaded.`;
+		} catch (caught) {
+			exportMessage = caught instanceof Error ? caught.message : 'Unable to export analytics.';
+		} finally {
+			exportLoading = null;
 		}
 	}
 
@@ -282,10 +451,11 @@
 	}
 
 	async function saveReview(): Promise<void> {
-		if (!selectedRequestId || reviewSaving) return;
+		if (!selectedRequestId || !selectedRequest || reviewSaving) return;
 		const requestId = selectedRequestId;
+		const requestToReview = selectedRequest;
 		const submittedReview = {
-			version: selectedRequest.review?.version ?? 0,
+			version: requestToReview.review?.version ?? 0,
 			flagged: reviewFlagged,
 			flag_reasons: [...reviewReasons],
 			status: reviewStatus,
@@ -316,7 +486,7 @@
 		selectedRequest = null;
 		reviewBaseline = '';
 		detailDismissed = true;
-		syncUrlState();
+		void syncUrlState();
 	}
 
 	function handleRequestKey(event: KeyboardEvent, requestId: string): void {
@@ -328,7 +498,9 @@
 
 	function filterBreakdown(rows: AnalyticsBreakdownRow[], value: string): AnalyticsBreakdownRow[] {
 		const normalized = value.trim().toLowerCase();
-		return normalized ? rows.filter((row) => `${row.label} ${row.id}`.toLowerCase().includes(normalized)) : rows;
+		return normalized
+			? rows.filter((row) => `${row.label} ${row.id}`.toLowerCase().includes(normalized))
+			: rows;
 	}
 
 	function number(value: number | null | undefined, digits = 0): string {
@@ -352,17 +524,29 @@
 	}
 
 	function userLabel(requestRow: AnalyticsRequestSummary | AnalyticsRequestDetail): string {
-		return requestRow.actor?.name || requestRow.actor?.email || requestRow.actor?.user_id || 'Unattributed';
+		return (
+			requestRow.actor?.name ||
+			requestRow.actor?.email ||
+			requestRow.actor?.user_id ||
+			'Unattributed'
+		);
 	}
 
 	function courseLabel(requestRow: AnalyticsRequestSummary | AnalyticsRequestDetail): string {
-		return requestRow.course?.course_code || (requestRow.course?.course_id ? String(requestRow.course.course_id) : '—');
+		return (
+			requestRow.course?.course_code ||
+			(requestRow.course?.course_id ? String(requestRow.course.course_id) : '—')
+		);
 	}
 
 	function contentText(value: unknown): string {
 		if (typeof value === 'string') return value.trim() ? value : 'Not recorded.';
 		if (value === null || value === undefined) return 'Not recorded.';
-		try { return JSON.stringify(value, null, 2); } catch { return 'Content could not be displayed.'; }
+		try {
+			return JSON.stringify(value, null, 2);
+		} catch {
+			return 'Content could not be displayed.';
+		}
 	}
 
 	function outcomeLabel(value: string): string {
@@ -375,20 +559,120 @@
 		<div class="analytics-command-bar">
 			<div class="analytics-window-control" aria-label="Analytics time window">
 				{#each analyticsWindows as windowValue}
-					<button type="button" class:active={selectedWindow === windowValue} onclick={() => changeWindow(windowValue)}>{windowValue}</button>
+					<button
+						type="button"
+						class:active={selectedWindow === windowValue}
+						onclick={() => changeWindow(windowValue)}>{windowValue}</button
+					>
 				{/each}
 			</div>
 			<div class="analytics-live-state" class:stale={Boolean(error && summary)} aria-live="polite">
 				<span class="live-dot"></span>
 				<span>{error && summary ? 'Stale data' : isRefreshing ? 'Refreshing' : 'Live'}</span>
 				<span class="live-divider" aria-hidden="true"></span>
-				<span>Updated {lastUpdated && !Number.isNaN(lastUpdated.getTime()) ? lastUpdated.toLocaleTimeString() : '—'}</span>
+				<span
+					>Updated {lastUpdated && !Number.isNaN(lastUpdated.getTime())
+						? lastUpdated.toLocaleTimeString()
+						: '—'}</span
+				>
 			</div>
-			<button class="analytics-refresh" type="button" disabled={isRefreshing} onclick={() => loadAnalytics()}>
-				<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8.1 8.1 0 1 0 2 5.3M20 4v7h-7"></path></svg>
+			<button
+				class="analytics-refresh"
+				type="button"
+				disabled={isRefreshing}
+				onclick={() => loadAnalytics()}
+			>
+				<svg viewBox="0 0 24 24" aria-hidden="true"
+					><path d="M20 11a8.1 8.1 0 1 0 2 5.3M20 4v7h-7"></path></svg
+				>
 				Refresh
 			</button>
+			<button
+				class="analytics-refresh"
+				type="button"
+				disabled={filtersDirty}
+				title={filtersDirty ? 'Apply the changed filters first' : 'Copy this analytics view'}
+				onclick={copyAnalyticsLink}>Copy link</button
+			>
+			<button
+				class="analytics-refresh"
+				type="button"
+				disabled={Boolean(exportLoading) || filtersDirty}
+				onclick={() => downloadExport('json')}
+				>{exportLoading === 'json' ? 'Exporting…' : 'Export JSON'}</button
+			>
+			<button
+				class="analytics-refresh"
+				type="button"
+				disabled={Boolean(exportLoading) || filtersDirty}
+				onclick={() => downloadExport('csv')}
+				>{exportLoading === 'csv' ? 'Exporting…' : 'Export CSV'}</button
+			>
 		</div>
+
+		{#if linkMessage || exportMessage}
+			<p class="analytics-action-message" role="status">{linkMessage || exportMessage}</p>
+		{/if}
+
+		<details class="analytics-filter-panel" open={activeFilterCount > 0}>
+			<summary>
+				<span>Filters</span>
+				<small
+					>{filtersDirty
+						? 'Changes not applied'
+						: activeFilterCount
+							? `${activeFilterCount} active`
+							: 'All telemetry'}</small
+				>
+			</summary>
+			<form
+				class="analytics-filter-grid"
+				onsubmit={(event) => {
+					event.preventDefault();
+					void applyFilters();
+				}}
+			>
+				<label><span>User ID or email</span><input bind:value={userFilter} maxlength="256" /></label
+				>
+				<label
+					><span>Course ID or code</span><input bind:value={courseFilter} maxlength="256" /></label
+				>
+				<label
+					><span>API key ID or name</span><input bind:value={keyFilter} maxlength="256" /></label
+				>
+				<label><span>Model</span><input bind:value={modelFilter} maxlength="256" /></label>
+				<label
+					><span>Operation</span><select bind:value={operationFilter}
+						><option value="">All operations</option>{#each analyticsOperations as operation}<option
+								value={operation}>{operation}</option
+							>{/each}</select
+					></label
+				>
+				<label
+					><span>Outcome</span><select bind:value={outcomeFilter}
+						><option value="">All outcomes</option>{#each analyticsOutcomes as outcome}<option
+								value={outcome}>{outcomeLabel(outcome)}</option
+							>{/each}</select
+					></label
+				>
+				<label><span>Request source</span><input bind:value={sourceFilter} maxlength="128" /></label
+				>
+				<label
+					><span>Review</span><select bind:value={reviewFilter}
+						><option value="all">All requests</option><option value="flagged">Flagged</option
+						><option value="unreviewed">Unreviewed</option><option value="in_review"
+							>In review</option
+						><option value="resolved">Resolved</option></select
+					></label
+				>
+				<div class="analytics-filter-actions">
+					<button type="submit">Apply filters</button>
+					<button type="button" disabled={activeFilterCount === 0} onclick={clearFilters}
+						>Clear filters</button
+					>
+				</div>
+			</form>
+		</details>
 
 		{#if error}
 			<div class="analytics-alert" role="alert">
@@ -398,105 +682,365 @@
 		{/if}
 
 		{#if isLoading && !summary}
-			<div class="analytics-loading" aria-live="polite">Loading telemetry for the last {windowLabels[selectedWindow]}…</div>
+			<div class="analytics-loading" aria-live="polite">
+				Loading telemetry for the last {windowLabels[selectedWindow]}…
+			</div>
 		{:else if summary && series && hardware && current && breakdown && recent}
 			<section class="analytics-kpis" aria-label="Telemetry overview">
-				<article><span>Requests</span><strong>{number(summary.requests)}</strong><small>{number(summary.rates.average_requests_per_minute, 2)} avg RPM</small></article>
-				<article><span>Tokens</span><strong class="gold-value">{number(summary.usage.total_tokens)}</strong><small>{number(summary.rates.average_tokens_per_minute, 2)} avg TPM</small></article>
-				<article><span>Success rate</span><strong class="success-value">{percent(summary.success_rate)}</strong><small>{number(summary.outcomes.completed)} completed</small></article>
-				<article><span>P95 latency</span><strong>{milliseconds(summary.latency_ms.p95)}</strong><small>{number(summary.latency_ms.samples)} samples</small></article>
+				<article>
+					<span>API requests</span><strong>{number(summary.requests)}</strong><small
+						>{number(summary.rates.average_requests_per_minute, 2)} avg RPM</small
+					>
+				</article>
+				<article>
+					<span>Tokens</span><strong class="gold-value">{number(summary.usage.total_tokens)}</strong
+					><small>{number(summary.rates.average_tokens_per_minute, 2)} avg TPM</small>
+				</article>
+				<article>
+					<span>Generation success</span><strong class="success-value"
+						>{percent(summary.success_rate)}</strong
+					><small>{number(summary.generation.outcomes.completed)} completed</small>
+				</article>
+				<article>
+					<span>Generation P95</span><strong>{milliseconds(summary.latency_ms.p95)}</strong><small
+						>{number(summary.generation.inference_dispatches)} dispatched</small
+					>
+				</article>
 			</section>
 
 			<section class="analytics-primary-grid">
 				<div class="analytics-chart-panel">
-					<ThroughputChart buckets={series.buckets} windowLabel={`Last ${windowLabels[selectedWindow]}`} />
+					<ThroughputChart
+						buckets={series.buckets}
+						windowLabel={`Last ${windowLabels[selectedWindow]}`}
+					/>
 				</div>
 				<aside class="analytics-performance" aria-labelledby="model-performance-heading">
 					<h2 id="model-performance-heading">Model performance</h2>
 					<dl class="performance-list">
-						<div><dt>Generation tokens/sec</dt><dd>{number(summary.model_performance.generation_tokens_per_second, 2)}</dd></div>
-						<div><dt>Prompt tokens/sec</dt><dd>{number(summary.model_performance.prompt_tokens_per_second, 2)}</dd></div>
-						<div><dt>Average generation time</dt><dd>{milliseconds(summary.model_performance.generation_duration.average_ms)}</dd></div>
-						<div><dt>Active requests</dt><dd>{number(current.active_requests)}</dd></div>
+						<div>
+							<dt>Generation tokens/sec</dt>
+							<dd>{number(summary.model_performance.generation_tokens_per_second, 2)}</dd>
+						</div>
+						<div>
+							<dt>Prompt tokens/sec</dt>
+							<dd>{number(summary.model_performance.prompt_tokens_per_second, 2)}</dd>
+						</div>
+						<div>
+							<dt>Average generation time</dt>
+							<dd>{milliseconds(summary.model_performance.generation_duration.average_ms)}</dd>
+						</div>
+						<div>
+							<dt>Active API requests</dt>
+							<dd>{number(current.active_requests)}</dd>
+						</div>
 					</dl>
 					<dl class="outcome-list">
-						<div class="completed"><dt>Completed</dt><dd>{number(summary.outcomes.completed)}</dd></div>
-						<div class="failed"><dt>Failed</dt><dd>{number(summary.outcomes.failed)}</dd></div>
-						<div class="timed-out"><dt>Timed out</dt><dd>{number(summary.outcomes.timed_out)}</dd></div>
-						<div class="rejected"><dt>Rejected</dt><dd>{number(summary.outcomes.rejected)}</dd></div>
+						<div class="completed">
+							<dt>Completed</dt>
+							<dd>{number(summary.generation.outcomes.completed)}</dd>
+						</div>
+						<div class="failed">
+							<dt>Failed</dt>
+							<dd>{number(summary.generation.outcomes.failed)}</dd>
+						</div>
+						<div class="timed-out">
+							<dt>Timed out</dt>
+							<dd>{number(summary.generation.outcomes.timed_out)}</dd>
+						</div>
+						<div class="rejected">
+							<dt>Rejected</dt>
+							<dd>{number(summary.generation.outcomes.rejected)}</dd>
+						</div>
 					</dl>
-					<p class="performance-model">Model: <strong>{current.last_model || 'Not reported'}</strong></p>
+					<p class="performance-model">
+						Model: <strong>{current.last_model || 'Not reported'}</strong>
+					</p>
 				</aside>
 			</section>
 
 			<section class="analytics-hardware-panel">
-				<HardwareCorrelationChart data={hardware} windowLabel={`Last ${windowLabels[selectedWindow]}`} activeRequests={current.active_requests} />
+				<HardwareCorrelationChart
+					data={hardware}
+					windowLabel={`Last ${windowLabels[selectedWindow]}`}
+					activeRequests={current.active_requests}
+				/>
 			</section>
 
 			<div class="analytics-mobile-tabs" role="tablist" aria-label="Analytics detail view">
-				<button type="button" role="tab" aria-selected={mobilePanel === 'breakdown'} class:active={mobilePanel === 'breakdown'} onclick={() => (mobilePanel = 'breakdown')}>Breakdown</button>
-				<button type="button" role="tab" aria-selected={mobilePanel === 'requests'} class:active={mobilePanel === 'requests'} onclick={() => (mobilePanel = 'requests')}>Review queue</button>
+				<button
+					type="button"
+					role="tab"
+					aria-selected={mobilePanel === 'breakdown'}
+					class:active={mobilePanel === 'breakdown'}
+					onclick={() => (mobilePanel = 'breakdown')}>Breakdown</button
+				>
+				<button
+					type="button"
+					role="tab"
+					aria-selected={mobilePanel === 'requests'}
+					class:active={mobilePanel === 'requests'}
+					onclick={() => (mobilePanel = 'requests')}>Review queue</button
+				>
 			</div>
 
-			<section class="analytics-lower-grid" class:show-breakdown={mobilePanel === 'breakdown'} class:show-requests={mobilePanel === 'requests'}>
+			<section
+				class="analytics-lower-grid"
+				class:show-breakdown={mobilePanel === 'breakdown'}
+				class:show-requests={mobilePanel === 'requests'}
+			>
 				<div class="analytics-breakdown-panel">
-					<div class="panel-heading"><h2>Breakdown</h2><span>{number(breakdown.rows.length)} groups</span></div>
+					<div class="panel-heading">
+						<h2>Breakdown</h2>
+						<span>{number(breakdown.rows.length)} groups</span>
+					</div>
 					<div class="dimension-tabs" aria-label="Breakdown dimension">
 						{#each analyticsDimensions as dimension}
-							<button type="button" class:active={selectedDimension === dimension} onclick={() => changeDimension(dimension)}>{dimensionLabels[dimension]}</button>
+							<button
+								type="button"
+								class:active={selectedDimension === dimension}
+								onclick={() => changeDimension(dimension)}>{dimensionLabels[dimension]}</button
+							>
 						{/each}
 					</div>
 					<label class="breakdown-search">
-						<span class="sr-only">Search {dimensionLabels[selectedDimension].toLowerCase()} breakdown</span>
-						<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-4-4"></path></svg>
-						<input bind:value={search} type="search" placeholder={`Search ${dimensionLabels[selectedDimension].toLowerCase()}…`} />
+						<span class="sr-only"
+							>Search {dimensionLabels[selectedDimension].toLowerCase()} breakdown</span
+						>
+						<svg viewBox="0 0 24 24" aria-hidden="true"
+							><circle cx="11" cy="11" r="7"></circle><path d="m20 20-4-4"></path></svg
+						>
+						<input
+							bind:value={search}
+							type="search"
+							placeholder={`Search ${dimensionLabels[selectedDimension].toLowerCase()}…`}
+						/>
 					</label>
 					<div class="analytics-table-scroll breakdown-table-scroll">
-						<table><thead><tr><th>{dimensionLabels[selectedDimension]}</th><th>Requests</th><th>Tokens</th><th>Success</th><th>P95</th></tr></thead>
-						<tbody>{#if filteredBreakdown.length === 0}<tr><td colspan="5" class="table-empty">No matching telemetry.</td></tr>{:else}{#each filteredBreakdown as row (row.id)}<tr><td title={row.label}><strong>{row.label}</strong></td><td>{number(row.requests)}</td><td>{number(row.usage.total_tokens)}</td><td>{percent(row.success_rate)}</td><td>{milliseconds(row.latency_ms.p95)}</td></tr>{/each}{/if}</tbody></table>
+						<table>
+							<thead
+								><tr
+									><th>{dimensionLabels[selectedDimension]}</th><th>Requests</th><th>Tokens</th><th
+										>Success</th
+									><th>P95</th></tr
+								></thead
+							>
+							<tbody
+								>{#if filteredBreakdown.length === 0}<tr
+										><td colspan="5" class="table-empty">No matching telemetry.</td></tr
+									>{:else}{#each filteredBreakdown as row (row.id)}<tr
+											><td title={row.label}><strong>{row.label}</strong></td><td
+												>{number(row.requests)}</td
+											><td>{number(row.usage.total_tokens)}</td><td>{percent(row.success_rate)}</td
+											><td>{milliseconds(row.latency_ms.p95)}</td></tr
+										>{/each}{/if}</tbody
+							>
+						</table>
 					</div>
 				</div>
 
 				<div class="analytics-requests-panel">
-					<div class="panel-heading"><h2>Review queue</h2><span>{requestListLoading ? 'Refreshing…' : `${number(recent.matched)} in window`}</span></div>
+					<div class="panel-heading">
+						<h2>Review queue</h2>
+						<span>{requestListLoading ? 'Refreshing…' : `${number(recent.matched)} in window`}</span
+						>
+					</div>
 					<div class="request-filters">
-						<label><span>Outcome</span><select bind:value={outcomeFilter} onchange={() => refreshRequestQueue()}><option value="">All outcomes</option><option value="completed">Completed</option><option value="rejected">Rejected</option><option value="failed">Failed</option><option value="timed_out">Timed out</option><option value="active">Active</option></select></label>
-						<label><span>Review</span><select bind:value={reviewFilter} onchange={() => refreshRequestQueue()}><option value="all">All requests</option><option value="flagged">Flagged</option><option value="unreviewed">Unreviewed</option><option value="in_review">In review</option><option value="resolved">Resolved</option></select></label>
+						<label
+							><span>Outcome</span><select
+								bind:value={outcomeFilter}
+								onchange={() => applyFilters()}
+								><option value="">All outcomes</option><option value="completed">Completed</option
+								><option value="rejected">Rejected</option><option value="failed">Failed</option
+								><option value="timed_out">Timed out</option><option value="active">Active</option
+								></select
+							></label
+						>
+						<label
+							><span>Review</span><select bind:value={reviewFilter} onchange={() => applyFilters()}
+								><option value="all">All requests</option><option value="flagged">Flagged</option
+								><option value="unreviewed">Unreviewed</option><option value="in_review"
+									>In review</option
+								><option value="resolved">Resolved</option></select
+							></label
+						>
 					</div>
 					<div class="analytics-table-scroll requests-table-scroll">
-						<table><thead><tr><th>Time</th><th>User</th><th>Course</th><th>Outcome</th><th>Tokens</th><th>Latency</th></tr></thead>
-						<tbody>{#if recent.requests.length === 0}<tr><td colspan="6" class="table-empty">No requests match these filters.</td></tr>{:else}{#each recent.requests as requestRow (requestRow.request_id)}<tr class:selected={selectedRequestId === requestRow.request_id} tabindex="0" role="button" aria-label={`Inspect request ${requestRow.request_id}`} onclick={() => selectRequest(requestRow.request_id)} onkeydown={(event) => handleRequestKey(event, requestRow.request_id)}><td data-label="Time">{dateTime(requestRow.received_at)}</td><td data-label="User" title={userLabel(requestRow)}>{#if requestRow.review?.flagged}<span class="review-flag" aria-label="Flagged for review" title="Flagged for review"></span>{/if}{userLabel(requestRow)}</td><td data-label="Course">{courseLabel(requestRow)}</td><td data-label="Outcome"><span class={`outcome-text ${requestRow.outcome}`}>{outcomeLabel(requestRow.outcome)}</span></td><td data-label="Tokens">{number(requestRow.usage?.total_tokens)}</td><td data-label="Latency">{milliseconds(requestRow.performance?.request_latency_ms)}</td></tr>{/each}{/if}</tbody></table>
+						<table>
+							<thead
+								><tr
+									><th>Time</th><th>User</th><th>Course</th><th>Outcome</th><th>Tokens</th><th
+										>Latency</th
+									></tr
+								></thead
+							>
+							<tbody
+								>{#if recent.requests.length === 0}<tr
+										><td colspan="6" class="table-empty">No requests match these filters.</td></tr
+									>{:else}{#each recent.requests as requestRow (requestRow.request_id)}<tr
+											class:selected={selectedRequestId === requestRow.request_id}
+											tabindex="0"
+											role="button"
+											aria-label={`Inspect request ${requestRow.request_id}`}
+											onclick={() => selectRequest(requestRow.request_id)}
+											onkeydown={(event) => handleRequestKey(event, requestRow.request_id)}
+											><td data-label="Time">{dateTime(requestRow.received_at)}</td><td
+												data-label="User"
+												title={userLabel(requestRow)}
+												>{#if requestRow.review?.flagged}<span
+														class="review-flag"
+														aria-label="Flagged for review"
+														title="Flagged for review"
+													></span>{/if}{userLabel(requestRow)}</td
+											><td data-label="Course">{courseLabel(requestRow)}</td><td
+												data-label="Outcome"
+												><span class={`outcome-text ${requestRow.outcome}`}
+													>{outcomeLabel(requestRow.outcome)}</span
+												></td
+											><td data-label="Tokens">{number(requestRow.usage?.total_tokens)}</td><td
+												data-label="Latency"
+												>{milliseconds(requestRow.performance?.request_latency_ms)}</td
+											></tr
+										>{/each}{/if}</tbody
+							>
+						</table>
 					</div>
 				</div>
 
-				<aside class="analytics-detail-panel" class:open={Boolean(selectedRequestId)} aria-label="Request detail">
-					<div class="panel-heading"><h2>Request detail</h2>{#if selectedRequestId}<button class="detail-close" type="button" aria-label="Close request detail" onclick={closeDetail}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"></path></svg></button>{/if}</div>
+				<aside
+					class="analytics-detail-panel"
+					class:open={Boolean(selectedRequestId)}
+					aria-label="Request detail"
+				>
+					<div class="panel-heading">
+						<h2>Request detail</h2>
+						{#if selectedRequestId}<button
+								class="detail-close"
+								type="button"
+								aria-label="Close request detail"
+								onclick={closeDetail}
+								><svg viewBox="0 0 24 24" aria-hidden="true"
+									><path d="M6 6l12 12M18 6 6 18"></path></svg
+								></button
+							>{/if}
+					</div>
 					{#if detailLoading}<div class="detail-state">Loading request…</div>
 					{:else if selectedRequest}
 						<dl class="request-meta">
-							<div><dt>Time</dt><dd>{dateTime(selectedRequest.received_at)}</dd></div>
-							<div><dt>User</dt><dd>{userLabel(selectedRequest)}</dd></div>
-							<div><dt>Course</dt><dd>{courseLabel(selectedRequest)}</dd></div>
-							<div><dt>Model</dt><dd>{selectedRequest.model?.actual_model || '—'}</dd></div>
-							<div><dt>Outcome</dt><dd><span class={`outcome-text ${selectedRequest.outcome}`}>{outcomeLabel(selectedRequest.outcome)}</span></dd></div>
-							<div><dt>Tokens</dt><dd>{number(selectedRequest.usage?.total_tokens)}</dd></div>
-							<div><dt>Latency</dt><dd>{milliseconds(selectedRequest.performance?.request_latency_ms)}</dd></div>
-							<div><dt>Request ID</dt><dd class="request-id">{selectedRequest.request_id}</dd></div>
+							<div>
+								<dt>Time</dt>
+								<dd>{dateTime(selectedRequest.received_at)}</dd>
+							</div>
+							<div>
+								<dt>User</dt>
+								<dd>{userLabel(selectedRequest)}</dd>
+							</div>
+							<div>
+								<dt>Course</dt>
+								<dd>{courseLabel(selectedRequest)}</dd>
+							</div>
+							<div>
+								<dt>Model</dt>
+								<dd>{selectedRequest.model?.actual_model || '—'}</dd>
+							</div>
+							<div>
+								<dt>Operation</dt>
+								<dd>{selectedRequest.operation || 'responses.create'}</dd>
+							</div>
+							<div>
+								<dt>Outcome</dt>
+								<dd>
+									<span class={`outcome-text ${selectedRequest.outcome}`}
+										>{outcomeLabel(selectedRequest.outcome)}</span
+									>
+								</dd>
+							</div>
+							<div>
+								<dt>Tokens</dt>
+								<dd>{number(selectedRequest.usage?.total_tokens)}</dd>
+							</div>
+							<div>
+								<dt>Latency</dt>
+								<dd>{milliseconds(selectedRequest.performance?.request_latency_ms)}</dd>
+							</div>
+							<div>
+								<dt>Request ID</dt>
+								<dd class="request-id">{selectedRequest.request_id}</dd>
+							</div>
 						</dl>
 						<section class="review-editor" aria-labelledby="review-editor-heading">
-							<div class="review-editor-heading"><h3 id="review-editor-heading">Administrative review</h3><button type="button" class="flag-toggle" class:active={reviewFlagged} role="switch" aria-checked={reviewFlagged} onclick={toggleFlagged}><span></span>{reviewFlagged ? 'Flagged' : 'Not flagged'}</button></div>
-							<label class="review-field"><span>Status</span><select bind:value={reviewStatus}>{#each analyticsReviewStatuses as status}<option value={status}>{status === 'in_review' ? 'In review' : outcomeLabel(status)}</option>{/each}</select></label>
-							<fieldset class="review-reasons"><legend>Flag reasons</legend><div>{#each analyticsReviewReasons as reason}<label><input type="checkbox" checked={reviewReasons.includes(reason)} onchange={() => toggleReviewReason(reason)} /><span>{reviewReasonLabels[reason]}</span></label>{/each}</div></fieldset>
-							<label class="review-field"><span>Review notes</span><textarea bind:value={reviewNotes} maxlength="4000" rows="4" placeholder="Record the reason for the decision or any follow-up needed."></textarea><small>{reviewNotes.length.toLocaleString()} / 4,000</small></label>
-							{#if selectedRequest.review?.reviewed_at}<p class="review-attribution">Last reviewed {dateTime(selectedRequest.review.reviewed_at)} by {selectedRequest.review.reviewed_by?.email || selectedRequest.review.reviewed_by?.user_id || 'an administrator'}.</p>{/if}
-							{#if reviewFlagged && reviewReasons.length === 0}<p class="review-validation">Choose at least one reason for a flagged request.</p>{/if}
+							<div class="review-editor-heading">
+								<h3 id="review-editor-heading">Administrative review</h3>
+								<button
+									type="button"
+									class="flag-toggle"
+									class:active={reviewFlagged}
+									role="switch"
+									aria-checked={reviewFlagged}
+									onclick={toggleFlagged}
+									><span></span>{reviewFlagged ? 'Flagged' : 'Not flagged'}</button
+								>
+							</div>
+							<label class="review-field"
+								><span>Status</span><select bind:value={reviewStatus}
+									>{#each analyticsReviewStatuses as status}<option value={status}
+											>{status === 'in_review' ? 'In review' : outcomeLabel(status)}</option
+										>{/each}</select
+								></label
+							>
+							<fieldset class="review-reasons">
+								<legend>Flag reasons</legend>
+								<div>
+									{#each analyticsReviewReasons as reason}<label
+											><input
+												type="checkbox"
+												checked={reviewReasons.includes(reason)}
+												onchange={() => toggleReviewReason(reason)}
+											/><span>{reviewReasonLabels[reason]}</span></label
+										>{/each}
+								</div>
+							</fieldset>
+							<label class="review-field"
+								><span>Review notes</span><textarea
+									bind:value={reviewNotes}
+									maxlength="4000"
+									rows="4"
+									placeholder="Record the reason for the decision or any follow-up needed."
+								></textarea><small>{reviewNotes.length.toLocaleString()} / 4,000</small></label
+							>
+							{#if selectedRequest.review?.reviewed_at}<p class="review-attribution">
+									Last reviewed {dateTime(selectedRequest.review.reviewed_at)} by {selectedRequest
+										.review.reviewed_by?.email ||
+										selectedRequest.review.reviewed_by?.user_id ||
+										'an administrator'}.
+								</p>{/if}
+							{#if reviewFlagged && reviewReasons.length === 0}<p class="review-validation">
+									Choose at least one reason for a flagged request.
+								</p>{/if}
 							{#if reviewError}<p class="review-validation" role="alert">{reviewError}</p>{/if}
 							{#if reviewMessage}<p class="review-success" role="status">{reviewMessage}</p>{/if}
-							<button type="button" class="review-save" disabled={reviewSaving || (reviewFlagged && reviewReasons.length === 0)} onclick={saveReview}>{reviewSaving ? 'Saving…' : 'Save review'}</button>
+							<button
+								type="button"
+								class="review-save"
+								disabled={reviewSaving || (reviewFlagged && reviewReasons.length === 0)}
+								onclick={saveReview}>{reviewSaving ? 'Saving…' : 'Save review'}</button
+							>
 						</section>
-						<div class="content-inspector"><h3>Prompt (sanitized)</h3><pre>{contentText(selectedRequest.request?.input_text ?? selectedRequest.request?.body)}</pre></div>
-						<div class="content-inspector"><h3>Response (sanitized)</h3><pre>{contentText(selectedRequest.response?.output_text ?? selectedRequest.response?.body)}</pre></div>
-					{:else}<div class="detail-state">Select a request to inspect its sanitized content.</div>{/if}
+						<div class="content-inspector">
+							<h3>Prompt</h3>
+							<pre>{contentText(
+									selectedRequest.request?.input_text ?? selectedRequest.request?.body
+								)}</pre>
+						</div>
+						<div class="content-inspector">
+							<h3>Response</h3>
+							<pre>{contentText(
+									selectedRequest.response?.output_text ?? selectedRequest.response?.body
+								)}</pre>
+						</div>
+					{:else}<div class="detail-state">
+							Select a request to inspect its recorded content.
+						</div>{/if}
 				</aside>
 			</section>
 		{/if}

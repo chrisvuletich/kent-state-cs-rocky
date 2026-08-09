@@ -9,19 +9,31 @@
 	};
 
 	const teamCredits: Credit[] = [
-    { name: 'Branson', title: 'Project Stakeholder', variant: 'gold' },
-    { name: 'Ian Rohrbacher', title: 'Scrum Master, Full Stack Developer', variant: 'navy' },
-    { name: 'Chris Vuletich', title: 'Front-end Developer', variant: 'gold' },
-    { name: 'Nicholas Vuletich', title: 'AI/ML Engineering Intern and Backend Developer', variant: 'navy' },
-    { name: 'Savar Shrestha', title: 'Mobile Developer, Dashboard Developer', variant: 'gold' },
-    { name: 'Rowan Ess', title: 'Backend Developer', variant: 'navy' },
-    { name: 'Ian Smaglinski', title: 'Account, Help, and Credits Page, API Key Generator Script', variant: 'gold' },
-    { name: 'Archie Horne', title: 'Artist, Presentation Director', variant: 'navy' },
-    { name: 'Zoe Eigenbrod', title: 'Developer Tools, Table Manager, Burndown Director, User Page', variant: 'gold' },
-    { name: 'Dovlet Gurbanov', title: '', variant: 'navy' },
-    { name: 'Simran Gautam', title: '', variant: 'gold' },
-    { name: 'Tasmia Jannat Shammi', title: '', variant: 'navy' },
-  ];
+		{ name: 'Branson', title: 'Project Stakeholder', variant: 'gold' },
+		{ name: 'Ian Rohrbacher', title: 'Scrum Master, Full Stack Developer', variant: 'navy' },
+		{ name: 'Chris Vuletich', title: 'Front-end Developer', variant: 'gold' },
+		{
+			name: 'Nicholas Vuletich',
+			title: 'AI/ML Engineering Intern and Backend Developer',
+			variant: 'navy'
+		},
+		{ name: 'Savar Shrestha', title: 'Mobile Developer, Dashboard Developer', variant: 'gold' },
+		{ name: 'Rowan Ess', title: 'Backend Developer', variant: 'navy' },
+		{
+			name: 'Ian Smaglinski',
+			title: 'Account, Help, and Credits Page, API Key Generator Script',
+			variant: 'gold'
+		},
+		{ name: 'Archie Horne', title: 'Artist, Presentation Director', variant: 'navy' },
+		{
+			name: 'Zoe Eigenbrod',
+			title: 'Developer Tools, Table Manager, Burndown Director, User Page',
+			variant: 'gold'
+		},
+		{ name: 'Dovlet Gurbanov', title: '', variant: 'navy' },
+		{ name: 'Simran Gautam', title: '', variant: 'gold' },
+		{ name: 'Tasmia Jannat Shammi', title: '', variant: 'navy' }
+	];
 
 	const assetCredits: Credit[] = [
 		{
@@ -29,7 +41,11 @@
 			title: 'Background Login Image and Kent State Logo',
 			variant: 'gold'
 		},
-		{ name: 'Archie Horne', title: 'Profile Pictures, Navigation Icons, Rocky Logo, Favicon', variant: 'navy' }
+		{
+			name: 'Archie Horne',
+			title: 'Profile Pictures, Navigation Icons, Rocky Logo, Favicon',
+			variant: 'navy'
+		}
 	];
 
 	let isRolling = false;
@@ -67,7 +83,7 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
-<main class="credits-page">
+<section class="credits-page" aria-label="Credits">
 	<div class="credits-ambient credits-ambient-one"></div>
 	<div class="credits-ambient credits-ambient-two"></div>
 
@@ -147,4 +163,4 @@
 			</div>
 		</footer>
 	</section>
-</main>
+</section>

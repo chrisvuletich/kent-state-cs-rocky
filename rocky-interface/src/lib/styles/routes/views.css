@@ -77,7 +77,10 @@ select.text-input option {
 	background: var(--color-bg-primary);
 	border-radius: var(--radius-md);
 	padding: var(--space-lg);
-	transition: transform var(--transition-base), box-shadow var(--transition-base), border-color var(--transition-base);
+	transition:
+		transform var(--transition-base),
+		box-shadow var(--transition-base),
+		border-color var(--transition-base);
 }
 
 .help-resource-card:hover {
@@ -470,5 +473,4 @@ select.text-input option {
 		top: calc(var(--size-topbar-height) + var(--space-sm)) !important;
 		width: calc(100vw - 2 * var(--space-md));
 	}
-
 }

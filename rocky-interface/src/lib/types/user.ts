@@ -32,8 +32,6 @@ export type DbUser = {
 	isActive: boolean;
 };
 
-
-
 export type CreateUserInput = {
 	firstName: string;
 	lastName: string;
@@ -67,7 +65,12 @@ export function normalizeUser(raw: ApiUser): User {
 		displayName,
 		email,
 		apiKeyOwnerId,
-		role: raw.role === 'admin' || raw.role === 'instructor' || raw.role === 'student' ? raw.role : (raw.is_admin ? 'admin' : 'student'),
+		role:
+			raw.role === 'admin' || raw.role === 'instructor' || raw.role === 'student'
+				? raw.role
+				: raw.is_admin
+					? 'admin'
+					: 'student',
 		isAdmin: raw.role === 'admin' || (!raw.role && Boolean(raw.is_admin)),
 		isActive: raw.is_active === undefined ? true : Boolean(raw.is_active)
 	};
@@ -89,7 +92,12 @@ export function normalizeDbUser(raw: ApiUser): DbUser {
 		displayName,
 		email: raw.email?.trim() || 'N/A',
 		isAdmin: Boolean(raw.is_admin),
-		role: raw.role === 'admin' || raw.role === 'instructor' || raw.role === 'student' ? raw.role : (raw.is_admin ? 'admin' : 'student'),
+		role:
+			raw.role === 'admin' || raw.role === 'instructor' || raw.role === 'student'
+				? raw.role
+				: raw.is_admin
+					? 'admin'
+					: 'student',
 		isActive: raw.is_active === undefined ? true : Boolean(raw.is_active)
 	};
 }

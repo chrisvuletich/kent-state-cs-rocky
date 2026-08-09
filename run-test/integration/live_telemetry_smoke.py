@@ -54,7 +54,7 @@ def run_live_smoke():
         if not endpoint.endswith("/v1/responses"):
             endpoint += "/v1/responses"
         response = requests.post(endpoint, json={
-            "model": "rocky",
+            "model": os.getenv("ROCKY_PUBLIC_MODEL", "gemma4:latest").strip(),
             "input": PROMPT,
             "store": False,
         }, headers={

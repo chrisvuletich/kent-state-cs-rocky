@@ -140,6 +140,48 @@ class BackendValidationTests(BackendTestCase):
         self.assertTrue(main.users.find_one({"id": admin_id}).get("is_active"))
         self.assertTrue(main.users.find_one({"id": student_id}).get("is_active"))
 
+    def test_inactive_requester_is_blocked_from_protected_backend_routes(self):
+        student_id = self.seeded_user_ids["student.local@kent.edu"]
+        deactivate_response = self.client.put(
+            f"/users/{student_id}",
+            json={"is_active": False},
+            headers=self.admin_headers,
+        )
+        self.assertEqual(deactivate_response.status_code, 200)
+
+        list_response = self.client.get("/courses", headers=self.student_headers)
+        self.assertEqual(list_response.status_code, 403)
+        self.assertEqual((list_response.get_json() or {}).get("error", {}).get("code"), "account_inactive")
+
+        keys_before = main.api_keys.count_documents({"course_id": 1, "owner_id": student_id})
+        regenerate_response = self.client.post(
+            "/courses/1/api-key/regenerate",
+            json={"ownerType": "person", "ownerId": student_id, "keyName": "key-1", "slotIndex": 1},
+            headers=self.student_headers,
+        )
+        self.assertEqual(regenerate_response.status_code, 403)
+        self.assertEqual(main.api_keys.count_documents({"course_id": 1, "owner_id": student_id}), keys_before)
+
+    def test_admin_cannot_generate_course_key_for_inactive_user(self):
+        student_id = self.seeded_user_ids["student.local@kent.edu"]
+        deactivate_response = self.client.put(
+            f"/users/{student_id}",
+            json={"is_active": False},
+            headers=self.admin_headers,
+        )
+        self.assertEqual(deactivate_response.status_code, 200)
+
+        keys_before = main.api_keys.count_documents({"course_id": 1, "owner_id": student_id})
+        response = self.client.post(
+            "/courses/1/api-key/regenerate",
+            json={"ownerType": "person", "ownerId": student_id, "keyName": "key-1", "slotIndex": 1},
+            headers=self.admin_headers,
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual((response.get_json() or {}).get("error", {}).get("code"), "account_inactive")
+        self.assertEqual(main.api_keys.count_documents({"course_id": 1, "owner_id": student_id}), keys_before)
+
     def test_create_course_rejects_bad_payload(self):
         self._log("Posting invalid course term payload. Expecting HTTP 400.")
         response = self.client.post(
@@ -247,6 +289,28 @@ class BackendValidationTests(BackendTestCase):
         self.assertEqual(stored.get("owner_id"), "group-se3010-a")
         self.assertTrue(stored.get("group_created_by"))
 
+    def test_instructor_cannot_generate_key_for_unknown_person(self):
+        self._log("Instructor attempts to generate a key for an unknown owner. Expecting HTTP 400.")
+        response = self.client.post(
+            "/courses/1/api-key/regenerate",
+            json={"ownerType": "person", "ownerId": "not-a-course-member", "keyName": "key-1", "slotIndex": 1},
+            headers=self.instructor_headers,
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIsNone(main.api_keys.find_one({"course_id": 1, "owner_id": "not-a-course-member"}))
+
+    def test_instructor_email_owner_is_canonicalized_to_member_id(self):
+        self._log("Instructor generates a student key by email. Expecting canonical member id storage.")
+        student_id = self.seeded_user_ids["student.local@kent.edu"]
+        response = self.client.post(
+            "/courses/1/api-key/regenerate",
+            json={"ownerType": "person", "ownerId": "student.local@kent.edu", "keyName": "key-1", "slotIndex": 1},
+            headers=self.instructor_headers,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual((response.get_json() or {}).get("owner_id"), student_id)
+        self.assertIsNotNone(main.api_keys.find_one({"course_id": 1, "owner_id": student_id}))
+
     def test_student_can_generate_own_key_once_then_hits_cooldown(self):
         self._log("Generating a self-service API key as a student and verifying the cooldown blocks a second request.")
         first_response = self.client.post(
@@ -340,7 +404,7 @@ class BackendValidationTests(BackendTestCase):
         )
         self.assertEqual(response.status_code, 200)
         payload = response.get_json() or {}
-        self.assertEqual(payload.get("message"), "Instructor handout limit updated successfully.")
+        self.assertEqual(payload.get("instructor_handout_limit"), 2)
 
         updated_course = main.courses.find_one({"id": 1})
         self.assertIsNotNone(updated_course)
@@ -374,14 +438,14 @@ class BackendValidationTests(BackendTestCase):
 
         second = self.client.post(
             "/courses/1/api-key/regenerate",
-            json={"ownerType": "person", "ownerId": "KSUID000000003", "keyName": "key-1", "slotIndex": 1},
+            json={"ownerType": "person", "ownerId": self.seeded_user_ids["student.local@kent.edu"], "keyName": "key-1", "slotIndex": 1},
             headers=self.admin_headers,
         )
         self.assertEqual(second.status_code, 200)
 
         third = self.client.post(
             "/courses/1/api-key/regenerate",
-            json={"ownerType": "person", "ownerId": "KSUID000000004", "keyName": "key-1", "slotIndex": 1},
+            json={"ownerType": "person", "ownerId": self.seeded_user_ids["student.alt1@kent.edu"], "keyName": "key-1", "slotIndex": 1},
             headers=self.admin_headers,
         )
         self.assertEqual(third.status_code, 200)
@@ -447,11 +511,13 @@ class BackendValidationTests(BackendTestCase):
     def test_admin_can_toggle_key_active_status_without_changing_hash(self):
         self._log("Toggling a key's active state should preserve its stored hash.")
 
+        student_id = self.seeded_user_ids["student.local@kent.edu"]
+
         generate_response = self.client.post(
             "/courses/1/api-key/regenerate",
             json={
                 "ownerType": "person",
-                "ownerId": "KSUID000000003",
+                "ownerId": student_id,
                 "keyName": "key-1",
                 "slotIndex": 1,
             },
@@ -463,7 +529,7 @@ class BackendValidationTests(BackendTestCase):
             {
                 "course_id": 1,
                 "owner_type": "person",
-                "owner_id": "ksuid000000003",
+                "owner_id": student_id,
                 "slot_index": 1,
             }
         )
@@ -475,7 +541,7 @@ class BackendValidationTests(BackendTestCase):
             "/courses/1/api-key/status",
             json={
                 "ownerType": "person",
-                "ownerId": "KSUID000000003",
+                "ownerId": student_id,
                 "keyName": "key-1",
                 "slotIndex": 1,
                 "isActive": False,
@@ -488,7 +554,7 @@ class BackendValidationTests(BackendTestCase):
             {
                 "course_id": 1,
                 "owner_type": "person",
-                "owner_id": "ksuid000000003",
+                "owner_id": student_id,
                 "slot_index": 1,
             }
         )
@@ -500,7 +566,7 @@ class BackendValidationTests(BackendTestCase):
             "/courses/1/api-key/status",
             json={
                 "ownerType": "person",
-                "ownerId": "KSUID000000003",
+                "ownerId": student_id,
                 "keyName": "key-1",
                 "slotIndex": 1,
                 "isActive": True,
@@ -513,7 +579,7 @@ class BackendValidationTests(BackendTestCase):
             {
                 "course_id": 1,
                 "owner_type": "person",
-                "owner_id": "ksuid000000003",
+                "owner_id": student_id,
                 "slot_index": 1,
             }
         )

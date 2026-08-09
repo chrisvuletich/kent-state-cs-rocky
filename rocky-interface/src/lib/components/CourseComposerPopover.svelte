@@ -35,7 +35,9 @@
 		}
 	});
 
-	$: accountUsers = users.filter((user) => !user.isAdmin && user.email && user.email.trim() && user.email !== 'N/A');
+	$: accountUsers = users.filter(
+		(user) => !user.isAdmin && user.email && user.email.trim() && user.email !== 'N/A'
+	);
 	$: if ($courseComposerState.isOpen) {
 		form = {
 			name: '',
@@ -102,7 +104,7 @@
 				submitLabel="Create Course"
 				idPrefix="global-create-course"
 				users={accountUsers}
-				form={form}
+				{form}
 				useSemesterPicker={true}
 				semesterYearMin={COURSE_EDITOR_SEMESTER_YEAR_MIN}
 				semesterYearMax={COURSE_EDITOR_SEMESTER_YEAR_MAX}

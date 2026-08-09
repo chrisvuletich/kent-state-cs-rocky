@@ -94,14 +94,21 @@ Available endpoints:
 - `GET /analytics/breakdown?window=24h&dimension=user`: grouped metrics for
   `user`, `course`, `key`, `group`, `model`, `source`, or `outcome`.
 - `GET /analytics/requests?window=24h&limit=50`: filtered recent-request index.
-- `GET /analytics/requests/<request_id>`: the complete sanitized stored record.
+- `GET /analytics/requests/<request_id>`: the complete stored request record,
+  including the recorded prompt and response text.
 - `PATCH /analytics/requests/<request_id>/review`: update an administrative
   review and append its change history.
+- `GET /analytics/export?format=json&window=24h`: download up to 10,000
+  filtered request records, including the stored prompt and response.
+- `GET /audit/export?format=csv&date_from=2026-08-01`: download filtered
+  administrative audit events.
 
-The request index accepts `outcome`, `user_id`, `course_id`, `flagged`, and
-`review_status` filters. Review status is one of `unreviewed`, `in_review`, or
-`resolved`. A review update accepts `flagged`, `flag_reasons`, `status`, and
-`notes`; flagged requests require at least one reason. Supported reasons are
+Analytics summary, time-series, hardware-workload, breakdown, request-list,
+and export routes share the `user_id`, `course_id`, `key_id`, `model`,
+`operation`, `outcome`, `source`, `flagged`, and `review_status` filters.
+Review status is one of `unreviewed`, `in_review`, or `resolved`. A review
+update accepts `flagged`, `flag_reasons`, `status`, and `notes`; flagged
+requests require at least one reason. Supported reasons are
 `academic_integrity`, `harmful_content`, `security_abuse`, `policy_violation`,
 `system_quality`, and `other`, and notes are limited to 4,000 characters.
 
@@ -119,12 +126,22 @@ interaction records. Requests older than four minutes are reported as
 unresolved rather than remaining active after an interrupted service process.
 Aggregate and request-list queries exclude stored prompt and response content;
 full content is retrieved only by the individual request-detail endpoint.
+Valid prompt, instruction, and model-response text is retained verbatim. API
+keys, authorization headers, cookies, internal service tokens, and stored key
+hashes remain excluded because they are authentication material rather than
+conversation content.
 
 Supported windows are `15m`, `1h`, `6h`, `24h`, `7d`, and `30d`. Time-series
 buckets are `minute`, `hour`, and `day`; combinations producing more than 1,000
 rows are rejected. Breakdown results are capped at 100 rows and request indexes
 at 200 rows. The older `/analytics/kpis` and `/analytics/activity` endpoints now
 return live compatibility views rather than fixture values.
+
+Exports are administrator-only, generated directly in memory, and never left
+as files on the server. JSON preserves stored content exactly. CSV protects
+spreadsheet programs from formula execution by prefixing cells beginning with
+`=`, `+`, `-`, or `@`; this changes only the downloaded CSV representation.
+Every successful export appends a metadata-only audit event.
 
 ### Hardware sampler
 

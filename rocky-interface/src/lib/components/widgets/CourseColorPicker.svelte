@@ -2,14 +2,26 @@
 	export let value = '#2b5aa6';
 
 	const presetColors = [
-		'#c2410c', '#dc2626', '#db2777', '#9333ea', '#6d28d9',
-		'#4f46e5', '#1d4ed8', '#0ea5e9', '#0891b2', '#0d9488',
-		'#16a34a', '#84cc16', '#d97706', '#ea580c', '#e11d48'
+		'#c2410c',
+		'#dc2626',
+		'#db2777',
+		'#9333ea',
+		'#6d28d9',
+		'#4f46e5',
+		'#1d4ed8',
+		'#0ea5e9',
+		'#0891b2',
+		'#0d9488',
+		'#16a34a',
+		'#84cc16',
+		'#d97706',
+		'#ea580c',
+		'#e11d48'
 	];
 
 	let draftColor = value;
 	let lastValue = value;
-    let applyMessage = '';
+	let applyMessage = '';
 
 	$: if (value !== lastValue) {
 		draftColor = value;
@@ -21,18 +33,18 @@
 	}
 
 	function applyColor() {
-        if (!isValidHex(draftColor)) {
-            return;
-        }
+		if (!isValidHex(draftColor)) {
+			return;
+		}
 
-        value = draftColor;
-        lastValue = value;
-        applyMessage = 'Color applied. Click Save Course to save changes.';
+		value = draftColor;
+		lastValue = value;
+		applyMessage = 'Color applied. Click Save Course to save changes.';
 
-        setTimeout(() => {
-            applyMessage = '';
-        }, 2500);
-    }
+		setTimeout(() => {
+			applyMessage = '';
+		}, 2500);
+	}
 
 	function cancelColor() {
 		draftColor = value;
@@ -72,13 +84,14 @@
 	</div>
 
 	<div class="color-picker-actions">
-	<button
-		type="button"
-		class="view-btn"
-		disabled={!isValidHex(draftColor) || draftColor === value}
-		onclick={applyColor}>Apply Color</button>
-</div>
-        {#if applyMessage}
-            <p class="color-apply-message">{applyMessage}</p>
-        {/if}
+		<button
+			type="button"
+			class="view-btn"
+			disabled={!isValidHex(draftColor) || draftColor === value}
+			onclick={applyColor}>Apply Color</button
+		>
+	</div>
+	{#if applyMessage}
+		<p class="color-apply-message">{applyMessage}</p>
+	{/if}
 </div>

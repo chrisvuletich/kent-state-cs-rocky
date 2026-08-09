@@ -19,6 +19,9 @@ class Collections:
     telemetry_interactions: any
     telemetry_current: any
     telemetry_hardware: any
+    conversations: any
+    messages: any
+    responses: any
     analytics_kpis: any
     analytics_activity: any
     widgets_default: any
@@ -35,6 +38,9 @@ def _from_db(db) -> Collections:
         telemetry_interactions=db["telemetry_interactions"],
         telemetry_current=db["telemetry_current"],
         telemetry_hardware=db["telemetry_hardware"],
+        conversations=db["conversations"],
+        messages=db["messages"],
+        responses=db["responses"],
         analytics_kpis=db["analytics_kpis"],
         analytics_activity=db["analytics_activity"],
         widgets_default=db["widgets_default"],
@@ -55,6 +61,11 @@ def ensure_indexes(collections: Collections) -> None:
         collections.telemetry_interactions,
         [("received_at", -1)],
         name="telemetry_received_at",
+    )
+    _create_index(
+        collections.telemetry_interactions,
+        [("operation", 1), ("received_at", -1)],
+        name="telemetry_operation_received_at",
     )
     _create_index(
         collections.telemetry_interactions,

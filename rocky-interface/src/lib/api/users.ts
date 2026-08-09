@@ -1,4 +1,12 @@
-import { normalizeDbUsers, normalizeUsers, type ApiUser, type DbUser, type User, type CreateUserInput, toCreateUserPayload } from '$lib/types/user';
+import {
+	normalizeDbUsers,
+	normalizeUsers,
+	type ApiUser,
+	type DbUser,
+	type User,
+	type CreateUserInput,
+	toCreateUserPayload
+} from '$lib/types/user';
 import { showErrorFeedback, showSuccessFeedback } from '$lib/stores/feedbackStore';
 
 const USER_SAFE_ACTION_FAILURE = 'Action failed. Please try again.';
@@ -31,6 +39,7 @@ export type CreateWhitelistEntryInput = {
 	firstName: string;
 	lastName: string;
 	email: string;
+	role: 'student' | 'instructor' | 'admin';
 };
 
 function normalizeWhitelistEntry(raw: ApiWhitelistEntry): WhitelistEntry {
@@ -45,7 +54,12 @@ function normalizeWhitelistEntry(raw: ApiWhitelistEntry): WhitelistEntry {
 		lastName,
 		displayName,
 		email: raw.email?.trim() || 'N/A',
-		role: raw.role === 'admin' || raw.role === 'instructor' || raw.role === 'student' ? raw.role : (raw.is_admin ? 'admin' : 'student'),
+		role:
+			raw.role === 'admin' || raw.role === 'instructor' || raw.role === 'student'
+				? raw.role
+				: raw.is_admin
+					? 'admin'
+					: 'student',
 		isAdmin: raw.role === 'admin' || (!raw.role && Boolean(raw.is_admin)),
 		isActive: raw.is_active === undefined ? true : Boolean(raw.is_active),
 		createdAt: raw.created_at?.trim() || ''
@@ -110,12 +124,18 @@ export async function setUserActive(id: string, isActive: boolean): Promise<void
 	showSuccessFeedback(isActive ? 'User activated successfully.' : 'User deactivated successfully.');
 }
 
-export async function setUserRole(id: string, role: 'student' | 'instructor' | 'admin'): Promise<void> {
+export async function setUserRole(
+	id: string,
+	role: 'student' | 'instructor' | 'admin'
+): Promise<void> {
 	await updateUser(id, { role });
 	showSuccessFeedback(`Account role changed to ${role}.`);
 }
 
-async function updateUser(id: string, changes: { is_active?: boolean; is_admin?: boolean; role?: 'student' | 'instructor' | 'admin' }): Promise<void> {
+async function updateUser(
+	id: string,
+	changes: { is_active?: boolean; is_admin?: boolean; role?: 'student' | 'instructor' | 'admin' }
+): Promise<void> {
 	try {
 		const response = await fetch(`/api/backend/users/${id}`, {
 			method: 'PUT',
@@ -127,7 +147,6 @@ async function updateUser(id: string, changes: { is_active?: boolean; is_admin?:
 			const payload = (await response.json().catch(() => ({ error: '' }))) as { error?: string };
 			throw new Error(payload.error || `Failed to update user status (${response.status}).`);
 		}
-
 	} catch (err) {
 		const message = getErrorMessage(err, 'Unable to update user status.');
 		showErrorFeedback(message);
@@ -135,20 +154,29 @@ async function updateUser(id: string, changes: { is_active?: boolean; is_admin?:
 	}
 }
 
-export async function setUsersActive(ids: string[], isActive: boolean): Promise<{ updatedIds: string[]; missingIds: string[] }> {
+export async function setUsersActive(
+	ids: string[],
+	isActive: boolean
+): Promise<{ updatedIds: string[]; missingIds: string[] }> {
 	try {
 		const response = await fetch('/api/backend/users/bulk-status', {
 			method: 'PATCH',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ user_ids: ids, is_active: isActive })
 		});
-		const payload = (await response.json().catch(() => ({}))) as { updated_ids?: string[]; missing_ids?: string[]; error?: string };
+		const payload = (await response.json().catch(() => ({}))) as {
+			updated_ids?: string[];
+			missing_ids?: string[];
+			error?: string;
+		};
 		if (!response.ok) {
 			throw new Error(payload.error || `Failed to update users (${response.status}).`);
 		}
 		const updatedIds = payload.updated_ids || [];
 		const missingIds = payload.missing_ids || [];
-		showSuccessFeedback(`${updatedIds.length} user${updatedIds.length === 1 ? '' : 's'} ${isActive ? 'activated' : 'deactivated'}.`);
+		showSuccessFeedback(
+			`${updatedIds.length} user${updatedIds.length === 1 ? '' : 's'} ${isActive ? 'activated' : 'deactivated'}.`
+		);
 		return { updatedIds, missingIds };
 	} catch (err) {
 		const message = getErrorMessage(err, 'Unable to update selected users.');
@@ -171,7 +199,8 @@ export async function createOAuthWhitelistEntry(input: CreateWhitelistEntryInput
 			body: JSON.stringify({
 				firstName: input.firstName.trim(),
 				lastName: input.lastName.trim(),
-				email: input.email.trim()
+				email: input.email.trim(),
+				role: input.role
 			})
 		});
 
@@ -189,21 +218,39 @@ export async function createOAuthWhitelistEntry(input: CreateWhitelistEntryInput
 }
 
 export async function setWhitelistUserActive(id: string, isActive: boolean): Promise<void> {
+	await updateWhitelistEntry(id, { is_active: isActive });
+	showSuccessFeedback(
+		isActive ? 'Whitelist user activated successfully.' : 'Whitelist user deactivated successfully.'
+	);
+}
+
+export async function setWhitelistUserRole(
+	id: string,
+	role: 'student' | 'instructor' | 'admin'
+): Promise<void> {
+	await updateWhitelistEntry(id, { role });
+	showSuccessFeedback(`Whitelist account role changed to ${role}.`);
+}
+
+async function updateWhitelistEntry(
+	id: string,
+	changes: { is_active?: boolean; role?: 'student' | 'instructor' | 'admin' }
+): Promise<void> {
 	try {
 		const response = await fetch(`/api/backend/auth/microsoft/whitelist/${id}`, {
 			method: 'PATCH',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ is_active: isActive })
+			body: JSON.stringify(changes)
 		});
 
 		if (!response.ok) {
 			const payload = (await response.json().catch(() => ({ error: '' }))) as { error?: string };
-			throw new Error(payload.error || `Failed to update whitelist user status (${response.status}).`);
+			throw new Error(
+				payload.error || `Failed to update whitelist user status (${response.status}).`
+			);
 		}
-
-		showSuccessFeedback(isActive ? 'Whitelist user activated successfully.' : 'Whitelist user deactivated successfully.');
 	} catch (err) {
-		const message = getErrorMessage(err, 'Unable to update whitelist user status.');
+		const message = getErrorMessage(err, 'Unable to update whitelist account.');
 		showErrorFeedback(message);
 		throw err;
 	}

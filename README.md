@@ -130,11 +130,14 @@ Useful endpoints:
 Admin-only endpoints require the admin headers passed by the Svelte proxy layer.
 The frontend `Analytics` frame consumes these endpoints as a responsive
 monitoring workspace with throughput trends, bounded Granite hardware history,
-attribution breakdowns, and sanitized request inspection.
+attribution breakdowns, and complete recorded prompt and response inspection.
 
 ## Chat API
 
-The student-facing endpoint is `POST /v1/responses` on port `5003` locally. It accepts `Authorization: Bearer sk_kent_...`, public model name `rocky`, and a JSON `input` string or text-message array. The configured Ollama model stays an internal server detail.
+The student-facing endpoints are `POST /v1/responses` and `GET /v1/models` on
+port `5003` locally. They accept `Authorization: Bearer sk_kent_...`. The
+advertised model is configured with `ROCKY_PUBLIC_MODEL` and should match the
+installed `OLLAMA_MODEL`. Clients should discover it through `GET /v1/models`.
 
 The documented Python client uses `requests`; Rocky has no runtime dependency on an external AI-provider SDK.
 

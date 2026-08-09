@@ -10,7 +10,7 @@ const FRAME_COOKIE_OPTIONS = {
 	sameSite: 'lax' as const
 };
 
-// TODO(OAuth): Replace this endpoint with OAuth callback/session issuance logic.
+// Preview-only login endpoint. Microsoft OAuth issues sessions through /auth/microsoft/login.
 export const POST: RequestHandler = async ({ request, cookies }) => {
 	if (!ENABLE_PREVIEW_AUTH) {
 		throw error(404, 'Not found.');

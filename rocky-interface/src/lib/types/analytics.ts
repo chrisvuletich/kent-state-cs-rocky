@@ -12,13 +12,28 @@ export type ActivityRow = {
 };
 
 export const analyticsWindows = ['15m', '1h', '6h', '24h', '7d', '30d'] as const;
-export const analyticsDimensions = ['user', 'course', 'key', 'group', 'model', 'source', 'outcome'] as const;
+export const analyticsDimensions = [
+	'user',
+	'course',
+	'key',
+	'group',
+	'model',
+	'source',
+	'outcome'
+] as const;
 
 export type AnalyticsWindow = (typeof analyticsWindows)[number];
 export type AnalyticsDimension = (typeof analyticsDimensions)[number];
 export type AnalyticsOutcome = 'completed' | 'rejected' | 'failed' | 'timed_out';
 export const analyticsReviewStatuses = ['unreviewed', 'in_review', 'resolved'] as const;
-export const analyticsReviewReasons = ['academic_integrity', 'harmful_content', 'security_abuse', 'policy_violation', 'system_quality', 'other'] as const;
+export const analyticsReviewReasons = [
+	'academic_integrity',
+	'harmful_content',
+	'security_abuse',
+	'policy_violation',
+	'system_quality',
+	'other'
+] as const;
 export type AnalyticsReviewStatus = (typeof analyticsReviewStatuses)[number];
 export type AnalyticsReviewReason = (typeof analyticsReviewReasons)[number];
 
@@ -46,6 +61,11 @@ export type AnalyticsMetrics = {
 	flagged: number;
 	success_rate: number | null;
 	acceptance_rate: number | null;
+	generation: {
+		requests: number;
+		inference_dispatches: number;
+		outcomes: Record<AnalyticsOutcome, number>;
+	};
 	usage: {
 		input_tokens: number;
 		output_tokens: number;
@@ -54,6 +74,13 @@ export type AnalyticsMetrics = {
 		output_bytes: number;
 	};
 	latency_ms: {
+		samples: number;
+		average: number | null;
+		p50: number | null;
+		p95: number | null;
+		p99: number | null;
+	};
+	api_latency_ms: {
 		samples: number;
 		average: number | null;
 		p50: number | null;
@@ -122,9 +149,18 @@ export type AnalyticsRequestSummary = {
 	outcome: AnalyticsOutcome | 'active';
 	http_status: number | null;
 	source: string | null;
+	operation: string | null;
 	actor: { user_id?: string | null; email?: string | null; name?: string | null } | null;
-	credential: { key_id?: string | null; key_name?: string | null; owner_type?: string | null } | null;
-	course: { course_id?: number | null; course_code?: string | null; group_id?: string | null } | null;
+	credential: {
+		key_id?: string | null;
+		key_name?: string | null;
+		owner_type?: string | null;
+	} | null;
+	course: {
+		course_id?: number | null;
+		course_code?: string | null;
+		group_id?: string | null;
+	} | null;
 	model: { public_model?: string | null; actual_model?: string | null } | null;
 	usage: AnalyticsMetrics['usage'] | null;
 	performance: Record<string, number | null> | null;
@@ -149,10 +185,19 @@ export type AnalyticsRequestDetail = AnalyticsRequestSummary & {
 	[key: string]: unknown;
 };
 
-export type AnalyticsReviewPatch = Pick<AnalyticsReview, 'version' | 'flagged' | 'flag_reasons' | 'status' | 'notes'>;
+export type AnalyticsReviewPatch = Pick<
+	AnalyticsReview,
+	'version' | 'flagged' | 'flag_reasons' | 'status' | 'notes'
+>;
 
 export type AnalyticsRequestFilters = {
+	user?: string;
+	course?: string;
+	key?: string;
+	model?: string;
+	operation?: 'models.list' | 'responses.create' | 'unknown' | '';
 	outcome?: AnalyticsOutcome | 'active' | '';
+	source?: string;
 	flagged?: boolean;
 	reviewStatus?: AnalyticsReviewStatus | '';
 };
@@ -178,6 +223,17 @@ export type AnalyticsCurrent = {
 		};
 		latency_ms: { samples: number; average: number | null };
 	};
+};
+
+export type AnalyticsMyUsage = {
+	generated_at: string;
+	today_start: string;
+	requests_today: number;
+	total_requests: number;
+	active_requests: number;
+	outcomes: Record<AnalyticsOutcome, number>;
+	usage: AnalyticsMetrics['usage'];
+	last_request_at: string | null;
 };
 
 export type AnalyticsHardwareMetric = {

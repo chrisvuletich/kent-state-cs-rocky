@@ -37,7 +37,10 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 		console.warn('[oauth] microsoft token verification failed', {
 			errorType: caught instanceof Error ? caught.name : 'UnknownError'
 		});
-		throw error(401, caught instanceof Error ? caught.message : 'Microsoft identity token verification failed.');
+		throw error(
+			401,
+			caught instanceof Error ? caught.message : 'Microsoft identity token verification failed.'
+		);
 	}
 	const backendResponse = await fetch(`${API_BASE_URL}/auth/microsoft/login`, {
 		method: 'POST',

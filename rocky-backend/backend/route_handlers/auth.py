@@ -51,13 +51,31 @@ def ensure_default_api_key_for_user(deps: dict[str, Any], user_record: dict[str,
     existing = _find_default_user_api_key(api_keys, owner_id)
     _, expected_hash = generate_hidden_api_key_pair(owner_id)
     now = datetime.now(timezone.utc).isoformat()
+    is_user_active = deps.get(
+        "_is_user_active",
+        lambda record: bool(record.get("is_active", True)),
+    )
+    user_is_active = is_user_active(user_record)
 
-    if isinstance(existing, dict) and existing.get("hash") and existing.get("is_active", True) is not False and not existing.get("deleted_at"):
+    if isinstance(existing, dict) and existing.get("hash") and not existing.get("deleted_at"):
         existing_key_id = existing.get("key_id") if isinstance(existing.get("key_id"), str) else ""
-        if not existing_key_id.strip() or existing.get("hash") != expected_hash:
+        expected_active = existing.get("is_active", True) is not False if user_is_active else False
+        requires_update = (
+            not existing_key_id.strip()
+            or existing.get("hash") != expected_hash
+            or existing.get("is_active", True) is not expected_active
+            or (not user_is_active and existing.get("disabled_reason") != "account-inactive")
+            or (user_is_active and existing.get("disabled_reason") == "account-inactive")
+        )
+        if requires_update:
             updated_existing = dict(existing)
             updated_existing["key_id"] = existing_key_id.strip() or generate_api_key_id()
             updated_existing["hash"] = expected_hash
+            updated_existing["is_active"] = user_is_active
+            if user_is_active:
+                updated_existing.pop("disabled_reason", None)
+            else:
+                updated_existing["disabled_reason"] = "account-inactive"
             updated_existing["updated_at"] = now
             api_keys.replace_one({"_id": existing.get("_id")}, updated_existing)
             return updated_existing
@@ -73,11 +91,13 @@ def ensure_default_api_key_for_user(deps: dict[str, Any], user_record: dict[str,
         "key_name": DEFAULT_USER_API_KEY_NAME,
         "slot_index": 0,
         "hash": expected_hash,
-        "is_active": True,
+        "is_active": user_is_active,
         "expire": None,
         "created": existing.get("created") if isinstance(existing, dict) and existing.get("created") else now,
         "updated_at": now,
     }
+    if not user_is_active:
+        key_doc["disabled_reason"] = "account-inactive"
 
     if isinstance(existing, dict):
         key_doc["_id"] = existing.get("_id")
@@ -116,6 +136,7 @@ def get_preview_users(deps: dict[str, Any]):
                     "first_name": normalize_str(entry.get("first_name")),
                     "last_name": normalize_str(entry.get("last_name")),
                     "email": email,
+                    "role": deps["_user_role"](entry),
                     "is_admin": bool(entry.get("is_admin")),
                     "is_active": _is_user_active(entry),
                     "settings": entry.get("settings", _default_user_settings()),
@@ -169,6 +190,7 @@ def microsoft_login(deps: dict[str, Any]):
     whitelist_users = deps["whitelist_users"]
     normalize_str = deps["normalize_str"]
     _is_user_active = deps["_is_user_active"]
+    _user_role = deps["_user_role"]
     logger = deps["logger"]
     reconcile_course_members_for_user = deps["reconcile_course_members_for_user"]
     courses = deps["courses"]
@@ -227,11 +249,13 @@ def microsoft_login(deps: dict[str, Any]):
     user_record = users.find_one({"email": email})
     if not user_record:
         whitelist_is_active = _is_user_active(whitelist_record)
+        whitelist_role = _user_role(whitelist_record)
         to_insert = {
             "first_name": first_name,
             "last_name": last_name,
             "email": email,
-            "is_admin": False,
+            "role": whitelist_role,
+            "is_admin": whitelist_role == "admin",
             "is_active": whitelist_is_active,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "settings": _default_user_settings(),
@@ -242,6 +266,7 @@ def microsoft_login(deps: dict[str, Any]):
         logger.info("[oauth] login success: created whitelisted user %s", email)
     else:
         whitelist_is_active = _is_user_active(whitelist_record)
+        whitelist_role = _user_role(whitelist_record)
         users.update_one(
             {"_id": user_record.get("_id")},
             {
@@ -250,6 +275,8 @@ def microsoft_login(deps: dict[str, Any]):
                     "last_name": last_name,
                     "id": str(user_record.get("id") or user_record.get("_id") or ""),
                     "is_active": whitelist_is_active,
+                    "role": whitelist_role,
+                    "is_admin": whitelist_role == "admin",
                 }
             },
         )
@@ -297,6 +324,7 @@ def add_oauth_whitelist_entry(deps: dict[str, Any]):
     first_name = normalize_str(payload.get("firstName") or payload.get("first_name"))
     last_name = normalize_str(payload.get("lastName") or payload.get("last_name"))
     email = normalize_str(payload.get("email")).lower()
+    role = normalize_str(payload.get("role")).lower() or "student"
 
     if not first_name:
         return _bad_request("firstName is required.")
@@ -306,6 +334,8 @@ def add_oauth_whitelist_entry(deps: dict[str, Any]):
         return _bad_request("A valid email is required.")
     if _is_kent_email(email):
         return _bad_request("@kent.edu emails should not be added to the external whitelist.")
+    if role not in {"student", "instructor", "admin"}:
+        return _bad_request("role must be one of: student, instructor, admin.")
 
     existing = whitelist_users.find_one({"email": email})
     if existing:
@@ -321,7 +351,8 @@ def add_oauth_whitelist_entry(deps: dict[str, Any]):
         "first_name": first_name,
         "last_name": last_name,
         "email": email,
-        "is_admin": False,
+        "role": role,
+        "is_admin": role == "admin",
         "is_active": True,
         "settings": _default_user_settings(),
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -330,6 +361,14 @@ def add_oauth_whitelist_entry(deps: dict[str, Any]):
     inserted_id = whitelist_users.insert_one(created).inserted_id
     whitelist_users.update_one({"_id": inserted_id}, {"$set": {"id": str(inserted_id)}})
     saved = whitelist_users.find_one({"_id": inserted_id})
+
+    deps["record_audit_event"](
+        deps,
+        "whitelist-added",
+        target_type="whitelist-user",
+        target_id=saved.get("id") if isinstance(saved, dict) else inserted_id,
+        changes={"email": email, "role": role, "is_active": True},
+    )
 
     logger.info("[oauth] whitelist add success: %s", email)
     return jsonify({"message": "Whitelist entry added.", "entry": _serialize_whitelist_user(saved)}), 201
@@ -341,6 +380,8 @@ def update_or_delete_oauth_whitelist_entry(deps: dict[str, Any], entry_id: str):
     _bad_request = deps["_bad_request"]
     whitelist_users = deps["whitelist_users"]
     users = deps["users"]
+    api_keys = deps["api_keys"]
+    set_user_api_keys_active_state = deps["set_user_api_keys_active_state"]
     _serialize_whitelist_user = deps["_serialize_whitelist_user"]
 
     ok, err = require_admin()
@@ -361,21 +402,54 @@ def update_or_delete_oauth_whitelist_entry(deps: dict[str, Any], entry_id: str):
 
     if request.method == "PATCH":
         payload = request.get_json(silent=True)
-        if not isinstance(payload, dict):
+        if not isinstance(payload, dict) or not payload:
             return _bad_request("Request body must be a JSON object.")
-        if "is_active" not in payload:
-            return _bad_request("is_active is required.")
-        if not isinstance(payload.get("is_active"), bool):
+        allowed_fields = {"is_active", "role"}
+        if not set(payload).issubset(allowed_fields):
+            return _bad_request("Only is_active and role may be updated through this endpoint.")
+        if "is_active" in payload and not isinstance(payload.get("is_active"), bool):
             return _bad_request("is_active must be a boolean.")
+        role = normalize_str(payload.get("role")).lower() if "role" in payload else ""
+        if "role" in payload and role not in {"student", "instructor", "admin"}:
+            return _bad_request("role must be one of: student, instructor, admin.")
 
-        is_active = payload.get("is_active")
-        whitelist_users.update_one({"_id": entry.get("_id")}, {"$set": {"is_active": is_active}})
+        changes: dict[str, Any] = {}
+        if "is_active" in payload:
+            changes["is_active"] = payload["is_active"]
+        if "role" in payload:
+            changes["role"] = role
+            changes["is_admin"] = role == "admin"
+        whitelist_users.update_one({"_id": entry.get("_id")}, {"$set": changes})
+        linked_user = users.find_one({"email": entry_email}) if entry_email else None
         if entry_email:
-            users.update_one({"email": entry_email}, {"$set": {"is_active": is_active}})
+            users.update_one({"email": entry_email}, {"$set": changes})
+        if linked_user and "is_active" in changes:
+            set_user_api_keys_active_state(api_keys, linked_user, bool(changes["is_active"]))
         updated = whitelist_users.find_one({"_id": entry.get("_id")})
+        deps["record_audit_event"](
+            deps,
+            "whitelist-updated",
+            target_type="whitelist-user",
+            target_id=entry.get("id") or entry.get("_id"),
+            changes={
+                key: {"before": entry.get(key), "after": value}
+                for key, value in changes.items()
+                if entry.get(key) != value
+            },
+        )
         return jsonify({"message": "Whitelist entry updated.", "entry": _serialize_whitelist_user(updated)})
 
     whitelist_users.delete_one({"_id": entry.get("_id")})
+    linked_user = users.find_one({"email": entry_email}) if entry_email else None
     if entry_email:
-        users.delete_many({"email": entry_email})
+        users.update_one({"email": entry_email}, {"$set": {"is_active": False}})
+    if linked_user:
+        set_user_api_keys_active_state(api_keys, linked_user, False)
+    deps["record_audit_event"](
+        deps,
+        "whitelist-removed",
+        target_type="whitelist-user",
+        target_id=entry.get("id") or entry.get("_id"),
+        changes={"email": entry_email, "is_active": {"before": entry.get("is_active", True), "after": False}},
+    )
     return jsonify({"message": "Whitelist entry removed."})

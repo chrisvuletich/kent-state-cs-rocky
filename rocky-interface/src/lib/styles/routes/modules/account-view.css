@@ -36,7 +36,9 @@
 	background: var(--color-accent-light);
 	box-shadow: var(--shadow-sm);
 	cursor: pointer;
-	transition: border-color var(--transition-base), box-shadow var(--transition-base);
+	transition:
+		border-color var(--transition-base),
+		box-shadow var(--transition-base);
 }
 
 .account-avatar-button:hover,
@@ -82,7 +84,10 @@
 	background: var(--color-gray-100);
 	overflow: hidden;
 	cursor: pointer;
-	transition: border-color var(--transition-base), box-shadow var(--transition-base), background-color var(--transition-base);
+	transition:
+		border-color var(--transition-base),
+		box-shadow var(--transition-base),
+		background-color var(--transition-base);
 }
 
 .account-avatar-option:hover,
@@ -193,7 +198,9 @@
 	border-radius: 999px;
 	background: var(--color-gray-200);
 	cursor: pointer;
-	transition: background-color var(--transition-base), border-color var(--transition-base);
+	transition:
+		background-color var(--transition-base),
+		border-color var(--transition-base);
 	flex-shrink: 0;
 }
 
@@ -251,7 +258,11 @@
 	color: var(--color-text-primary);
 	text-align: left;
 	cursor: pointer;
-	transition: border-color var(--transition-base), background-color var(--transition-base), transform var(--transition-base), box-shadow var(--transition-base);
+	transition:
+		border-color var(--transition-base),
+		background-color var(--transition-base),
+		transform var(--transition-base),
+		box-shadow var(--transition-base);
 }
 
 .account-course-row:hover,
@@ -295,9 +306,15 @@
 	border-top: 3px solid var(--color-accent);
 }
 
-.account-usage-grid div:nth-child(2) { border-top-color: var(--color-primary-light); }
-.account-usage-grid div:nth-child(3) { border-top-color: var(--color-highlight-gold); }
-.account-usage-grid div:nth-child(4) { border-top-color: #16a34a; }
+.account-usage-grid div:nth-child(2) {
+	border-top-color: var(--color-primary-light);
+}
+.account-usage-grid div:nth-child(3) {
+	border-top-color: var(--color-highlight-gold);
+}
+.account-usage-grid div:nth-child(4) {
+	border-top-color: #16a34a;
+}
 
 .account-usage-grid span {
 	color: var(--color-text-secondary);

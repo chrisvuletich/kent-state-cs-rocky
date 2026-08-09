@@ -33,4 +33,23 @@ describe('CourseKeySlotCard', () => {
 		expect(body).toContain('Remove Key');
 		expect(body).toContain('Deactivate Key');
 	});
+
+	it('renders a custom read-only explanation without key management controls', () => {
+		const { body } = render(CourseKeySlotCard, {
+			props: {
+				title: 'Team Alpha Key 1',
+				keyName: 'key-1',
+				hasExistingKey: true,
+				maskedPreview: 'sk_kent_******************************',
+				readOnly: true,
+				readOnlyMessage: 'Group keys are managed by your course instructor or teaching assistant.'
+			}
+		});
+
+		expect(body).toContain(
+			'Group keys are managed by your course instructor or teaching assistant.'
+		);
+		expect(body).not.toContain('Regenerate Key');
+		expect(body).not.toContain('Remove Key');
+	});
 });

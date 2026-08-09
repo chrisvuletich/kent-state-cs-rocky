@@ -5,8 +5,9 @@
 	import ViewShell from '$lib/components/ViewShell.svelte';
 	import { profilePictureOptions } from '$lib/settings/userSettings';
 	import { updateCurrentUserSetting } from '$lib/api/userSettings';
+	import { fetchMyUsage } from '$lib/api/analytics';
 	import { fetchCourses } from '$lib/api/content';
-	import { fetchCourseApiHistory, fetchCourseApiKeys } from '$lib/api/courses';
+	import { fetchCourseApiKeys } from '$lib/api/courses';
 	import { selectedCourseId } from '$lib/stores/courseStore';
 	import { currentFrame } from '$lib/stores/frameStore';
 	import type { Course } from '$lib/types/course';
@@ -55,7 +56,9 @@
 	}
 
 	function userIdentifiers(): string[] {
-		return [currentUser?.id, currentUser?.email, currentUser?.apiKeyOwnerId].map(normalizeIdentifier).filter(Boolean);
+		return [currentUser?.id, currentUser?.email, currentUser?.apiKeyOwnerId]
+			.map(normalizeIdentifier)
+			.filter(Boolean);
 	}
 
 	function isCurrentUserIdentifier(value: string | null | undefined): boolean {
@@ -68,7 +71,9 @@
 			isCurrentUserIdentifier(course.instructorEmail) ||
 			course.taIds.some(isCurrentUserIdentifier) ||
 			course.taEmails.some(isCurrentUserIdentifier) ||
-			(course.members || []).some((member) => isCurrentUserIdentifier(member.id) || isCurrentUserIdentifier(member.email))
+			(course.members || []).some(
+				(member) => isCurrentUserIdentifier(member.id) || isCurrentUserIdentifier(member.email)
+			)
 		);
 	}
 
@@ -89,27 +94,31 @@
 		}
 
 		try {
-			const enrolledCourses = (await fetchCourses()).filter(isEnrolled);
+			const [loadedCourses, telemetryUsage] = await Promise.all([fetchCourses(), fetchMyUsage()]);
+			const enrolledCourses = loadedCourses.filter(isEnrolled);
 			const courseData = await Promise.all(
 				enrolledCourses.map(async (course) => {
-					const [keys, history] = await Promise.all([fetchCourseApiKeys(course.id), fetchCourseApiHistory(course.id)]);
-					const keyCount = keys.filter((key) => key.has_hash !== false && key.owner_type === 'person' && isCurrentUserIdentifier(key.owner_id)).length;
-					const requests = history.filter((entry) => entry.eventType === 'request' && isCurrentUserIdentifier(entry.userId));
-					return { course, keyCount, requests };
+					const keys = await fetchCourseApiKeys(course.id);
+					const keyCount = keys.filter(
+						(key) =>
+							key.has_hash !== false &&
+							key.owner_type === 'person' &&
+							isCurrentUserIdentifier(key.owner_id)
+					).length;
+					return { course, keyCount };
 				})
 			);
 
-			const today = new Date().toDateString();
-			const requests = courseData.flatMap((entry) => entry.requests);
 			courseSummaries = courseData.map(({ course, keyCount }) => ({ course, keyCount }));
 			usage = {
-				requestsToday: requests.filter((entry) => new Date(entry.created).toDateString() === today).length,
-				totalRequests: requests.length,
+				requestsToday: telemetryUsage.requests_today,
+				totalRequests: telemetryUsage.total_requests,
 				coursesEnrolled: enrolledCourses.length,
 				totalApiKeys: courseData.reduce((total, entry) => total + entry.keyCount, 0)
 			};
 		} catch (err) {
-			overviewError = err instanceof Error ? err.message : 'Unable to load your course and usage information.';
+			overviewError =
+				err instanceof Error ? err.message : 'Unable to load your course and usage information.';
 		} finally {
 			isOverviewLoading = false;
 		}
@@ -120,7 +129,7 @@
 	<div slot="actions">
 		<button class="view-btn" onclick={logout}>Log Out</button>
 	</div>
-	
+
 	<section class="section account-card">
 		<div class="account-profile-header">
 			<div class="account-avatar-wrap">
@@ -152,8 +161,12 @@
 							{/each}
 						</div>
 						<div class="account-avatar-actions">
-							<button type="button" class="account-avatar-cancel" onclick={cancelProfilePicture}>Cancel</button>
-							<button type="button" class="account-avatar-save" onclick={saveProfilePicture}>Save</button>
+							<button type="button" class="account-avatar-cancel" onclick={cancelProfilePicture}
+								>Cancel</button
+							>
+							<button type="button" class="account-avatar-save" onclick={saveProfilePicture}
+								>Save</button
+							>
 						</div>
 					</div>
 				{/if}
@@ -166,13 +179,16 @@
 				<p><strong>Email:</strong> {currentUser?.email ?? '-'}</p>
 			</div>
 		</div>
-
 	</section>
 
 	{#if isOverviewLoading}
-		<section class="section account-overview-state"><p>Loading your courses and usage...</p></section>
+		<section class="section account-overview-state">
+			<p>Loading your courses and usage...</p>
+		</section>
 	{:else if overviewError}
-		<section class="section account-overview-state"><p><strong>Unable to load overview:</strong> {overviewError}</p></section>
+		<section class="section account-overview-state">
+			<p><strong>Unable to load overview:</strong> {overviewError}</p>
+		</section>
 	{:else}
 		<section class="section account-overview-section">
 			<h2>My Courses &amp; API Keys</h2>
@@ -181,8 +197,16 @@
 			{:else}
 				<div class="account-course-list">
 					{#each courseSummaries as summary (summary.course.id)}
-						<button type="button" class="account-course-row" onclick={() => openCourse(summary.course.id)}>
-							<span><strong>{summary.course.name}</strong><small>{formatKeyCount(summary.keyCount)}</small></span>
+						<button
+							type="button"
+							class="account-course-row"
+							onclick={() => openCourse(summary.course.id)}
+						>
+							<span
+								><strong>{summary.course.name}</strong><small
+									>{formatKeyCount(summary.keyCount)}</small
+								></span
+							>
 							<span class="account-course-link">View Course</span>
 						</button>
 					{/each}

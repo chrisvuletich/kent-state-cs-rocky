@@ -189,6 +189,56 @@ def can_request_api_key(course: dict[str, Any], requester_identifier: str, reque
     return _is_course_admin(requester_is_admin) or course_is_visible_to_requester(course, requester_identifier, requester_is_admin)
 
 
+def resolve_course_key_owner(course: dict[str, Any], owner_type: str, owner_id: str) -> dict[str, str]:
+    normalized_owner_type = normalize_str(owner_type).lower() or "person"
+    normalized_owner_id = normalize_str(owner_id).lower()
+    if normalized_owner_type not in {"person", "group"}:
+        raise ValueError("ownerType must be either person or group.")
+    if not normalized_owner_id:
+        raise ValueError("An API key owner is required.")
+
+    if normalized_owner_type == "group":
+        target_group = next(
+            (
+                group
+                for group in course.get("groups", [])
+                if isinstance(group, dict)
+                and normalize_str(group.get("id")).lower() == normalized_owner_id
+            ),
+            None,
+        )
+        if target_group is None:
+            raise ValueError("The API key group must belong to this course.")
+        return {
+            "owner_type": "group",
+            "owner_id": normalize_str(target_group.get("id")).lower(),
+        }
+
+    instructor_id = normalize_str(course.get("instructor_id") or course.get("instructorId")).lower()
+    instructor_email = normalize_str(course.get("instructor_email") or course.get("instructorEmail")).lower()
+    if normalized_owner_id in {value for value in (instructor_id, instructor_email) if value}:
+        return {"owner_type": "person", "owner_id": instructor_id or instructor_email}
+
+    ta_ids = course.get("ta_ids") if isinstance(course.get("ta_ids"), list) else course.get("taIds") or []
+    ta_emails = course.get("ta_emails") if isinstance(course.get("ta_emails"), list) else course.get("taEmails") or []
+    for index in range(max(len(ta_ids), len(ta_emails))):
+        ta_id = normalize_str(ta_ids[index] if index < len(ta_ids) else "").lower()
+        ta_email = normalize_str(ta_emails[index] if index < len(ta_emails) else "").lower()
+        if normalized_owner_id in {value for value in (ta_id, ta_email) if value}:
+            return {"owner_type": "person", "owner_id": ta_id or ta_email}
+
+    for member in course.get("members", []):
+        if not isinstance(member, dict) or not _member_matches_identifier(member, normalized_owner_id):
+            continue
+        member_id = _member_identifier(member)
+        member_email = _member_email(member)
+        canonical_id = member_id or member_email
+        if canonical_id:
+            return {"owner_type": "person", "owner_id": canonical_id}
+
+    raise ValueError("The API key owner must belong to this course.")
+
+
 def course_is_visible_to_requester(course: dict[str, Any], requester_identifier: str, requester_is_admin: bool) -> bool:
     if _is_course_admin(requester_is_admin):
         return True

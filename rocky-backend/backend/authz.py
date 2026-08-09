@@ -39,9 +39,11 @@ def get_requester() -> tuple[str | None, bool]:
 
 
 def require_admin() -> tuple[bool, tuple[dict[str, Any], int] | None]:
-    _, is_admin = get_requester()
+    email, is_admin = get_requester()
     if not is_admin:
         return False, ({"error": "Admin access is required."}, 403)
+    if not email:
+        return False, ({"error": "Authentication headers are required."}, 401)
     return True, None
 
 
