@@ -1,16 +1,21 @@
 import { env } from '$env/dynamic/private';
 import { error } from '@sveltejs/kit';
 import { deriveHiddenApiKey } from '$lib/server/hiddenApiKey';
-import { deriveChatApiBaseUrl } from './chatProxyUrl';
+import { APP_ENV } from '$lib/config/env';
+import { requireProductionSecret } from '$lib/server/privateConfig';
+import { resolveChatApiUrls } from './chatProxyUrl';
 import { internalProxyHeaders } from './backendSecurity';
 
-export const CHAT_API_URL = (env.ROCKY_CHAT_API_URL ?? 'http://127.0.0.1:5003/v1/responses').trim();
-export const CHAT_API_BASE_URL = deriveChatApiBaseUrl(CHAT_API_URL);
-const HIDDEN_API_KEY_SECRET = (
-	env.ROCKY_HIDDEN_API_KEY_SECRET ??
-	env.ROCKY_CHAT_API_KEY ??
-	''
-).trim();
+const chatApiUrls = resolveChatApiUrls(
+	env.ROCKY_CHAT_API_URL ?? 'http://127.0.0.1:5003/v1/responses'
+);
+export const CHAT_API_URL = chatApiUrls.generationUrl;
+export const CHAT_API_BASE_URL = chatApiUrls.baseUrl;
+const HIDDEN_API_KEY_SECRET = requireProductionSecret(
+	'ROCKY_HIDDEN_API_KEY_SECRET',
+	env.ROCKY_HIDDEN_API_KEY_SECRET ?? env.ROCKY_CHAT_API_KEY ?? '',
+	APP_ENV
+);
 const configuredChatModel = (env.ROCKY_PUBLIC_MODEL ?? env.OLLAMA_MODEL ?? '').trim();
 export const CHAT_MODEL = configuredChatModel || 'gemma4:latest';
 

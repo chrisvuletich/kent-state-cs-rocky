@@ -1,17 +1,48 @@
-// Must match the Chat API generation route.
-// No trailing slash because the URL is normalized before this suffix check.
 const GENERATION_PATH = '/v1/responses';
 
-export function deriveChatApiBaseUrl(chatApiUrl: string): string {
-	chatApiUrl = chatApiUrl.trim();
+export type ChatApiUrls = {
+	generationUrl: string;
+	baseUrl: string;
+};
 
-	if (chatApiUrl.endsWith('/')) {
-		chatApiUrl = chatApiUrl.slice(0, -1);
+function invalidChatApiUrl(): never {
+	throw new Error(
+		'Invalid ROCKY_CHAT_API_URL. Expected an absolute http(s) service URL or /v1/responses endpoint without credentials, a query string, or a fragment.'
+	);
+}
+
+export function resolveChatApiUrls(configuredUrl: string): ChatApiUrls {
+	configuredUrl = configuredUrl.trim();
+	let parsed: URL;
+	try {
+		parsed = new URL(configuredUrl);
+	} catch {
+		return invalidChatApiUrl();
 	}
 
-	if (chatApiUrl.endsWith(GENERATION_PATH)) {
-		chatApiUrl = chatApiUrl.slice(0, -GENERATION_PATH.length);
+	if (
+		!['http:', 'https:'].includes(parsed.protocol) ||
+		!parsed.hostname ||
+		parsed.username ||
+		parsed.password ||
+		parsed.search ||
+		parsed.hash
+	) {
+		return invalidChatApiUrl();
 	}
 
-	return chatApiUrl;
+	let basePath = parsed.pathname.replace(/\/+$/, '');
+	if (basePath.endsWith(GENERATION_PATH)) {
+		basePath = basePath.slice(0, -GENERATION_PATH.length);
+	}
+
+	const baseUrl = `${parsed.origin}${basePath}`;
+	return {
+		generationUrl: `${baseUrl}${GENERATION_PATH}`,
+		baseUrl
+	};
+}
+
+export function deriveChatApiBaseUrl(configuredUrl: string): string {
+	return resolveChatApiUrls(configuredUrl).baseUrl;
 }

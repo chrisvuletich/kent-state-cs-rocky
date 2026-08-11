@@ -35,13 +35,17 @@ audit records without guessing.
 | `401` | `invalid_api_key` | The Bearer key is missing, invalid, inactive, revoked, or expired. | Check the header and generate or reactivate a key. Do not automatically retry the same key. |
 | `404` | `response_not_found` | A `previous_response_id` was not found or does not belong to this credential. | Start a new request or use a response ID created by the same key. |
 | `413` | `request_too_large` | The complete HTTP request body exceeds the server limit. | Send a smaller request. |
+| `429` | `rate_limit_exceeded`, `ingress_rate_limit_exceeded` | The API key exhausted its minute limit, or unusually heavy traffic arrived from the same network address. | Wait at least the number of seconds in `Retry-After`, then retry with a small random delay. |
 | `500` | `internal_error` | An unexpected Rocky error occurred. | Record the request ID and retry once after a short delay. Report repeated failures. |
 | `502` | `model_service_unavailable`, `invalid_model_response`, `model_error` | Granite or Ollama could not be reached or returned an unusable response. | Retry once after a short delay. Report repeated failures with the request ID. |
-| `503` | `model_busy`, `request_logging_unavailable` | The model is busy or required audit logging is unavailable. | For `model_busy`, honor the `Retry-After` header. Otherwise wait for the service to recover. |
+| `503` | `model_busy`, `request_logging_unavailable`, `rate_limit_unavailable` | The model is busy or a required internal service is unavailable. | For `model_busy`, honor the `Retry-After` header. Otherwise wait for the service to recover. |
 | `504` | `model_timeout` | Model generation exceeded the configured time limit. | Retry once, preferably with shorter input or a smaller `max_output_tokens`. |
 
-Rocky does not currently return `429` rate-limit errors. If rate limiting is
-added later, clients should treat `429` as temporary and honor `Retry-After`.
+After Rocky authenticates and counts a request, the response includes
+`x-ratelimit-limit-requests`, `x-ratelimit-remaining-requests`, and
+`x-ratelimit-reset-requests`. The reset value is a duration such as `17s`.
+Rocky enforces request limits only, so token-limit headers are not present.
+`Retry-After` is returned in whole seconds when a temporary `429` limit is hit.
 
 ## Handle errors with Python requests
 
@@ -73,7 +77,7 @@ else:
     print(f"{response.status_code} {error.get('code')}: {error.get('message')}")
     print(f"Request ID: {request_id}")
 
-    if error.get("code") == "model_busy":
+    if error.get("code") in {"model_busy", "rate_limit_exceeded"}:
         time.sleep(int(response.headers.get("Retry-After", "2")))
 ```
 

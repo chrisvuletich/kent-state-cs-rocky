@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 API_HOST_VAR = "ROCKY_API_HOST"
 API_PORT_VAR = "ROCKY_API_PORT"
@@ -12,6 +13,7 @@ GRANITE_HOST_VAR = "ROCKY_GRANITE_HOST"
 GRANITE_PORT_VAR = "ROCKY_GRANITE_PORT"
 CHAT_API_HOST_VAR = "ROCKY_CHAT_API_HOST"
 CHAT_API_PORT_VAR = "ROCKY_CHAT_API_PORT"
+CHAT_GENERATION_PATH = "/v1/responses"
 
 
 def load_env_file(path: Path, *, override: bool) -> None:
@@ -67,6 +69,15 @@ def require_port(name: str) -> str:
     return str(port)
 
 
+def env_bool(name: str, default: bool) -> bool:
+    raw_value = os.getenv(name, "true" if default else "false").strip().lower()
+    if raw_value == "true":
+        return True
+    if raw_value == "false":
+        return False
+    raise RuntimeError(f"Invalid {name}: expected exactly true or false.")
+
+
 def backend_bind() -> tuple[str, str]:
     host = require_env(API_HOST_VAR)
     port = require_port(API_PORT_VAR)
@@ -113,5 +124,42 @@ def chat_api_bind() -> tuple[str, str]:
 
 def chat_api_url() -> str:
     chat_host, chat_port = chat_api_bind()
-    completed_URL = f"http://{chat_host}:{chat_port}/v1/responses"
-    return completed_URL
+    return f"http://{chat_host}:{chat_port}{CHAT_GENERATION_PATH}"
+
+
+def normalize_chat_api_urls(configured_url: str) -> tuple[str, str]:
+    """Return the canonical generation URL and service base URL."""
+    value = configured_url.strip()
+    try:
+        parsed = urlsplit(value)
+        hostname = parsed.hostname
+        parsed.port
+    except ValueError as exc:
+        raise RuntimeError(
+            "Invalid ROCKY_CHAT_API_URL. Expected an absolute http(s) service URL "
+            "or /v1/responses endpoint without credentials, a query string, or a fragment."
+        ) from exc
+
+    invalid = (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.netloc
+        or not hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or bool(parsed.query)
+        or bool(parsed.fragment)
+        or any(character.isspace() for character in value)
+    )
+    if invalid:
+        raise RuntimeError(
+            "Invalid ROCKY_CHAT_API_URL. Expected an absolute http(s) service URL "
+            "or /v1/responses endpoint without credentials, a query string, or a fragment."
+        )
+
+    base_path = parsed.path.rstrip("/")
+    if base_path.endswith(CHAT_GENERATION_PATH):
+        base_path = base_path[: -len(CHAT_GENERATION_PATH)]
+
+    base_url = urlunsplit((parsed.scheme, parsed.netloc, base_path, "", ""))
+    generation_url = f"{base_url}{CHAT_GENERATION_PATH}"
+    return generation_url, base_url

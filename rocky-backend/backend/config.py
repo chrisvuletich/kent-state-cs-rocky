@@ -3,8 +3,14 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
+
+
+VALID_APP_ENVS = {"development", "testing", "production"}
+VALID_DB_BACKENDS = {"mongita", "mongodb"}
+PLACEHOLDER_PREFIXES = ("replace-with", "change-me", "changeme")
 
 
 @dataclass(frozen=True)
@@ -29,10 +35,68 @@ class Settings:
     hardware_retention_days: int = 90
 
 
-def _is_truthy(value: str | None) -> bool:
-    if value is None:
+def _env_value(name: str, default: str = "") -> str:
+    return os.getenv(name, default).strip()
+
+
+def _env_choice(name: str, default: str, choices: set[str]) -> str:
+    value = _env_value(name, default).lower() or default
+    if value not in choices:
+        expected = ", ".join(sorted(choices))
+        raise RuntimeError(f"Invalid {name}: expected one of {expected}.")
+    return value
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = _env_value(name, "true" if default else "false").lower()
+    if value == "true":
+        return True
+    if value == "false":
         return False
-    return value.strip().lower() in {"1", "true", "yes", "on"}
+    raise RuntimeError(f"Invalid {name}: expected exactly true or false.")
+
+
+def _env_int(
+    name: str,
+    default: int,
+    *,
+    minimum: int | None = None,
+    maximum: int | None = None,
+) -> int:
+    raw_value = _env_value(name, str(default))
+    try:
+        value = int(raw_value)
+    except ValueError as error:
+        raise RuntimeError(f"Invalid {name}: expected an integer.") from error
+    if minimum is not None and value < minimum:
+        raise RuntimeError(f"Invalid {name}: must be at least {minimum}.")
+    if maximum is not None and value > maximum:
+        raise RuntimeError(f"Invalid {name}: must be at most {maximum}.")
+    return value
+
+
+def _valid_http_url(value: str) -> bool:
+    try:
+        parsed = urlparse(value)
+        hostname = parsed.hostname
+        parsed.port
+    except ValueError:
+        return False
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc or not hostname:
+        return False
+    if parsed.username is not None or parsed.password is not None:
+        return False
+    if parsed.query or parsed.fragment:
+        return False
+    return True
+
+
+def _require_production_secret(name: str, value: str) -> None:
+    is_placeholder = value.lower().startswith(PLACEHOLDER_PREFIXES)
+    if len(value) < 32 or is_placeholder:
+        raise RuntimeError(
+            f"{name} must be a non-placeholder value of at least 32 characters in production"
+        )
 
 
 def _load_env_files() -> None:
@@ -52,38 +116,59 @@ def _resolve_mongita_path(value: str) -> str:
 def get_settings() -> Settings:
     _load_env_files()
 
-    app_env = os.getenv("ROCKY_APP_ENV", "development").strip().lower() or "development"
-    db_backend = os.getenv("ROCKY_DB_BACKEND", "mongita").strip().lower() or "mongita"
-    mongodb_uri = os.getenv("ROCKY_MONGODB_URI", "").strip()
-    internal_proxy_secret = os.getenv("ROCKY_INTERNAL_PROXY_SECRET", "").strip()
+    app_env = _env_choice("ROCKY_APP_ENV", "development", VALID_APP_ENVS)
+    default_db_backend = "mongodb" if app_env == "production" else "mongita"
+    db_backend = _env_choice(
+        "ROCKY_DB_BACKEND", default_db_backend, VALID_DB_BACKENDS
+    )
+    mongodb_uri = _env_value("ROCKY_MONGODB_URI")
+    hidden_api_key_secret = _env_value("ROCKY_HIDDEN_API_KEY_SECRET")
+    internal_proxy_secret = _env_value("ROCKY_INTERNAL_PROXY_SECRET")
 
-    if app_env == "production" and not mongodb_uri:
-        raise RuntimeError("ROCKY_MONGODB_URI is required when ROCKY_APP_ENV=production")
-    if app_env == "production" and not internal_proxy_secret:
-        raise RuntimeError("ROCKY_INTERNAL_PROXY_SECRET is required when ROCKY_APP_ENV=production")
-    if app_env == "production" and len(internal_proxy_secret) < 32:
-        raise RuntimeError(
-            "ROCKY_INTERNAL_PROXY_SECRET must contain at least 32 characters in production"
+    if app_env == "production" and db_backend != "mongodb":
+        raise RuntimeError("ROCKY_DB_BACKEND must be mongodb in production")
+    if db_backend == "mongodb" and not mongodb_uri:
+        raise RuntimeError("ROCKY_MONGODB_URI is required for the MongoDB backend")
+    if app_env == "production":
+        _require_production_secret(
+            "ROCKY_HIDDEN_API_KEY_SECRET", hidden_api_key_secret
+        )
+        _require_production_secret(
+            "ROCKY_INTERNAL_PROXY_SECRET", internal_proxy_secret
         )
 
-    hardware_telemetry_enabled = _is_truthy(
-        os.getenv("ROCKY_HARDWARE_TELEMETRY_ENABLED", "false")
+    debug = _env_bool("ROCKY_DEBUG", app_env != "production")
+    enable_db_inspector = _env_bool(
+        "ROCKY_ENABLE_DB_INSPECTOR", app_env != "production"
     )
-    hardware_metrics_url = os.getenv("ROCKY_HARDWARE_METRICS_URL", "").strip()
-    hardware_metrics_token = os.getenv("ROCKY_HARDWARE_METRICS_TOKEN", "").strip()
+    if app_env == "production" and debug:
+        raise RuntimeError("ROCKY_DEBUG must be false in production")
+    if app_env == "production" and enable_db_inspector:
+        raise RuntimeError("ROCKY_ENABLE_DB_INSPECTOR must be false in production")
+
+    hardware_telemetry_enabled = _env_bool(
+        "ROCKY_HARDWARE_TELEMETRY_ENABLED", False
+    )
+    hardware_metrics_url = _env_value("ROCKY_HARDWARE_METRICS_URL")
+    hardware_metrics_token = _env_value("ROCKY_HARDWARE_METRICS_TOKEN")
     if hardware_telemetry_enabled and not hardware_metrics_url:
         raise RuntimeError(
             "ROCKY_HARDWARE_METRICS_URL is required when hardware telemetry is enabled"
         )
-    if app_env == "production" and hardware_telemetry_enabled and not hardware_metrics_token:
+    if hardware_telemetry_enabled and not _valid_http_url(hardware_metrics_url):
         raise RuntimeError(
-            "ROCKY_HARDWARE_METRICS_TOKEN is required for production hardware telemetry"
+            "Invalid ROCKY_HARDWARE_METRICS_URL: expected an absolute http(s) URL "
+            "without credentials, a query string, or a fragment."
+        )
+    if app_env == "production" and hardware_telemetry_enabled:
+        _require_production_secret(
+            "ROCKY_HARDWARE_METRICS_TOKEN", hardware_metrics_token
         )
 
-    host = os.getenv("ROCKY_API_HOST", "127.0.0.1")
-    port = os.getenv("ROCKY_API_PORT", "5001")
+    host = _env_value("ROCKY_API_HOST", "127.0.0.1") or "127.0.0.1"
+    port = _env_int("ROCKY_API_PORT", 5001, minimum=1, maximum=65535)
 
-    microsoft_override = _is_truthy(os.getenv("ROCKY_ENABLE_MICROSOFT_OAUTH", "false"))
+    microsoft_override = _env_bool("ROCKY_ENABLE_MICROSOFT_OAUTH", False)
     if app_env == "production":
         enable_microsoft_oauth = True
     elif app_env == "testing":
@@ -93,29 +178,29 @@ def get_settings() -> Settings:
 
     return Settings(
         app_env=app_env,
-        host=host.strip() or "127.0.0.1",
-        port=int(port),
-        debug=_is_truthy(os.getenv("ROCKY_DEBUG", "false" if app_env == "production" else "true")),
+        host=host,
+        port=port,
+        debug=debug,
         db_backend=db_backend,
         mongodb_uri=mongodb_uri,
-        db_name=os.getenv("ROCKY_DB_NAME", "rocky_db").strip() or "rocky_db",
+        db_name=_env_value("ROCKY_DB_NAME", "rocky_db") or "rocky_db",
         mongita_path=_resolve_mongita_path(
-            os.getenv("ROCKY_MONGITA_PATH", ".rocky-data/mongita")
+            _env_value("ROCKY_MONGITA_PATH", ".rocky-data/mongita")
         ),
-        enable_db_inspector=_is_truthy(os.getenv("ROCKY_ENABLE_DB_INSPECTOR", "false" if app_env == "production" else "true")),
+        enable_db_inspector=enable_db_inspector,
         enable_preview_login=not enable_microsoft_oauth,
         enable_microsoft_oauth=enable_microsoft_oauth,
         internal_proxy_secret=internal_proxy_secret,
         hardware_telemetry_enabled=hardware_telemetry_enabled,
         hardware_metrics_url=hardware_metrics_url,
         hardware_metrics_token=hardware_metrics_token,
-        hardware_sample_interval_seconds=max(
-            10, int(os.getenv("ROCKY_HARDWARE_SAMPLE_INTERVAL_SECONDS", "30"))
+        hardware_sample_interval_seconds=_env_int(
+            "ROCKY_HARDWARE_SAMPLE_INTERVAL_SECONDS", 30, minimum=10
         ),
-        hardware_metrics_timeout_seconds=max(
-            1, int(os.getenv("ROCKY_HARDWARE_METRICS_TIMEOUT_SECONDS", "5"))
+        hardware_metrics_timeout_seconds=_env_int(
+            "ROCKY_HARDWARE_METRICS_TIMEOUT_SECONDS", 5, minimum=1
         ),
-        hardware_retention_days=max(
-            1, int(os.getenv("ROCKY_HARDWARE_RETENTION_DAYS", "90"))
+        hardware_retention_days=_env_int(
+            "ROCKY_HARDWARE_RETENTION_DAYS", 90, minimum=1
         ),
     )

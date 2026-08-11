@@ -48,6 +48,13 @@ ROCKY_MONGODB_URI=...
 
 The chat API reads API keys from the same database, so `ROCKY_DB_NAME` and the MongoDB settings must be identical for `rocky-backend` and `rocky-chat-api`. Nginx exposes only the frontend, `POST /v1/responses`, and `GET /v1/models`.
 
+The tracked Nginx configuration also applies a coarse 120-request-per-minute
+per-client-address limit, with a bounded burst, to both public API routes. This
+protects permanent audit storage from unauthenticated floods; application-level
+per-key limits remain authoritative for normal API use. Requests rejected at
+the Nginx boundary remain visible in the Nginx access log but do not have a
+Rocky request ID because they never reach the application.
+
 Set the same long random `ROCKY_HIDDEN_API_KEY_SECRET` in both `/etc/rocky/backend.env` and `/etc/rocky/frontend.env` so the built-in web chat can use each user's hidden key. Also set the same independent `ROCKY_INTERNAL_PROXY_SECRET` in both files; Flask rejects forwarded user and administrator headers without it. Set a third independent `ROCKY_SESSION_SECRET` in `/etc/rocky/frontend.env` for signed web sessions. Both new secrets must contain at least 32 characters in production.
 
 Set one additional long random `ROCKY_GRANITE_TOKEN` in Rocky's
@@ -78,6 +85,7 @@ ROCKY_APP_ENV=production
 ROCKY_GRANITE_TOKEN=...
 OLLAMA_BASE_URL=http://127.0.0.1:11434
 OLLAMA_MODEL=gemma4:latest
+ROCKY_MAX_OUTPUT_TOKENS=2048
 ROCKY_GRANITE_MAX_CONCURRENT=1
 ROCKY_GRANITE_QUEUE_WAIT_SECONDS=1
 ```
@@ -176,9 +184,12 @@ export ROCKY_EXPECTED_MODEL='gemma4:latest'
 python run-test/integration/deployment_smoke.py
 ```
 
-That command is read-only: it checks web health, aggregate service health, and
-authenticated model discovery. After those pass, submit one short, audited
-generation request with:
+That command is non-generating: it checks web health, aggregate service health,
+authenticated model discovery, and the live model-discovery rate-limit headers.
+The authenticated request is still audited and consumes one model-discovery
+quota unit. Use a dedicated instructor or deployment-test key rather than a
+student's key. After those checks pass, submit one short, audited generation
+request and verify its rate-limit headers with:
 
 ```sh
 python run-test/integration/deployment_smoke.py --include-generation
@@ -189,6 +200,23 @@ Unset the key when finished:
 ```sh
 unset ROCKY_API_KEY
 ```
+
+### Rate-limit rollout verification
+
+A successful default smoke run includes `PASS  model rate limit`; the optional
+generation run also includes `PASS  generation rate limit`. These checks verify
+that all three request-limit headers are present, the limit and remaining count
+are internally consistent, and the reset is within Rocky's fixed one-minute
+window.
+
+The deployment smoke test deliberately does not exhaust a key or create an
+intentional `429`. After rollout, use the admin Analytics view to confirm that
+`Limiter unavailable` remains zero and to review any `Rate-limit rejections` in
+their course and user context. A rejection can be expected when a client really
+exceeds its quota; any limiter-unavailable event indicates a database or
+rate-limit storage problem that should be investigated. Avoid repeatedly or
+concurrently running the smoke command because each authenticated API call is
+audited and consumes quota.
 
 ## Request retention
 
@@ -415,4 +443,4 @@ python run-test/integration/deployment_smoke.py
 
 Finally verify sign-in, course membership, API-key authentication, analytics,
 request detail, and audit logs. Run the optional smoke-test generation only
-after the read-only checks pass.
+after the non-generating checks pass.

@@ -34,6 +34,11 @@ Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 
 Copy `.env.example` to `.env`, then set values for your target environment.
 
+Configuration is validated at startup. Boolean values must be exactly `true`
+or `false`; ports and hardware limits must be in range; and enabled hardware
+telemetry requires an absolute HTTP(S) metrics URL without embedded
+credentials. Invalid values fail immediately with the setting name.
+
 Core variables:
 
 - `ROCKY_APP_ENV`: `development` | `testing` | `production`
@@ -42,6 +47,8 @@ Core variables:
 - `ROCKY_DB_NAME`: database name
 - `ROCKY_MONGITA_PATH`: local data directory shared with `api-rocky`
 - `ROCKY_API_HOST` and `ROCKY_API_PORT`: backend bind settings
+- `ROCKY_HIDDEN_API_KEY_SECRET`: private derivation secret used for built-in
+  web-chat keys; production requires at least 32 characters
 - `ROCKY_INTERNAL_PROXY_SECRET`: private secret shared with the Svelte server;
   production requires at least 32 characters
 
@@ -62,7 +69,15 @@ Production baseline:
 - `ROCKY_DB_BACKEND=mongodb`
 - `ROCKY_MONGODB_URI` set to valid credentials
 - `ROCKY_ENABLE_DB_INSPECTOR=false`
+- `ROCKY_HIDDEN_API_KEY_SECRET` set to the same value used by SvelteKit
 - `ROCKY_INTERNAL_PROXY_SECRET` set to the same value as the Svelte server
+
+The management API is a server-to-server service for SvelteKit, not a browser
+API, so it intentionally does not emit cross-origin CORS headers. Browser code
+should use SvelteKit's `/api/backend/...` routes. In development only, a missing
+`ROCKY_INTERNAL_PROXY_SECRET` permits identity headers from direct IPv4 or IPv6
+loopback peers. Any shared-interface or reverse-proxy setup must configure the
+same secret in the backend and SvelteKit environments.
 
 ## Run backend
 
@@ -87,7 +102,7 @@ Available endpoints:
 
 - `GET /analytics/current`: active requests and lifetime counters.
 - `GET /analytics/summary?window=24h`: outcomes, token usage, RPM/TPM,
-  latency percentiles, and model timing/throughput.
+  latency percentiles, model timing/throughput, and rate-limit incidents.
 - `GET /analytics/timeseries?window=24h&bucket=hour`: zero-filled time buckets.
 - `GET /analytics/hardware?window=24h&bucket=hour`: bounded Granite hardware
   history aligned with workload, latency, model-load time, and generation speed.
@@ -105,7 +120,9 @@ Available endpoints:
 
 Analytics summary, time-series, hardware-workload, breakdown, request-list,
 and export routes share the `user_id`, `course_id`, `key_id`, `model`,
-`operation`, `outcome`, `source`, `flagged`, and `review_status` filters.
+`operation`, `outcome`, `source`, `error_type`, `flagged`, and `review_status`
+filters. Rate-limit enforcement records use `rate_limit_exceeded`; limiter
+storage or identity failures remain separate and are reported as unavailable.
 Review status is one of `unreviewed`, `in_review`, or `resolved`. A review
 update accepts `flagged`, `flag_reasons`, `status`, and `notes`; flagged
 requests require at least one reason. Supported reasons are
@@ -188,7 +205,16 @@ by the live telemetry endpoints.
 
 From repository root:
 
+macOS/Linux:
+
+```sh
+PYTHONPATH=rocky-backend python -m unittest discover -s run-test/backend -p "test_*.py" -v
+```
+
+Windows PowerShell:
+
 ```powershell
+$env:PYTHONPATH = "rocky-backend"
 python -m unittest discover -s run-test/backend -p "test_*.py" -v
 ```
 

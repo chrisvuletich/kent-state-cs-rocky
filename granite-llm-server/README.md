@@ -10,6 +10,10 @@ Copy `.env.example` to `.env`, ensure Ollama is running with the configured `OLL
 python -m app.main
 ```
 
+The bridge validates environment names, service URLs, ports, limits, and
+timeouts at startup. Invalid values fail immediately with the setting name;
+omitted optional values use the defaults in `.env.example`.
+
 Set the same `ROCKY_GRANITE_TOKEN` here and on the Rocky chat API. The public
 model identifier is configured with `ROCKY_PUBLIC_MODEL`; the bridge sends the
 server-controlled `OLLAMA_MODEL` to Ollama. `/ready` verifies that Ollama is

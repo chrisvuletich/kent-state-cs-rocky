@@ -66,6 +66,11 @@ def successful_routes(base_url="https://rocky.example"):
         ("GET", f"{base_url}/v1/models"): FakeResponse(
             200,
             {"object": "list", "data": [{"id": "course-model", "object": "model"}]},
+            {
+                "X-RateLimit-Limit-Requests": "120",
+                "x-ratelimit-remaining-requests": "119",
+                "X-Ratelimit-Reset-Requests": "42s",
+            },
         ),
         ("POST", f"{base_url}/v1/responses"): FakeResponse(
             200,
@@ -75,7 +80,12 @@ def successful_routes(base_url="https://rocky.example"):
                 "output_text": "Rocky deployment smoke passed.",
                 "usage": {"input_tokens": 8, "output_tokens": 5, "total_tokens": 13},
             },
-            {"x-request-id": "req_smoke"},
+            {
+                "x-request-id": "req_smoke",
+                "x-ratelimit-limit-requests": "10",
+                "x-ratelimit-remaining-requests": "9",
+                "x-ratelimit-reset-requests": "42s",
+            },
         ),
     }
 
@@ -90,16 +100,20 @@ class DeploymentSmokeTests(unittest.TestCase):
             include_generation=include_generation,
         )
 
-    def test_read_only_smoke_checks_public_health_and_models(self):
+    def test_non_generating_smoke_checks_public_health_and_models(self):
         session = FakeSession(successful_routes())
         checks = smoke.DeploymentSmoke(self.config(), session=session).run()
 
         self.assertTrue(all(check.passed for check in checks))
-        self.assertEqual([check.name for check in checks], [
-            "web health",
-            "service health",
-            "model discovery",
-        ])
+        self.assertEqual(
+            [check.name for check in checks],
+            [
+                "web health",
+                "service health",
+                "model discovery",
+                "model rate limit",
+            ],
+        )
         self.assertFalse(any(method == "POST" for method, _url, _kwargs in session.calls))
         model_call = next(call for call in session.calls if call[1].endswith("/v1/models"))
         self.assertEqual(
@@ -114,10 +128,66 @@ class DeploymentSmokeTests(unittest.TestCase):
         ).run()
 
         self.assertTrue(all(check.passed for check in checks))
+        self.assertEqual(
+            [check.name for check in checks][-2:],
+            [
+                "generation",
+                "generation rate limit",
+            ],
+        )
         generation_call = next(call for call in session.calls if call[0] == "POST")
         self.assertEqual(generation_call[2]["json"]["model"], "course-model")
         self.assertEqual(generation_call[2]["json"]["store"], False)
         self.assertEqual(generation_call[2]["json"]["max_output_tokens"], 32)
+
+    def test_generation_reports_missing_rate_limit_headers_separately(self):
+        routes = successful_routes()
+        generation_response = routes[("POST", "https://rocky.example/v1/responses")]
+        generation_response.headers = {"x-request-id": "req_smoke"}
+
+        checks = smoke.DeploymentSmoke(
+            self.config(include_generation=True),
+            session=FakeSession(routes),
+        ).run()
+
+        self.assertTrue(checks[4].passed)
+        self.assertFalse(checks[5].passed)
+        self.assertIn("Missing required header", checks[5].detail)
+
+    def test_generation_is_skipped_when_a_prerequisite_check_fails(self):
+        routes = successful_routes()
+        routes[("GET", "https://rocky.example/api/server-health")] = FakeResponse(
+            503,
+            {
+                "ok": False,
+                "services": [{"name": "ollama", "ok": False}],
+            },
+        )
+        session = FakeSession(routes)
+
+        checks = smoke.DeploymentSmoke(
+            self.config(include_generation=True), session=session
+        ).run()
+
+        self.assertFalse(checks[1].passed)
+        self.assertFalse(checks[4].passed)
+        self.assertIn("service health", checks[4].detail)
+        self.assertFalse(any(method == "POST" for method, _url, _kwargs in session.calls))
+
+    def test_generation_is_skipped_when_model_rate_limit_contract_fails(self):
+        routes = successful_routes()
+        routes[("GET", "https://rocky.example/v1/models")].headers = {}
+        session = FakeSession(routes)
+
+        checks = smoke.DeploymentSmoke(
+            self.config(include_generation=True), session=session
+        ).run()
+
+        self.assertTrue(checks[2].passed)
+        self.assertFalse(checks[3].passed)
+        self.assertFalse(checks[4].passed)
+        self.assertIn("model rate limit", checks[4].detail)
+        self.assertFalse(any(method == "POST" for method, _url, _kwargs in session.calls))
 
     def test_failed_service_and_model_mismatch_are_reported(self):
         routes = successful_routes()
@@ -140,6 +210,63 @@ class DeploymentSmokeTests(unittest.TestCase):
         self.assertEqual(checks[1].detail, "Unavailable: ollama")
         self.assertFalse(checks[2].passed)
         self.assertIn("missing-model", checks[2].detail)
+        self.assertTrue(checks[3].passed)
+
+    def test_missing_rate_limit_headers_fail_the_deployed_contract(self):
+        routes = successful_routes()
+        routes[("GET", "https://rocky.example/v1/models")].headers = {}
+
+        checks = smoke.DeploymentSmoke(self.config(), session=FakeSession(routes)).run()
+
+        self.assertTrue(checks[2].passed)
+        self.assertFalse(checks[3].passed)
+        self.assertIn("x-ratelimit-limit-requests", checks[3].detail)
+        self.assertIn("x-ratelimit-reset-requests", checks[3].detail)
+
+    def test_rate_limit_header_validation_rejects_malformed_values(self):
+        invalid_headers = (
+            (
+                {
+                    "x-ratelimit-limit-requests": "ten",
+                    "x-ratelimit-remaining-requests": "9",
+                    "x-ratelimit-reset-requests": "42s",
+                },
+                "positive integer",
+            ),
+            (
+                {
+                    "x-ratelimit-limit-requests": "10",
+                    "x-ratelimit-remaining-requests": "11",
+                    "x-ratelimit-reset-requests": "42s",
+                },
+                "cannot exceed",
+            ),
+            (
+                {
+                    "x-ratelimit-limit-requests": "10",
+                    "x-ratelimit-remaining-requests": "9",
+                    "x-ratelimit-reset-requests": "61s",
+                },
+                "between 1s and 60s",
+            ),
+            (
+                {
+                    "x-ratelimit-limit-requests": "10",
+                    "x-ratelimit-remaining-requests": "9",
+                    "x-ratelimit-reset-requests": "soon",
+                },
+                "whole number of seconds",
+            ),
+        )
+
+        for headers, expected_detail in invalid_headers:
+            with self.subTest(headers=headers):
+                check = smoke.check_rate_limit_headers(
+                    FakeResponse(200, {}, headers),
+                    "rate limit",
+                )
+                self.assertFalse(check.passed)
+                self.assertIn(expected_detail, check.detail)
 
     def test_configuration_uses_environment_without_exposing_key(self):
         args = smoke.parse_args(["--base-url", "https://rocky.example/v1/responses"])
@@ -161,6 +288,16 @@ class DeploymentSmokeTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "absolute"):
             smoke.normalize_base_url("rocky.example")
+
+        for value in (
+            "https://rocky.example?tenant=one",
+            "https://rocky.example#internal",
+            "https://user:password@rocky.example",
+        ):
+            with self.subTest(value=value), self.assertRaisesRegex(
+                ValueError, "ROCKY_BASE_URL"
+            ):
+                smoke.normalize_base_url(value)
 
 
 if __name__ == "__main__":

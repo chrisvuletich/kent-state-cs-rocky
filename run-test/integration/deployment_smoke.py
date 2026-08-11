@@ -2,15 +2,22 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
 import requests
 
 
 DEFAULT_PROMPT = "Reply with exactly: Rocky deployment smoke passed."
+RATE_LIMIT_HEADERS = (
+    "x-ratelimit-limit-requests",
+    "x-ratelimit-remaining-requests",
+    "x-ratelimit-reset-requests",
+)
+RATE_LIMIT_WINDOW_SECONDS = 60
 
 
 @dataclass(frozen=True)
@@ -30,14 +37,35 @@ class SmokeCheck:
 
 
 def normalize_base_url(value: str) -> str:
-    normalized = value.strip().rstrip("/")
+    raw_value = value.strip()
+    try:
+        parsed = urlparse(raw_value)
+        hostname = parsed.hostname
+        parsed.port
+    except ValueError as error:
+        raise ValueError(
+            "ROCKY_BASE_URL must be an absolute http(s) URL without credentials, "
+            "a query string, or a fragment."
+        ) from error
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.netloc
+        or not hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or bool(parsed.query)
+        or bool(parsed.fragment)
+    ):
+        raise ValueError(
+            "ROCKY_BASE_URL must be an absolute http(s) URL without credentials, "
+            "a query string, or a fragment."
+        )
+
+    path = parsed.path.rstrip("/")
     for suffix in ("/v1/responses", "/v1/models"):
-        if normalized.endswith(suffix):
-            normalized = normalized[: -len(suffix)]
-    parsed = urlparse(normalized)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise ValueError("ROCKY_BASE_URL must be an absolute http:// or https:// URL.")
-    return normalized
+        if path.endswith(suffix):
+            path = path[: -len(suffix)]
+    return urlunparse((parsed.scheme, parsed.netloc, path, "", "", ""))
 
 
 def response_payload(response: requests.Response) -> dict[str, Any]:
@@ -57,6 +85,75 @@ def error_detail(response: requests.Response, payload: dict[str, Any]) -> str:
     return f"HTTP {response.status_code}"
 
 
+def check_rate_limit_headers(response: requests.Response, name: str) -> SmokeCheck:
+    """Validate Rocky's request-limit header contract without exhausting a key."""
+    headers = {
+        str(header_name).lower(): str(value).strip()
+        for header_name, value in response.headers.items()
+    }
+    missing = [
+        header_name for header_name in RATE_LIMIT_HEADERS if header_name not in headers
+    ]
+    if missing:
+        return SmokeCheck(
+            name,
+            False,
+            "Missing required header(s): " + ", ".join(missing) + ".",
+        )
+
+    limit_text = headers["x-ratelimit-limit-requests"]
+    remaining_text = headers["x-ratelimit-remaining-requests"]
+    reset_text = headers["x-ratelimit-reset-requests"]
+    if re.fullmatch(r"[0-9]+", limit_text) is None:
+        return SmokeCheck(name, False, "Request limit must be a positive integer.")
+    if re.fullmatch(r"[0-9]+", remaining_text) is None:
+        return SmokeCheck(
+            name,
+            False,
+            "Remaining requests must be a non-negative integer.",
+        )
+
+    reset_match = re.fullmatch(r"([0-9]+)s", reset_text)
+    if reset_match is None:
+        return SmokeCheck(
+            name,
+            False,
+            "Reset must be a whole number of seconds such as '17s'.",
+        )
+
+    try:
+        limit = int(limit_text)
+        remaining = int(remaining_text)
+        reset_seconds = int(reset_match.group(1))
+    except ValueError:
+        return SmokeCheck(
+            name,
+            False,
+            "Rate-limit header values are too large to parse.",
+        )
+
+    if limit < 1:
+        return SmokeCheck(name, False, "Request limit must be greater than zero.")
+    if remaining > limit:
+        return SmokeCheck(
+            name,
+            False,
+            "Remaining requests cannot exceed the request limit.",
+        )
+    if not 1 <= reset_seconds <= RATE_LIMIT_WINDOW_SECONDS:
+        return SmokeCheck(
+            name,
+            False,
+            f"Reset must be between 1s and {RATE_LIMIT_WINDOW_SECONDS}s.",
+        )
+
+    return SmokeCheck(
+        name,
+        True,
+        f"{limit} request(s)/minute; {remaining} remaining; resets in {reset_seconds}s.",
+    )
+
+
 class DeploymentSmoke:
     def __init__(self, config: SmokeConfig, session: requests.Session | None = None):
         self.config = config
@@ -73,17 +170,46 @@ class DeploymentSmoke:
 
     def run(self) -> list[SmokeCheck]:
         checks = [self.check_web_health(), self.check_service_health()]
-        models_check, model = self.check_models()
-        checks.append(models_check)
+        models_check, models_rate_limit_check, model = self.check_models()
+        checks.extend((models_check, models_rate_limit_check))
         if self.config.include_generation:
-            if model:
-                checks.append(self.check_generation(model))
+            failed_prerequisites = [
+                check.name for check in checks if not check.passed
+            ]
+            if failed_prerequisites:
+                detail = (
+                    "Skipped because prerequisite checks failed: "
+                    + ", ".join(failed_prerequisites)
+                    + "."
+                )
+                checks.extend(
+                    (
+                        SmokeCheck("generation", False, detail),
+                        SmokeCheck(
+                            "generation rate limit",
+                            False,
+                            "Skipped because no generation request was sent.",
+                        ),
+                    )
+                )
+            elif model:
+                generation_check, generation_rate_limit_check = self.check_generation(
+                    model
+                )
+                checks.extend((generation_check, generation_rate_limit_check))
             else:
-                checks.append(
-                    SmokeCheck(
-                        "generation",
-                        False,
-                        "Skipped because model discovery failed.",
+                checks.extend(
+                    (
+                        SmokeCheck(
+                            "generation",
+                            False,
+                            "Skipped because model discovery failed.",
+                        ),
+                        SmokeCheck(
+                            "generation rate limit",
+                            False,
+                            "Skipped because no generation request was sent.",
+                        ),
                     )
                 )
         return checks
@@ -92,7 +218,11 @@ class DeploymentSmoke:
         try:
             response = self.request("GET", "/api/health")
         except requests.RequestException as error:
-            return SmokeCheck("web health", False, f"Connection failed: {type(error).__name__}")
+            return SmokeCheck(
+                "web health",
+                False,
+                f"Connection failed: {type(error).__name__}",
+            )
 
         payload = response_payload(response)
         passed = response.status_code == 200 and payload.get("ok") is True
@@ -118,7 +248,11 @@ class DeploymentSmoke:
                 for service in services
                 if isinstance(service, dict) and service.get("ok") is not True
             ]
-        passed = response.status_code == 200 and payload.get("ok") is True and not unavailable
+        passed = (
+            response.status_code == 200
+            and payload.get("ok") is True
+            and not unavailable
+        )
         if passed:
             detail = "All reported services are healthy."
         elif unavailable:
@@ -127,18 +261,32 @@ class DeploymentSmoke:
             detail = error_detail(response, payload)
         return SmokeCheck("service health", passed, detail)
 
-    def check_models(self) -> tuple[SmokeCheck, str | None]:
+    def check_models(self) -> tuple[SmokeCheck, SmokeCheck, str | None]:
         try:
             response = self.request("GET", "/v1/models", headers=self.auth_headers)
         except requests.RequestException as error:
             return (
-                SmokeCheck("model discovery", False, f"Connection failed: {type(error).__name__}"),
+                SmokeCheck(
+                    "model discovery",
+                    False,
+                    f"Connection failed: {type(error).__name__}",
+                ),
+                SmokeCheck(
+                    "model rate limit",
+                    False,
+                    "Unavailable because model discovery did not receive a response.",
+                ),
                 None,
             )
 
         payload = response_payload(response)
+        rate_limit_check = check_rate_limit_headers(response, "model rate limit")
         if response.status_code != 200:
-            return SmokeCheck("model discovery", False, error_detail(response, payload)), None
+            return (
+                SmokeCheck("model discovery", False, error_detail(response, payload)),
+                rate_limit_check,
+                None,
+            )
 
         data = payload.get("data")
         model_ids = (
@@ -153,7 +301,11 @@ class DeploymentSmoke:
             else []
         )
         if not model_ids:
-            return SmokeCheck("model discovery", False, "No model identifiers were returned."), None
+            return (
+                SmokeCheck("model discovery", False, "No model identifiers were returned."),
+                rate_limit_check,
+                None,
+            )
 
         expected = self.config.expected_model
         if expected and expected not in model_ids:
@@ -163,13 +315,18 @@ class DeploymentSmoke:
                     False,
                     f"Expected model '{expected}' was not advertised.",
                 ),
+                rate_limit_check,
                 None,
             )
 
         selected = expected or model_ids[0]
-        return SmokeCheck("model discovery", True, f"Using model '{selected}'."), selected
+        return (
+            SmokeCheck("model discovery", True, f"Using model '{selected}'."),
+            rate_limit_check,
+            selected,
+        )
 
-    def check_generation(self, model: str) -> SmokeCheck:
+    def check_generation(self, model: str) -> tuple[SmokeCheck, SmokeCheck]:
         try:
             response = self.request(
                 "POST",
@@ -183,11 +340,26 @@ class DeploymentSmoke:
                 },
             )
         except requests.RequestException as error:
-            return SmokeCheck("generation", False, f"Connection failed: {type(error).__name__}")
+            return (
+                SmokeCheck(
+                    "generation",
+                    False,
+                    f"Connection failed: {type(error).__name__}",
+                ),
+                SmokeCheck(
+                    "generation rate limit",
+                    False,
+                    "Unavailable because generation did not receive a response.",
+                ),
+            )
 
         payload = response_payload(response)
+        rate_limit_check = check_rate_limit_headers(response, "generation rate limit")
         if response.status_code != 200:
-            return SmokeCheck("generation", False, error_detail(response, payload))
+            return (
+                SmokeCheck("generation", False, error_detail(response, payload)),
+                rate_limit_check,
+            )
 
         output_text = payload.get("output_text")
         usage = payload.get("usage")
@@ -208,7 +380,7 @@ class DeploymentSmoke:
             if valid
             else "Response was missing status, model, output, usage, or request ID."
         )
-        return SmokeCheck("generation", valid, detail)
+        return SmokeCheck("generation", valid, detail), rate_limit_check
 
 
 def build_config(args: argparse.Namespace) -> SmokeConfig:
@@ -250,7 +422,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--include-generation",
         action="store_true",
-        help="Submit one small, audited model request after read-only checks pass.",
+        help="Submit one small, audited model request after non-generating checks pass.",
     )
     return parser.parse_args(argv)
 

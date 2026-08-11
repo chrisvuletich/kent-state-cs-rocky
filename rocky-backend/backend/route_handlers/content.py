@@ -149,6 +149,7 @@ def _analytics_filter_values() -> dict[str, Any]:
         "model": _bounded_filter("model"),
         "source": _bounded_filter("source", 128),
         "operation": operation,
+        "error_type": _bounded_filter("error_type", 128),
         "flagged": _optional_bool(request.args.get("flagged")),
         "review_status": review_status,
     }

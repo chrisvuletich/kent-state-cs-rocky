@@ -59,6 +59,10 @@ export type AnalyticsMetrics = {
 	active: number;
 	outcomes: Record<AnalyticsOutcome, number>;
 	flagged: number;
+	rate_limits: {
+		exceeded: number;
+		unavailable: number;
+	};
 	success_rate: number | null;
 	acceptance_rate: number | null;
 	generation: {
@@ -198,6 +202,7 @@ export type AnalyticsRequestFilters = {
 	operation?: 'models.list' | 'responses.create' | 'unknown' | '';
 	outcome?: AnalyticsOutcome | 'active' | '';
 	source?: string;
+	errorType?: string;
 	flagged?: boolean;
 	reviewStatus?: AnalyticsReviewStatus | '';
 };

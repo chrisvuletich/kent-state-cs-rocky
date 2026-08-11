@@ -8,6 +8,10 @@ internal model bridge.
 
 Copy `.env.example` to `.env`, or set the values in the repository-root `.env`. Both the backend and this service must use the same `ROCKY_DB_BACKEND`, `ROCKY_DB_NAME`, and `ROCKY_MONGITA_PATH` so generated and revoked keys take effect immediately.
 
+The service validates environment names, booleans, URLs, ports, limits, and
+timeouts at startup. Invalid values fail immediately with the setting name;
+omitted optional values use the defaults in `.env.example`.
+
 Start the complete local stack from the repository root:
 
 ```sh
@@ -33,6 +37,26 @@ Each listed model also includes a Rocky-specific `metadata` object populated
 from the active server configuration. It reports the context and output limits
 plus support for streaming, instructions, and `previous_response_id`. Clients
 that only need the standard model fields can ignore this additional object.
+
+## Request rate limits
+
+Rocky applies separate per-key, fixed-minute request limits to
+`POST /v1/responses` and `GET /v1/models`. Configure them with
+`ROCKY_RESPONSES_RATE_LIMIT_PER_MINUTE` and
+`ROCKY_MODELS_RATE_LIMIT_PER_MINUTE`; the example defaults are 10 and 120.
+
+Once a request is authenticated and its limit is consumed, the response
+includes:
+
+- `x-ratelimit-limit-requests`: the configured requests-per-minute limit
+- `x-ratelimit-remaining-requests`: requests remaining in the current window
+- `x-ratelimit-reset-requests`: time until the window resets, such as `17s`
+
+An exhausted key receives HTTP `429`, error code `rate_limit_exceeded`, the
+same three request-limit headers, and `Retry-After` in whole seconds. Invalid
+credentials, malformed JSON, and health/readiness checks do not consume these
+limits. Authenticated validation failures do consume a request. Rocky does not
+enforce token-per-minute limits, so it does not emit token-limit headers.
 
 ## Permanent request records
 

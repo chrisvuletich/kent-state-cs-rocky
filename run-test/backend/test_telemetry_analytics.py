@@ -232,6 +232,96 @@ class TelemetryAnalyticsEndpointTests(BackendTestCase):
         self.assertEqual(filtered["requests"], 1)
         self.assertEqual(filtered["generation"]["requests"], 0)
 
+    def test_rate_limit_incidents_are_counted_and_filterable(self):
+        exceeded = self.row(
+            "req_rate_limited", 1, "rejected", tokens=(0, 0), latency=10
+        )
+        exceeded.update({
+            "http_status": 429,
+            "error_stage": "rate_limit",
+            "error_type": "rate_limit_exceeded",
+        })
+        exceeded.pop("model")
+        unavailable = self.row(
+            "req_limiter_unavailable", 2, "failed", tokens=(0, 0), latency=10
+        )
+        unavailable.update({
+            "http_status": 503,
+            "error_stage": "rate_limit",
+            "error_type": "rate_limit_identity_unavailable",
+        })
+        main.telemetry_interactions.insert_many([exceeded, unavailable])
+
+        summary_payload = self.client.get(
+            "/analytics/summary?window=24h", headers=self.admin_headers
+        ).get_json()
+        self.assertEqual(summary_payload["rate_limits"], {
+            "exceeded": 1,
+            "unavailable": 1,
+        })
+
+        filtered_summary = self.client.get(
+            "/analytics/summary?window=24h&error_type=rate_limit_exceeded",
+            headers=self.admin_headers,
+        ).get_json()
+        self.assertEqual(filtered_summary["requests"], 1)
+        self.assertEqual(filtered_summary["rate_limits"]["exceeded"], 1)
+
+        model_filtered_summary = self.client.get(
+            "/analytics/summary?window=24h&model=rocky"
+            "&error_type=rate_limit_exceeded",
+            headers=self.admin_headers,
+        ).get_json()
+        self.assertEqual(model_filtered_summary["requests"], 1)
+
+        model_filtered_requests = self.client.get(
+            "/analytics/requests?window=24h&model=rocky"
+            "&error_type=rate_limit_exceeded",
+            headers=self.admin_headers,
+        ).get_json()
+        self.assertEqual(model_filtered_requests["matched"], 1)
+        self.assertEqual(
+            model_filtered_requests["requests"][0]["model"]["public_model"],
+            "rocky",
+        )
+
+        model_breakdown = self.client.get(
+            "/analytics/breakdown?window=24h&dimension=model"
+            "&error_type=rate_limit_exceeded",
+            headers=self.admin_headers,
+        ).get_json()
+        self.assertEqual(model_breakdown["rows"][0]["id"], "rocky")
+
+        filtered_requests = self.client.get(
+            "/analytics/requests?window=24h&error_type=rate_limit_identity_unavailable",
+            headers=self.admin_headers,
+        ).get_json()
+        self.assertEqual(filtered_requests["matched"], 1)
+        self.assertEqual(
+            filtered_requests["requests"][0]["request_id"],
+            "req_limiter_unavailable",
+        )
+
+        filtered_export = self.client.get(
+            "/analytics/export?window=24h&format=json&error_type=rate_limit_exceeded",
+            headers=self.admin_headers,
+        ).get_json()
+        self.assertEqual(filtered_export["count"], 1)
+        self.assertEqual(filtered_export["records"][0]["request_id"], "req_rate_limited")
+
+        timeseries_payload = self.client.get(
+            "/analytics/timeseries?window=1h&bucket=minute",
+            headers=self.admin_headers,
+        ).get_json()
+        self.assertEqual(sum(
+            bucket["rate_limits"]["exceeded"]
+            for bucket in timeseries_payload["buckets"]
+        ), 1)
+        self.assertEqual(sum(
+            bucket["rate_limits"]["unavailable"]
+            for bucket in timeseries_payload["buckets"]
+        ), 1)
+
     def test_recent_filters_and_detail_return_complete_stored_content(self):
         response = self.client.get(
             "/analytics/requests?outcome=completed&user_id=student-2&flagged=true",
@@ -344,6 +434,7 @@ class TelemetryAnalyticsEndpointTests(BackendTestCase):
             "/analytics/requests?outcome=unknown",
             "/analytics/requests?flagged=perhaps",
             "/analytics/summary?operation=not-real",
+            f"/analytics/summary?error_type={'x' * 129}",
         )
         for route in invalid:
             response = self.client.get(route, headers=self.admin_headers)

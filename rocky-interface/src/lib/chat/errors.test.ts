@@ -23,6 +23,22 @@ describe('chat failure feedback', () => {
 		);
 	});
 
+	it('uses retry timing and request IDs for rate-limit feedback', () => {
+		expect(
+			chatHttpFailure(
+				429,
+				{ error: { code: 'rate_limit_exceeded' } },
+				{ retryAfter: '17', requestId: 'req_synthetic' }
+			)
+		).toEqual({
+			kind: 'rate_limit',
+			message:
+				"Rocky's request limit was reached. Try again in 17 seconds. Request ID: req_synthetic",
+			markUnavailable: false,
+			retryAfterSeconds: 17
+		});
+	});
+
 	it('reports browser aborts as a stopped response without changing availability', () => {
 		const error = new Error('aborted');
 		error.name = 'AbortError';

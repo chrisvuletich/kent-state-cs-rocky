@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import secrets
 from pathlib import Path
 
@@ -16,13 +15,17 @@ load_dotenv(SERVICE_ROOT / ".env", override=False)
 load_dotenv(SERVICE_ROOT / ".env.local", override=True)
 
 from app.hardware_metrics import collect_hardware_snapshot
+from app.config import app_env, env_int, env_text, require_production_secret
 
 
 app = Flask(__name__)
-APP_ENV = os.getenv("ROCKY_APP_ENV", "development").strip().lower()
-METRICS_TOKEN = os.getenv("ROCKY_HARDWARE_METRICS_TOKEN", "").strip()
-HARDWARE_HOST = os.getenv("ROCKY_HARDWARE_HOST", "127.0.0.1").strip()
-HARDWARE_PORT = int(os.getenv("ROCKY_HARDWARE_PORT", "5010"))
+APP_ENV = app_env()
+METRICS_TOKEN = env_text("ROCKY_HARDWARE_METRICS_TOKEN")
+HARDWARE_HOST = env_text("ROCKY_HARDWARE_HOST", "127.0.0.1")
+HARDWARE_PORT = env_int("ROCKY_HARDWARE_PORT", 5010, minimum=1, maximum=65535)
+
+if APP_ENV == "production":
+    require_production_secret("ROCKY_HARDWARE_METRICS_TOKEN", METRICS_TOKEN)
 
 
 @app.route("/health", methods=["GET"])

@@ -6,6 +6,7 @@ import {
 	chatRequestHeaders,
 	requireChatUser
 } from '$lib/server/chatProxy';
+import { forwardedChatResponseHeaders } from '$lib/server/chatResponseHeaders';
 
 export const POST: RequestHandler = async ({ request, fetch, locals }) => {
 	const user = requireChatUser(locals);
@@ -48,7 +49,10 @@ export const POST: RequestHandler = async ({ request, fetch, locals }) => {
 			}
 		}
 
-		return json(payload, { status: response.status });
+		return json(payload, {
+			status: response.status,
+			headers: forwardedChatResponseHeaders(response.headers)
+		});
 	} catch {
 		return json(
 			{

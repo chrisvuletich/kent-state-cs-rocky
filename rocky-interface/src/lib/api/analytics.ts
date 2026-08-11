@@ -65,6 +65,7 @@ function filterQuery(
 		operation: filters.operation,
 		outcome: filters.outcome,
 		source: filters.source,
+		error_type: filters.errorType,
 		flagged: filters.flagged,
 		review_status: filters.reviewStatus
 	};

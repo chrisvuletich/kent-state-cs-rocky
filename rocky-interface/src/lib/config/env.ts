@@ -37,7 +37,7 @@ function parseAppEnv(value: string): 'development' | 'testing' | 'production' {
 	);
 }
 
-function parseApiBaseUrl(value: string): string {
+export function parseApiBaseUrl(value: string): string {
 	let parsed: URL;
 	try {
 		parsed = new URL(value);
@@ -48,6 +48,16 @@ function parseApiBaseUrl(value: string): string {
 	if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
 		throw new Error(
 			`Invalid PUBLIC_API_BASE_URL protocol: "${parsed.protocol}". Expected http or https.`
+		);
+	}
+	if (!parsed.hostname || parsed.username || parsed.password) {
+		throw new Error(
+			`Invalid PUBLIC_API_BASE_URL: "${value}". Expected an absolute URL without credentials.`
+		);
+	}
+	if (parsed.search || parsed.hash) {
+		throw new Error(
+			`Invalid PUBLIC_API_BASE_URL: "${value}". Query strings and fragments are not allowed.`
 		);
 	}
 

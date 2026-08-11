@@ -14,11 +14,12 @@ except ImportError:  # Keep model generation available if optional metrics deps 
     psutil = None
 
 from app.runtime_state import active_inference_requests
+from app.config import env_float, env_http_url
 
 
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
-HARDWARE_COMMAND_TIMEOUT_SECONDS = float(
-    os.getenv("ROCKY_HARDWARE_COMMAND_TIMEOUT_SECONDS", "3")
+OLLAMA_BASE_URL = env_http_url("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
+HARDWARE_COMMAND_TIMEOUT_SECONDS = env_float(
+    "ROCKY_HARDWARE_COMMAND_TIMEOUT_SECONDS", 3, minimum=0, allow_minimum=False
 )
 
 

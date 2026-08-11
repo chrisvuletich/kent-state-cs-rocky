@@ -102,6 +102,7 @@
 	let modelFilter = '';
 	let operationFilter: AnalyticsOperation | '' = '';
 	let sourceFilter = '';
+	let errorTypeFilter = '';
 	let requestListLoading = false;
 	let exportLoading: 'json' | 'csv' | null = null;
 	let exportMessage: string | null = null;
@@ -133,6 +134,7 @@
 		operation: operationFilter,
 		outcome: outcomeFilter,
 		source: sourceFilter.trim(),
+		errorType: errorTypeFilter.trim(),
 		review: reviewFilter,
 		requestId: selectedRequestId || ''
 	};
@@ -181,6 +183,7 @@
 			operation: operationFilter,
 			outcome: outcomeFilter,
 			source: sourceFilter.trim(),
+			errorType: errorTypeFilter.trim(),
 			review: reviewFilter,
 			requestId: selectedRequestId || ''
 		};
@@ -196,6 +199,7 @@
 		operationFilter = state.operation;
 		outcomeFilter = state.outcome;
 		sourceFilter = state.source;
+		errorTypeFilter = state.errorType;
 		reviewFilter = state.review;
 		selectedRequestId = state.requestId || null;
 		selectedRequest = null;
@@ -316,6 +320,7 @@
 			operation: operationFilter,
 			outcome: outcomeFilter,
 			source: sourceFilter.trim(),
+			errorType: errorTypeFilter.trim(),
 			flagged: reviewFilter === 'flagged' ? true : undefined,
 			reviewStatus: reviewFilter !== 'all' && reviewFilter !== 'flagged' ? reviewFilter : ''
 		};
@@ -658,6 +663,13 @@
 				<label><span>Request source</span><input bind:value={sourceFilter} maxlength="128" /></label
 				>
 				<label
+					><span>Error type</span><input
+						bind:value={errorTypeFilter}
+						maxlength="128"
+						placeholder="rate_limit_exceeded"
+					/></label
+				>
+				<label
 					><span>Review</span><select bind:value={reviewFilter}
 						><option value="all">All requests</option><option value="flagged">Flagged</option
 						><option value="unreviewed">Unreviewed</option><option value="in_review"
@@ -716,7 +728,7 @@
 					/>
 				</div>
 				<aside class="analytics-performance" aria-labelledby="model-performance-heading">
-					<h2 id="model-performance-heading">Model performance</h2>
+					<h2 id="model-performance-heading">API &amp; model performance</h2>
 					<dl class="performance-list">
 						<div>
 							<dt>Generation tokens/sec</dt>
@@ -733,6 +745,14 @@
 						<div>
 							<dt>Active API requests</dt>
 							<dd>{number(current.active_requests)}</dd>
+						</div>
+						<div>
+							<dt>Rate-limit rejections</dt>
+							<dd>{number(summary.rate_limits.exceeded)}</dd>
+						</div>
+						<div>
+							<dt>Limiter unavailable</dt>
+							<dd>{number(summary.rate_limits.unavailable)}</dd>
 						</div>
 					</dl>
 					<dl class="outcome-list">
@@ -941,7 +961,11 @@
 							</div>
 							<div>
 								<dt>Model</dt>
-								<dd>{selectedRequest.model?.actual_model || '—'}</dd>
+								<dd>
+									{selectedRequest.model?.actual_model ||
+										selectedRequest.model?.public_model ||
+										'—'}
+								</dd>
 							</div>
 							<div>
 								<dt>Operation</dt>
@@ -955,6 +979,14 @@
 									>
 								</dd>
 							</div>
+							{#if selectedRequest.error_stage}<div>
+									<dt>Error stage</dt>
+									<dd>{selectedRequest.error_stage}</dd>
+								</div>{/if}
+							{#if selectedRequest.error_type}<div>
+									<dt>Error type</dt>
+									<dd>{selectedRequest.error_type}</dd>
+								</div>{/if}
 							<div>
 								<dt>Tokens</dt>
 								<dd>{number(selectedRequest.usage?.total_tokens)}</dd>

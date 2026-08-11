@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from typing import Any
+from ipaddress import ip_address
 import os
 import secrets
+from typing import Any
 
 from flask import request
 
@@ -10,12 +11,27 @@ from flask import request
 INTERNAL_PROXY_HEADER = "X-Rocky-Internal-Secret"
 
 
+def request_is_loopback() -> bool:
+    # Use the actual WSGI peer, never a client-controlled forwarding header.
+    remote_address = (request.remote_addr or "").strip()
+    try:
+        parsed = ip_address(remote_address)
+    except ValueError:
+        return False
+    if parsed.is_loopback:
+        return True
+    mapped_address = getattr(parsed, "ipv4_mapped", None)
+    return bool(mapped_address and mapped_address.is_loopback)
+
+
 def has_trusted_proxy() -> bool:
     configured = os.getenv("ROCKY_INTERNAL_PROXY_SECRET", "").strip()
-    if not configured:
-        return os.getenv("ROCKY_APP_ENV", "development").strip().lower() != "production"
-    provided = request.headers.get(INTERNAL_PROXY_HEADER, "")
-    return secrets.compare_digest(provided, configured)
+    if configured:
+        provided = request.headers.get(INTERNAL_PROXY_HEADER, "")
+        return bool(provided) and secrets.compare_digest(provided, configured)
+
+    app_env = os.getenv("ROCKY_APP_ENV", "development").strip().lower()
+    return app_env != "production" and request_is_loopback()
 
 
 def require_internal_proxy() -> tuple[bool, tuple[dict[str, Any], int] | None]:
@@ -25,9 +41,7 @@ def require_internal_proxy() -> tuple[bool, tuple[dict[str, Any], int] | None]:
 
 
 def _parse_bool(value: str | None) -> bool:
-    if value is None:
-        return False
-    return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value and value.strip().lower() == "true")
 
 
 def get_requester() -> tuple[str | None, bool]:

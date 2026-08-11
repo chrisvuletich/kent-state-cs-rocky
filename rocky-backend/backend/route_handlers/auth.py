@@ -122,6 +122,9 @@ def get_preview_users(deps: dict[str, Any]):
 
     if not settings.enable_preview_login:
         return jsonify({"error": "Not found"}), 404
+    ok, _ = deps["require_internal_proxy"]()
+    if not ok:
+        return jsonify({"error": "Trusted proxy access is required."}), 403
 
     result = [_serialize_user(user) for user in users.find()]
     known_emails = {normalize_str(user.get("email")).lower() for user in result if isinstance(user, dict)}

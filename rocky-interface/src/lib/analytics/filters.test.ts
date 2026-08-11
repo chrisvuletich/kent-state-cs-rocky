@@ -10,7 +10,7 @@ describe('analytics URL filters', () => {
 	it('parses recognized filters and safely defaults invalid values', () => {
 		const parsed = parseAnalyticsFilters(
 			new URLSearchParams(
-				'range=7d&dimension=model&user=student%40kent.edu&operation=responses.create&outcome=failed&review=flagged'
+				'range=7d&dimension=model&user=student%40kent.edu&operation=responses.create&outcome=failed&error_type=rate_limit_exceeded&review=flagged'
 			)
 		);
 		expect(parsed).toMatchObject({
@@ -19,6 +19,7 @@ describe('analytics URL filters', () => {
 			user: 'student@kent.edu',
 			operation: 'responses.create',
 			outcome: 'failed',
+			errorType: 'rate_limit_exceeded',
 			review: 'flagged'
 		});
 		expect(parseAnalyticsFilters(new URLSearchParams('range=forever&outcome=anything'))).toEqual(
@@ -39,6 +40,15 @@ describe('analytics URL filters', () => {
 		expect(url.searchParams.get('outcome')).toBe('completed');
 		expect(url.searchParams.get('request')).toBe('req-1');
 		expect(url.searchParams.has('analytics_window')).toBe(false);
+	});
+
+	it('round-trips the bounded error-type filter in canonical URLs', () => {
+		const state = parseAnalyticsFilters(new URLSearchParams(`error_type=${'x'.repeat(140)}`));
+		expect(state.errorType).toHaveLength(128);
+
+		const url = analyticsUrl(new URL('https://rocky.example/'), state);
+		expect(url.searchParams.get('error_type')).toBe('x'.repeat(128));
+		expect(analyticsFilterCount(state)).toBe(1);
 	});
 
 	it('omits defaults and counts only active data filters', () => {

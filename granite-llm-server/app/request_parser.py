@@ -1,9 +1,11 @@
 import os
 import math
 
+from app.config import env_int
+
 # Default model for when no model is provided by the request/env
 DEFAULT_MODEL_NAME = "gemma4:latest"
-MAX_OUTPUT_TOKENS = 2048
+MAX_OUTPUT_TOKENS = env_int("ROCKY_MAX_OUTPUT_TOKENS", 2048, minimum=1)
 
 ALLOWED_REASONING_EFFORTS = {
     "low",
@@ -14,7 +16,7 @@ ALLOWED_REASONING_EFFORTS = {
 
 # Reads the configured Ollama model from the environment so local dev and Granite can use different models without changing cod
 def get_default_model():
-    return os.getenv("OLLAMA_MODEL", DEFAULT_MODEL_NAME)
+    return os.getenv("OLLAMA_MODEL", DEFAULT_MODEL_NAME).strip() or DEFAULT_MODEL_NAME
 
 def extract_model(payload):
     model = payload.get("model")

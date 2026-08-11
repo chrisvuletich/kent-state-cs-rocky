@@ -4,6 +4,7 @@
 
 	export let value = '';
 	export let sending = false;
+	export let disabled = false;
 	export let onSend: () => void;
 	export let onStop: () => void;
 
@@ -22,7 +23,7 @@
 	function handleKeydown(event: KeyboardEvent) {
 		if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
 		event.preventDefault();
-		if (!sending && value.trim()) onSend();
+		if (!sending && !disabled && value.trim()) onSend();
 	}
 
 	export async function focus() {
@@ -59,9 +60,9 @@
 				class:chat-stop-button={sending}
 				type="button"
 				onclick={sending ? onStop : onSend}
-				disabled={!sending && !value.trim()}
+				disabled={!sending && (disabled || !value.trim())}
 				aria-label={sending ? 'Stop waiting for response' : 'Send message'}
-				title={sending ? 'Stop waiting' : 'Send message'}
+				title={sending ? 'Stop waiting' : disabled ? 'Wait before retrying' : 'Send message'}
 			>
 				{#if sending}<IconPlayerStop size={20} />{:else}<IconSend2 size={20} />{/if}
 			</button>

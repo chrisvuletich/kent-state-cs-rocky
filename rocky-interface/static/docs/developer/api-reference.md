@@ -165,7 +165,10 @@ part of the public student contract.
 ```
 
 Every API response includes an `x-request-id` header that can be used to find
-the matching audit record when troubleshooting.
+the matching audit record when troubleshooting. Authenticated requests that
+reach rate-limit enforcement also include `x-ratelimit-limit-requests`,
+`x-ratelimit-remaining-requests`, and `x-ratelimit-reset-requests`. The reset
+value is a duration such as `17s`.
 
 The **Errors and Troubleshooting** guide lists the current error codes, explains
 when a retry is appropriate, and includes a Python `requests` example.
@@ -179,6 +182,7 @@ when a retry is appropriate, and includes a Python `requests` example.
 | 401 | The Bearer key is missing, invalid, inactive, revoked, or expired. |
 | 404 | The requested previous response does not exist or is not owned by this credential. |
 | 413 | The request body is too large. |
+| 429 | The API key has exhausted its request limit for the current minute. |
 | 502 | Rocky could not reach the model service or received an unusable response. |
 | 503 | The model is busy or a required internal service is unavailable. |
 | 504 | Model generation timed out. |

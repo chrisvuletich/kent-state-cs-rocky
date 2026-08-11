@@ -40,6 +40,8 @@
 	let generationRequest: AbortController | null = null;
 	let unsubscribePendingConversation: (() => void) | null = null;
 	let availabilityTimer: ReturnType<typeof setInterval> | null = null;
+	let rateLimitTimer: ReturnType<typeof setTimeout> | null = null;
+	let retryBlocked = false;
 	let mobileMediaQuery: MediaQueryList | null = null;
 
 	$: activeConversation = conversations.find(
@@ -63,6 +65,16 @@
 		return fallback;
 	}
 
+	function applyRetryCooldown(seconds: number | undefined) {
+		if (!seconds) return;
+		if (rateLimitTimer) clearTimeout(rateLimitTimer);
+		retryBlocked = true;
+		rateLimitTimer = setTimeout(() => {
+			retryBlocked = false;
+			rateLimitTimer = null;
+		}, seconds * 1000);
+	}
+
 	async function checkAvailability(showChecking = false) {
 		if (showChecking) availability = 'checking';
 		try {
@@ -84,7 +96,7 @@
 
 	async function sendMessage() {
 		const userMessage = input;
-		if (!userMessage.trim() || sending) return;
+		if (!userMessage.trim() || sending || retryBlocked) return;
 		let requestPersisted = false;
 		let requestFailure: ChatFailure | null = null;
 		let stoppedRequest = false;
@@ -131,7 +143,11 @@
 			requestPersisted = data?.message_stored === true;
 			if (!response.ok || typeof data?.output_text !== 'string' || !data.output_text.trim()) {
 				if (conversationId) await loadConversations(false);
-				requestFailure = chatHttpFailure(response.status, data);
+				requestFailure = chatHttpFailure(response.status, data, {
+					retryAfter: response.headers.get('retry-after'),
+					requestId:
+						response.headers.get('x-request-id') || response.headers.get('x-rocky-request-id')
+				});
 				throw new Error(requestFailure.message);
 			}
 
@@ -177,6 +193,7 @@
 			failedMessage = failed;
 			errorMessage = failure.message;
 			noticeTone = 'error';
+			applyRetryCooldown(failure.retryAfterSeconds);
 			if (failure.markUnavailable) availability = 'unavailable';
 		} finally {
 			if (generationRequest === request) {
@@ -399,6 +416,7 @@
 		generationRequest?.abort();
 		unsubscribePendingConversation?.();
 		if (availabilityTimer) clearInterval(availabilityTimer);
+		if (rateLimitTimer) clearTimeout(rateLimitTimer);
 	});
 </script>
 
@@ -447,7 +465,7 @@
 				<ChatStatusNotice
 					message={errorMessage}
 					tone={noticeTone}
-					canRetry={Boolean(failedMessage)}
+					canRetry={Boolean(failedMessage) && !retryBlocked}
 					onRetry={restoreFailedMessage}
 					onDismiss={() => (errorMessage = '')}
 				/>
@@ -455,6 +473,7 @@
 					bind:this={composer}
 					bind:value={input}
 					{sending}
+					disabled={retryBlocked}
 					onSend={sendMessage}
 					onStop={stopGeneration}
 				/>

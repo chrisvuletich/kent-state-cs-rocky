@@ -1,11 +1,15 @@
 import json
-import os
 import requests
 
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
-OLLAMA_TIMEOUT_SECONDS = int(os.getenv("ROCKY_OLLAMA_TIMEOUT_SECONDS", "150"))
-OLLAMA_READY_TIMEOUT_SECONDS = float(
-    os.getenv("ROCKY_OLLAMA_READY_TIMEOUT_SECONDS", "2")
+from app.config import env_float, env_http_url
+
+
+OLLAMA_BASE_URL = env_http_url("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
+OLLAMA_TIMEOUT_SECONDS = env_float(
+    "ROCKY_OLLAMA_TIMEOUT_SECONDS", 150, minimum=0, allow_minimum=False
+)
+OLLAMA_READY_TIMEOUT_SECONDS = env_float(
+    "ROCKY_OLLAMA_READY_TIMEOUT_SECONDS", 2, minimum=0, allow_minimum=False
 )
 
 # Ollama metadata fields that contain int

@@ -29,6 +29,7 @@ export type AnalyticsFilterState = {
 	operation: AnalyticsOperation | '';
 	outcome: AnalyticsOutcome | 'active' | '';
 	source: string;
+	errorType: string;
 	review: AnalyticsReviewFilter;
 	requestId: string;
 };
@@ -43,6 +44,7 @@ export const defaultAnalyticsFilters: AnalyticsFilterState = {
 	operation: '',
 	outcome: '',
 	source: '',
+	errorType: '',
 	review: 'all',
 	requestId: ''
 };
@@ -57,6 +59,7 @@ const managedKeys = [
 	'operation',
 	'outcome',
 	'source',
+	'error_type',
 	'review',
 	'request',
 	'analytics_window',
@@ -90,6 +93,7 @@ export function parseAnalyticsFilters(params: URLSearchParams): AnalyticsFilterS
 		operation: recognized(operationValue, ['', ...analyticsOperations], ''),
 		outcome: recognized(outcomeValue, ['', ...analyticsOutcomes], ''),
 		source: bounded(params.get('source'), 128),
+		errorType: bounded(params.get('error_type'), 128),
 		review: recognized(reviewValue, ['all', 'flagged', ...analyticsReviewStatuses], 'all'),
 		requestId: bounded(params.get('request') || params.get('analytics_request'))
 	};
@@ -109,7 +113,8 @@ export function analyticsUrl(current: URL, state: AnalyticsFilterState): URL {
 		['model', state.model],
 		['operation', state.operation],
 		['outcome', state.outcome],
-		['source', state.source]
+		['source', state.source],
+		['error_type', state.errorType]
 	] as const) {
 		if (value) url.searchParams.set(key, value);
 	}
@@ -128,6 +133,7 @@ export function analyticsFilterCount(state: AnalyticsFilterState): number {
 		state.operation,
 		state.outcome,
 		state.source,
+		state.errorType,
 		state.review === 'all' ? '' : state.review
 	].filter(Boolean).length;
 }

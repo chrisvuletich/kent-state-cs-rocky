@@ -44,6 +44,7 @@ ANALYTICS_ROW_PROJECTION = {
     "credential": 1,
     "course": 1,
     "model": 1,
+    "request.model": 1,
     "usage": 1,
     "performance": 1,
     "review": 1,
@@ -178,15 +179,39 @@ def documents_in_range(collection, start: datetime, end: datetime,
             if timestamp is not None and start <= timestamp < end:
                 identifier = str(row.get("request_id") or row.get("_id"))
                 if projection:
-                    rows[identifier] = {
-                        key: row.get(key)
-                        for key, included in projection.items()
-                        if included and key in row
-                    }
-                    rows[identifier]["_id"] = row.get("_id")
+                    rows[identifier] = project_document(row, projection)
                 else:
                     rows[identifier] = row
     return list(rows.values())
+
+
+def project_document(
+    document: dict[str, Any], projection: dict[str, int]
+) -> dict[str, Any]:
+    """Apply the inclusive projection used by Mongita's local fallback."""
+    result: dict[str, Any] = {}
+    for dotted_path, included in projection.items():
+        if not included:
+            continue
+        source: Any = document
+        parts = dotted_path.split(".")
+        for part in parts:
+            if not isinstance(source, dict) or part not in source:
+                break
+            source = source[part]
+        else:
+            target = result
+            for part in parts[:-1]:
+                existing = target.get(part)
+                if not isinstance(existing, dict):
+                    existing = {}
+                    target[part] = existing
+                target = existing
+            target[parts[-1]] = source
+
+    if "_id" in document and projection.get("_id", 1):
+        result["_id"] = document["_id"]
+    return result
 
 
 def user_usage_summary(collection, identifiers: Iterable[str],
@@ -364,6 +389,8 @@ def metric_accumulator():
         "timed_out": 0,
         "active": 0,
         "flagged": 0,
+        "rate_limit_exceeded": 0,
+        "rate_limit_unavailable": 0,
         "input_tokens": 0,
         "output_tokens": 0,
         "total_tokens": 0,
@@ -387,6 +414,12 @@ def add_row(metrics: dict[str, Any], row: dict[str, Any]):
     metrics["requests"] += 1
     metrics[row_outcome] += 1
     metrics["flagged"] += int(bool(nested(row, "review", "flagged", default=False)))
+    error_type = str(row.get("error_type") or "").strip().lower()
+    error_stage = str(row.get("error_stage") or "").strip().lower()
+    if error_type == "rate_limit_exceeded":
+        metrics["rate_limit_exceeded"] += 1
+    elif error_stage == "rate_limit":
+        metrics["rate_limit_unavailable"] += 1
     metrics["input_tokens"] += input_tokens
     metrics["output_tokens"] += output_tokens
     metrics["total_tokens"] += total_tokens
@@ -459,6 +492,10 @@ def public_metrics(metrics: dict[str, Any]):
         "active": metrics["active"],
         "outcomes": {name: metrics[name] for name in OUTCOMES},
         "flagged": metrics["flagged"],
+        "rate_limits": {
+            "exceeded": metrics["rate_limit_exceeded"],
+            "unavailable": metrics["rate_limit_unavailable"],
+        },
         "success_rate": rate(metrics["generation_completed"], inference_attempts),
         "acceptance_rate": rate(
             metrics["generation_requests"] - metrics["generation_rejected"],
@@ -655,6 +692,10 @@ def serialize_value(value: Any):
 
 
 def request_summary(row: dict[str, Any]):
+    model = dict(row["model"]) if isinstance(row.get("model"), dict) else {}
+    requested_model = nested(row, "request", "model")
+    if requested_model and not model.get("public_model"):
+        model["public_model"] = requested_model
     return serialize_value({
         "request_id": row.get("request_id") or row.get("_id"),
         "received_at": received_at(row),
@@ -667,7 +708,7 @@ def request_summary(row: dict[str, Any]):
         "actor": row.get("actor"),
         "credential": row.get("credential"),
         "course": row.get("course"),
-        "model": row.get("model"),
+        "model": model or None,
         "usage": row.get("usage"),
         "performance": row.get("performance"),
         "review": row.get("review"),
@@ -685,7 +726,7 @@ def _matches_identifier(value: Any, expected: str | None) -> bool:
 def filter_requests(rows: list[dict[str, Any]], *, requested_outcome=None,
                     user_id=None, course_id=None, key_id=None, model=None,
                     source=None, operation=None, flagged=None,
-                    review_status=None):
+                    review_status=None, error_type=None):
     filtered = []
     for row in rows:
         if requested_outcome and outcome(row) != requested_outcome:
@@ -717,6 +758,8 @@ def filter_requests(rows: list[dict[str, Any]], *, requested_outcome=None,
         if operation and not _matches_identifier(
             row.get("operation") or "responses.create", operation
         ):
+            continue
+        if error_type and not _matches_identifier(row.get("error_type"), error_type):
             continue
         if flagged is not None and bool(nested(row, "review", "flagged", default=False)) != flagged:
             continue

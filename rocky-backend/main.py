@@ -11,7 +11,6 @@ from pathlib import Path
 from bson import ObjectId
 from bson.errors import InvalidId
 from flask import Flask, jsonify, request
-from flask_cors import CORS
 
 from backend.authz import get_requester, require_admin, require_internal_proxy, require_requester_identity
 from backend.course_actions import (
@@ -75,7 +74,6 @@ seed_data_static_content = _seed_data.seed_static_content
 
 settings = get_settings()
 app = Flask(__name__)
-CORS(app)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("rocky.backend")

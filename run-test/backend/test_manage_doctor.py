@@ -45,6 +45,8 @@ def production_env():
         "ROCKY_SESSION_SECRET": "s" * 40,
         "ROCKY_INTERNAL_PROXY_SECRET": "p" * 40,
         "ROCKY_GRANITE_TOKEN": "g" * 40,
+        "ROCKY_RESPONSES_RATE_LIMIT_PER_MINUTE": "10",
+        "ROCKY_MODELS_RATE_LIMIT_PER_MINUTE": "120",
         "PUBLIC_ENABLE_MICROSOFT_OAUTH": "true",
         "PUBLIC_ENABLE_DBTEST": "false",
         "PUBLIC_MICROSOFT_CLIENT_ID": "client-id",
@@ -155,6 +157,46 @@ class RockyDoctorTests(unittest.TestCase):
         failures = {check.name for check in checks if check.failed}
         self.assertIn("PUBLIC_MICROSOFT_TENANT_ID", failures)
 
+    def test_development_oauth_requires_client_and_specific_tenant(self):
+        values = production_env()
+        values.update(
+            {
+                "ROCKY_APP_ENV": "development",
+                "PUBLIC_APP_ENV": "development",
+                "ROCKY_DB_BACKEND": "mongita",
+                "ROCKY_MONGODB_URI": "",
+                "PUBLIC_ENABLE_MICROSOFT_OAUTH": "true",
+                "PUBLIC_MICROSOFT_CLIENT_ID": "",
+                "PUBLIC_MICROSOFT_TENANT_ID": "common",
+            }
+        )
+        with patch.dict("os.environ", values, clear=True):
+            checks = RockyDoctor(include_network=False).run()
+
+        failures = {check.name for check in checks if check.failed}
+        self.assertIn("PUBLIC_MICROSOFT_CLIENT_ID", failures)
+        self.assertIn("PUBLIC_MICROSOFT_TENANT_ID", failures)
+
+    def test_testing_mode_ignores_the_development_oauth_override(self):
+        values = production_env()
+        values.update(
+            {
+                "ROCKY_APP_ENV": "testing",
+                "PUBLIC_APP_ENV": "testing",
+                "ROCKY_DB_BACKEND": "mongita",
+                "ROCKY_MONGODB_URI": "",
+                "PUBLIC_ENABLE_MICROSOFT_OAUTH": "true",
+                "PUBLIC_MICROSOFT_CLIENT_ID": "",
+                "PUBLIC_MICROSOFT_TENANT_ID": "",
+            }
+        )
+        with patch.dict("os.environ", values, clear=True):
+            checks = RockyDoctor(include_network=False).run()
+
+        failures = {check.name for check in checks if check.failed}
+        self.assertNotIn("PUBLIC_MICROSOFT_CLIENT_ID", failures)
+        self.assertNotIn("PUBLIC_MICROSOFT_TENANT_ID", failures)
+
     def test_production_rejects_dbtest_and_invalid_boolean_flags(self):
         values = production_env()
         values.update(
@@ -215,6 +257,160 @@ class RockyDoctorTests(unittest.TestCase):
         self.assertTrue(any(check.name == "MongoDB connection" for check in checks))
         self.assertTrue(any(check.name == "network checks" for check in checks))
 
+    def test_development_uses_the_same_defaults_as_runtime_services(self):
+        values = {
+            "ROCKY_APP_ENV": "development",
+            "ROCKY_DB_BACKEND": "mongita",
+            "PUBLIC_ENABLE_DBTEST": "false",
+            "PUBLIC_ENABLE_MICROSOFT_OAUTH": "false",
+        }
+        with patch.dict("os.environ", values, clear=True):
+            doctor = RockyDoctor(include_network=False)
+            checks = doctor.run()
+
+        self.assertFalse(any(check.failed for check in checks))
+        self.assertEqual(doctor.public_app_env, "development")
+        self.assertEqual(doctor.inference_model, "gemma4:latest")
+        self.assertEqual(doctor.public_model, "gemma4:latest")
+        passed = {check.name for check in checks if check.status == "PASS"}
+        self.assertIn("frontend API URL", passed)
+        self.assertIn("Granite generation URL", passed)
+        self.assertIn("Granite readiness URL", passed)
+
+    def test_blank_runtime_fallbacks_match_service_defaults(self):
+        values = {
+            "ROCKY_APP_ENV": "",
+            "ROCKY_DB_BACKEND": "",
+            "ROCKY_DB_NAME": "",
+            "OLLAMA_MODEL": "",
+            "ROCKY_PUBLIC_MODEL": "",
+        }
+        with patch.dict("os.environ", values, clear=True):
+            doctor = RockyDoctor(include_network=False)
+            checks = doctor.run()
+
+        self.assertFalse(any(check.failed for check in checks))
+        self.assertEqual(doctor.app_env, "development")
+        self.assertEqual(doctor.db_backend, "mongita")
+        self.assertEqual(doctor.db_name, "rocky_db")
+        self.assertEqual(doctor.public_model, "gemma4:latest")
+
+    def test_runtime_setting_errors_are_actionable(self):
+        values = production_env()
+        values.update(
+            {
+                "ROCKY_DEBUG": "true",
+                "ROCKY_ENABLE_DB_INSPECTOR": "sometimes",
+                "ROCKY_CHAT_API_PORT": "not-a-port",
+                "ROCKY_GRANITE_TIMEOUT_SECONDS": "nan",
+                "ROCKY_GRANITE_MAX_CONCURRENT": "0",
+                "ROCKY_RESPONSES_RATE_LIMIT_PER_MINUTE": "0",
+                "ROCKY_MODELS_RATE_LIMIT_PER_MINUTE": "not-an-integer",
+            }
+        )
+        with patch.dict("os.environ", values, clear=True):
+            checks = RockyDoctor(
+                include_network=False,
+                mongo_pinger=lambda _uri, _database: None,
+            ).run()
+
+        runtime_check = next(check for check in checks if check.name == "runtime settings")
+        self.assertEqual(runtime_check.status, "FAIL")
+        self.assertIn("ROCKY_DEBUG must be false in production", runtime_check.detail)
+        self.assertIn("ROCKY_ENABLE_DB_INSPECTOR must be exactly true or false", runtime_check.detail)
+        self.assertIn("ROCKY_CHAT_API_PORT must be an integer", runtime_check.detail)
+        self.assertIn("ROCKY_GRANITE_TIMEOUT_SECONDS must be a finite number", runtime_check.detail)
+        self.assertIn("ROCKY_GRANITE_MAX_CONCURRENT must be at least 1", runtime_check.detail)
+        self.assertIn(
+            "ROCKY_RESPONSES_RATE_LIMIT_PER_MINUTE must be at least 1",
+            runtime_check.detail,
+        )
+        self.assertIn(
+            "ROCKY_MODELS_RATE_LIMIT_PER_MINUTE must be an integer",
+            runtime_check.detail,
+        )
+
+    def test_service_urls_reject_credentials_and_invalid_ports(self):
+        values = production_env()
+        values.update(
+            {
+                "PUBLIC_API_BASE_URL": "http://user:password@127.0.0.1:5001",
+                "ROCKY_GRANITE_URL": "http://granite.example:99999/generate",
+            }
+        )
+        with patch.dict("os.environ", values, clear=True):
+            checks = RockyDoctor(
+                include_network=False,
+                mongo_pinger=lambda _uri, _database: None,
+            ).run()
+
+        failures = {check.name for check in checks if check.failed}
+        self.assertIn("frontend API URL", failures)
+        self.assertIn("Granite generation URL", failures)
+
+    def test_composable_service_urls_reject_queries_and_fragments(self):
+        values = production_env()
+        values.update(
+            {
+                "PUBLIC_API_BASE_URL": "http://127.0.0.1:5001?tenant=one",
+                "OLLAMA_BASE_URL": "http://127.0.0.1:11434#internal",
+            }
+        )
+        with patch.dict("os.environ", values, clear=True):
+            checks = RockyDoctor(
+                include_network=False,
+                mongo_pinger=lambda _uri, _database: None,
+            ).run()
+
+        failures = {check.name for check in checks if check.failed}
+        self.assertIn("frontend API URL", failures)
+        self.assertIn("Ollama base URL", failures)
+
+    def test_chat_url_rejects_queries_and_fragments(self):
+        for value in (
+            "http://127.0.0.1:5003/v1/responses?tenant=one",
+            "http://127.0.0.1:5003/v1/responses#internal",
+        ):
+            with self.subTest(value=value):
+                values = production_env()
+                values["ROCKY_CHAT_API_URL"] = value
+                with patch.dict("os.environ", values, clear=True):
+                    checks = RockyDoctor(include_network=False).run()
+
+                check = next(check for check in checks if check.name == "chat API URL")
+                self.assertEqual(check.status, "FAIL")
+
+    def test_chat_url_accepts_a_service_base(self):
+        values = production_env()
+        values["ROCKY_CHAT_API_URL"] = "http://127.0.0.1:5003"
+        with patch.dict("os.environ", values, clear=True):
+            checks = RockyDoctor(include_network=False).run()
+
+        check = next(check for check in checks if check.name == "chat API URL")
+        self.assertEqual(check.status, "PASS")
+
+    def test_production_validates_required_telemetry_settings(self):
+        values = production_env()
+        values.update(
+            {
+                "ROCKY_TELEMETRY_ENABLED": "false",
+                "ROCKY_HARDWARE_TELEMETRY_ENABLED": "true",
+                "ROCKY_HARDWARE_METRICS_URL": "not-a-url",
+                "ROCKY_HARDWARE_METRICS_TOKEN": "replace-with-a-token",
+            }
+        )
+        with patch.dict("os.environ", values, clear=True):
+            checks = RockyDoctor(
+                include_network=False,
+                mongo_pinger=lambda _uri, _database: None,
+            ).run()
+
+        runtime_check = next(check for check in checks if check.name == "runtime settings")
+        self.assertIn("ROCKY_TELEMETRY_ENABLED must be true", runtime_check.detail)
+        self.assertIn("ROCKY_HARDWARE_METRICS_TOKEN", runtime_check.detail)
+        failures = {check.name for check in checks if check.failed}
+        self.assertIn("hardware metrics URL", failures)
+
     def test_rocky_host_does_not_require_a_local_ollama_url(self):
         values = production_env()
         values.pop("OLLAMA_BASE_URL")
@@ -226,6 +422,22 @@ class RockyDoctorTests(unittest.TestCase):
 
         ollama_check = next(check for check in checks if check.name == "Ollama base URL")
         self.assertEqual(ollama_check.status, "INFO")
+        self.assertFalse(any(check.failed for check in checks))
+
+    def test_skip_network_validates_mongodb_configuration_without_connecting(self):
+        pinged = []
+        with patch.dict("os.environ", production_env(), clear=True):
+            checks = RockyDoctor(
+                include_network=False,
+                mongo_pinger=lambda uri, database: pinged.append((uri, database)),
+            ).run()
+
+        self.assertEqual(pinged, [])
+        mongodb_check = next(
+            check for check in checks if check.name == "MongoDB connection"
+        )
+        self.assertEqual(mongodb_check.status, "INFO")
+        self.assertIn("--skip-network", mongodb_check.detail)
         self.assertFalse(any(check.failed for check in checks))
 
     def test_database_and_model_service_failures_are_specific_and_secret_safe(self):

@@ -75,12 +75,20 @@ Path: run-test/frontend
 
 ## Local run commands
 
-From repo root:
+From the repository root on macOS/Linux:
 
-- All backend and browser tests: `python run-test/test_all.py`
-- Backend only: `python -m unittest discover -s run-test/backend -p "test_*.py"`
-- Frontend only: `python -m unittest discover -s run-test/frontend -p "test_*.py"`
+- All backend and browser tests: `PYTHONPATH=run-test:rocky-backend python run-test/test_all.py`
+- Backend only: `PYTHONPATH=rocky-backend python -m unittest discover -s run-test/backend -p "test_*.py"`
+- Frontend only: `PYTHONPATH=run-test:rocky-backend python -m unittest discover -s run-test/frontend -p "test_*.py"`
 - Granite bridge only: `cd granite-llm-server && python -m unittest discover -s tests -p "test_*.py"`
+
+From the repository root in Windows PowerShell, set the Python import path first:
+
+```powershell
+$env:PYTHONPATH = "run-test;rocky-backend"
+```
+
+Then use the same commands without their leading `PYTHONPATH=...` assignment.
 
 Browser tests use port `4173` by default. If another local project already uses
 that port, set a different one, such as `ROCKY_WEB_PORT=4273`, before running
@@ -110,7 +118,9 @@ are in `deploy/README.md`.
 
 `integration/deployment_smoke.py` checks a deployed instance through its public
 URLs. It requires `ROCKY_BASE_URL` and `ROCKY_API_KEY`; the optional
-`ROCKY_EXPECTED_MODEL` value verifies the advertised model identifier.
+`ROCKY_EXPECTED_MODEL` value verifies the advertised model identifier. The
+authenticated model-discovery request also verifies Rocky's three request
+rate-limit headers and their value ranges.
 
 ```sh
 export ROCKY_BASE_URL='https://rocky.cs.kent.edu'
@@ -118,6 +128,13 @@ export ROCKY_API_KEY='sk_kent_replace_with_test_key'
 python run-test/integration/deployment_smoke.py
 ```
 
-The default checks are read-only. Add `--include-generation` to send one short
-request with `store: false`. The request is still retained in institutional
-audit telemetry, like every other inference request.
+The default checks do not generate model output or modify application content.
+They are not invisible: the authenticated model-discovery request is retained
+in institutional audit telemetry and consumes one model-discovery quota unit.
+Add `--include-generation` to send one short request with `store: false` and
+verify the generation rate-limit headers too. The generation is also retained
+in institutional audit telemetry, like every other inference request.
+
+Use a dedicated instructor or deployment-test key and avoid running the command
+in a tight loop. The smoke test intentionally does not exhaust the key to prove
+the `429` path; that behavior is covered by the automated API contract tests.

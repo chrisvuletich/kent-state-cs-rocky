@@ -46,7 +46,7 @@ Pop-Location
 
 ### 5. Create the environment file
 
-For the complete local stack, copy the root [.env.example](.env.example) to `.env` and replace the example hidden-key secret. The service-level examples are available when a service needs to be run or configured independently.
+For the complete local stack, copy the root [.env.example](.env.example) to `.env` and replace its example secret values. The service-level examples contain the same shared names and placeholder values when a service needs to be configured independently. Shared secrets must have identical values in every service that uses them.
 
 For production, set `ROCKY_DB_BACKEND=mongodb` and provide `ROCKY_MONGODB_URI`.
 
@@ -54,7 +54,7 @@ For production, set `ROCKY_DB_BACKEND=mongodb` and provide `ROCKY_MONGODB_URI`.
 
 Development minimum:
 
-- Root `.env`: keep the development bind, Mongita, Ollama, and shared-path values from [.env.example](.env.example), then replace `ROCKY_HIDDEN_API_KEY_SECRET`.
+- Root `.env`: keep the development bind, Mongita, Ollama, model, and shared-path values from [.env.example](.env.example), then replace the four example values for `ROCKY_HIDDEN_API_KEY_SECRET`, `ROCKY_SESSION_SECRET`, `ROCKY_INTERNAL_PROXY_SECRET`, and `ROCKY_GRANITE_TOKEN` with independent random secrets.
 
 For development Microsoft OAuth, set:
 
@@ -63,8 +63,8 @@ For development Microsoft OAuth, set:
 
 Production minimum:
 
-- [rocky-backend/.env](rocky-backend/.env): `ROCKY_APP_ENV=production`, `ROCKY_DB_BACKEND=mongodb`, `ROCKY_MONGODB_URI`, `ROCKY_INTERNAL_PROXY_SECRET`, `ROCKY_ENABLE_DB_INSPECTOR=false`, `ROCKY_API_HOST`, `ROCKY_API_PORT`
-- [rocky-interface/.env](rocky-interface/.env): `PUBLIC_APP_ENV=production`, `PUBLIC_API_BASE_URL`, `PUBLIC_MICROSOFT_CLIENT_ID`, the specific `PUBLIC_MICROSOFT_TENANT_ID`, `ROCKY_SESSION_SECRET`, the same `ROCKY_INTERNAL_PROXY_SECRET`, `ROCKY_WEB_HOST`, `ROCKY_WEB_PORT`, `ROCKY_ALLOWED_HOSTS`
+- [rocky-backend/.env](rocky-backend/.env): `ROCKY_APP_ENV=production`, `ROCKY_DB_BACKEND=mongodb`, `ROCKY_MONGODB_URI`, `ROCKY_HIDDEN_API_KEY_SECRET`, `ROCKY_INTERNAL_PROXY_SECRET`, `ROCKY_ENABLE_DB_INSPECTOR=false`, `ROCKY_API_HOST`, `ROCKY_API_PORT`
+- [rocky-interface/.env](rocky-interface/.env): `PUBLIC_APP_ENV=production`, `PUBLIC_API_BASE_URL`, `PUBLIC_MICROSOFT_CLIENT_ID`, the specific `PUBLIC_MICROSOFT_TENANT_ID`, the same `ROCKY_HIDDEN_API_KEY_SECRET`, `ROCKY_SESSION_SECRET`, the same `ROCKY_INTERNAL_PROXY_SECRET`, `ROCKY_WEB_HOST`, `ROCKY_WEB_PORT`, `ROCKY_ALLOWED_HOSTS`
 
 Auth mode behavior:
 
@@ -72,7 +72,15 @@ Auth mode behavior:
 - Testing: preview auth only.
 - Production: Microsoft OAuth only.
 
-Both launchers load `.env` and `.env.local` from the repo root, backend, and frontend directories.
+The development launcher loads `.env` and `.env.local` from the repository root and all four service directories. The production-preview launcher loads them from the repository root, backend, and frontend directories. Root values load first; service-level `.env.local` files are the intended place for service-specific overrides.
+
+Configuration is validated when each service starts. Boolean values must be
+exactly `true` or `false`; ports, limits, and timeouts must be within their
+documented ranges; and service URLs must be absolute HTTP(S) URLs without
+embedded credentials, query strings, or fragments. Omitted optional settings
+use the defaults shown in the example files. Run
+`python manage.py doctor --skip-network` to validate the combined configuration
+without contacting any services.
 
 ## Running locally
 
@@ -162,15 +170,34 @@ python rocky-backend\seed_from_backend.py
 
 Backend unit tests:
 
+macOS/Linux:
+
+```sh
+PYTHONPATH=rocky-backend python -m unittest discover -s run-test/backend -p "test_*.py" -v
+```
+
+Windows PowerShell:
+
 ```powershell
+$env:PYTHONPATH = "rocky-backend"
 python -m unittest discover -s run-test/backend -p "test_*.py" -v
 ```
 
 Frontend browser tests depend on a running browser and Chromium/WebDriver setup:
 
+macOS/Linux:
+
+```sh
+PYTHONPATH=run-test:rocky-backend python -m unittest discover -s run-test/frontend -p "test_*.py" -v
+```
+
+Windows PowerShell:
+
 ```powershell
+$env:PYTHONPATH = "run-test;rocky-backend"
 python -m unittest discover -s run-test/frontend -p "test_*.py" -v
 ```
+
 ## Credits
 
 This project is based on the original Rocky repository developed in Kent State University's Software Engineering course.

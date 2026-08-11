@@ -1,19 +1,16 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { env } from '$env/dynamic/private';
 import { APP_ENV } from '$lib/config/env';
+import { requireProductionSecret } from '$lib/server/privateConfig';
 
 const SESSION_VERSION = 1;
 const SESSION_LIFETIME_SECONDS = 60 * 60 * 8;
 const configuredSecret = (env.ROCKY_SESSION_SECRET ?? '').trim();
-const sessionSecret =
-	configuredSecret || (APP_ENV === 'production' ? '' : 'rocky-local-development-session');
-
-if (!sessionSecret) {
-	throw new Error('Missing required private environment variable: ROCKY_SESSION_SECRET');
-}
-if (APP_ENV === 'production' && sessionSecret.length < 32) {
-	throw new Error('ROCKY_SESSION_SECRET must contain at least 32 characters in production.');
-}
+const sessionSecret = requireProductionSecret(
+	'ROCKY_SESSION_SECRET',
+	configuredSecret || (APP_ENV === 'production' ? '' : 'rocky-local-development-session'),
+	APP_ENV
+);
 
 type SessionPayload = {
 	v: number;

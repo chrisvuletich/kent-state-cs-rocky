@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass
 from typing import Callable
@@ -7,10 +8,12 @@ from urllib.parse import urlparse
 
 import requests
 from pymongo import MongoClient
+from run_env import normalize_chat_api_urls
 
 
 VALID_APP_ENVS = {"development", "testing", "production"}
 VALID_DB_BACKENDS = {"mongita", "mongodb"}
+DEFAULT_MODEL = "gemma4:latest"
 PLACEHOLDER_PREFIXES = ("replace-with", "change-me", "changeme")
 PRODUCTION_SECRETS = (
     "ROCKY_HIDDEN_API_KEY_SECRET",
@@ -40,20 +43,47 @@ def connectable_host(value: str) -> str:
 
 
 def valid_http_url(value: str) -> bool:
-    parsed = urlparse(value)
-    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+    try:
+        parsed = urlparse(value)
+        hostname = parsed.hostname
+        parsed.port
+    except ValueError:
+        return False
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc or not hostname:
+        return False
+    if parsed.username is not None or parsed.password is not None:
+        return False
+    if parsed.query or parsed.fragment:
+        return False
+    return True
+
+
+def derive_frontend_api_url() -> str:
+    return env("PUBLIC_API_BASE_URL", "http://localhost:5001").rstrip("/")
+
+
+def derive_granite_generation_url() -> str:
+    return env("ROCKY_GRANITE_URL", "http://127.0.0.1:5002/generate")
+
+
+def derive_granite_readiness_url() -> str:
+    configured = env("ROCKY_GRANITE_READY_URL")
+    if configured:
+        return configured
+    generation_url = derive_granite_generation_url().rstrip("/")
+    return generation_url.rsplit("/", 1)[0] + "/ready"
 
 
 def derive_chat_base_url() -> str:
     configured = env("ROCKY_CHAT_API_URL")
-    if configured:
-        normalized = configured.rstrip("/")
-        if normalized.endswith("/v1/responses"):
-            return normalized[: -len("/v1/responses")]
-        return normalized
-    host = connectable_host(env("ROCKY_CHAT_API_HOST", "127.0.0.1"))
-    port = env("ROCKY_CHAT_API_PORT", "5003")
-    return f"http://{host}:{port}"
+    if not configured:
+        host = connectable_host(env("ROCKY_CHAT_API_HOST", "127.0.0.1"))
+        port = env("ROCKY_CHAT_API_PORT", "5003")
+        configured = f"http://{host}:{port}"
+    try:
+        return normalize_chat_api_urls(configured)[1]
+    except RuntimeError:
+        return ""
 
 
 def derive_backend_health_url() -> str:
@@ -86,16 +116,14 @@ class RockyDoctor:
         self.include_network = include_network
         self.session = session or requests.Session()
         self.mongo_pinger = mongo_pinger
-        self.app_env = env("ROCKY_APP_ENV", "development").lower()
-        self.public_app_env = env("PUBLIC_APP_ENV").lower()
-        self.db_backend = env(
-            "ROCKY_DB_BACKEND",
-            "mongodb" if self.app_env == "production" else "mongita",
-        ).lower()
-        self.db_name = env("ROCKY_DB_NAME", "rocky_db")
+        self.app_env = env("ROCKY_APP_ENV", "development").lower() or "development"
+        self.public_app_env = env("PUBLIC_APP_ENV", self.app_env).lower()
+        default_db_backend = "mongodb" if self.app_env == "production" else "mongita"
+        self.db_backend = env("ROCKY_DB_BACKEND", default_db_backend).lower() or default_db_backend
+        self.db_name = env("ROCKY_DB_NAME", "rocky_db") or "rocky_db"
         self.mongodb_uri = env("ROCKY_MONGODB_URI")
-        self.public_model = env("ROCKY_PUBLIC_MODEL")
-        self.inference_model = env("OLLAMA_MODEL")
+        self.inference_model = env("OLLAMA_MODEL", DEFAULT_MODEL) or DEFAULT_MODEL
+        self.public_model = env("ROCKY_PUBLIC_MODEL", self.inference_model) or self.inference_model
 
     def run(self) -> list[DoctorCheck]:
         checks: list[DoctorCheck] = []
@@ -167,11 +195,109 @@ class RockyDoctor:
 
         checks.extend(self.secret_checks())
         checks.extend(self.frontend_flag_checks())
+        checks.extend(self.runtime_setting_checks())
         checks.extend(self.request_logging_checks())
         checks.extend(self.authentication_checks())
         checks.extend(self.model_checks())
         checks.extend(self.url_checks())
         return checks
+
+    def runtime_setting_checks(self) -> list[DoctorCheck]:
+        boolean_settings = {
+            "ROCKY_DEBUG": "false" if self.app_env == "production" else "true",
+            "ROCKY_ENABLE_DB_INSPECTOR": (
+                "false" if self.app_env == "production" else "true"
+            ),
+            "ROCKY_ENABLE_MICROSOFT_OAUTH": "false",
+            "ROCKY_HARDWARE_TELEMETRY_ENABLED": "false",
+            "ROCKY_TELEMETRY_ENABLED": "true",
+        }
+        errors: list[str] = []
+        for name, default in boolean_settings.items():
+            value = env(name, default).lower()
+            if value not in {"true", "false"}:
+                errors.append(f"{name} must be exactly true or false")
+
+        if self.app_env == "production":
+            if env("ROCKY_DEBUG", "false").lower() != "false":
+                errors.append("ROCKY_DEBUG must be false in production")
+            if env("ROCKY_ENABLE_DB_INSPECTOR", "false").lower() != "false":
+                errors.append("ROCKY_ENABLE_DB_INSPECTOR must be false in production")
+            if env("ROCKY_TELEMETRY_ENABLED", "true").lower() != "true":
+                errors.append("ROCKY_TELEMETRY_ENABLED must be true in production")
+
+        if env("ROCKY_HARDWARE_TELEMETRY_ENABLED", "false").lower() == "true":
+            metrics_token = env("ROCKY_HARDWARE_METRICS_TOKEN")
+            if self.app_env == "production" and (
+                len(metrics_token) < 32
+                or metrics_token.lower().startswith(PLACEHOLDER_PREFIXES)
+            ):
+                errors.append(
+                    "ROCKY_HARDWARE_METRICS_TOKEN must be a non-placeholder value "
+                    "of at least 32 characters in production"
+                )
+
+        integer_settings = {
+            "ROCKY_API_PORT": (5001, 1, 65535),
+            "ROCKY_WEB_PORT": (5000, 1, 65535),
+            "ROCKY_CHAT_API_PORT": (5003, 1, 65535),
+            "ROCKY_GRANITE_PORT": (5002, 1, 65535),
+            "ROCKY_HARDWARE_PORT": (5010, 1, 65535),
+            "ROCKY_MAX_REQUEST_BYTES": (256 * 1024, 1, None),
+            "ROCKY_MAX_OUTPUT_TOKENS": (2048, 1, None),
+            "ROCKY_MAX_CONTEXT_CHARS": (60000, 1, None),
+            "ROCKY_RESPONSES_RATE_LIMIT_PER_MINUTE": (10, 1, None),
+            "ROCKY_MODELS_RATE_LIMIT_PER_MINUTE": (120, 1, None),
+            "ROCKY_GRANITE_MAX_CONCURRENT": (1, 1, None),
+            "ROCKY_MONGODB_CONNECT_ATTEMPTS": (10, 1, None),
+            "ROCKY_HARDWARE_SAMPLE_INTERVAL_SECONDS": (30, 10, None),
+            "ROCKY_HARDWARE_METRICS_TIMEOUT_SECONDS": (5, 1, None),
+            "ROCKY_HARDWARE_RETENTION_DAYS": (90, 1, None),
+        }
+        for name, (default, minimum, maximum) in integer_settings.items():
+            raw_value = env(name, str(default))
+            try:
+                value = int(raw_value)
+            except ValueError:
+                errors.append(f"{name} must be an integer")
+                continue
+            if value < minimum or (maximum is not None and value > maximum):
+                range_text = (
+                    f"between {minimum} and {maximum}"
+                    if maximum is not None
+                    else f"at least {minimum}"
+                )
+                errors.append(f"{name} must be {range_text}")
+
+        float_settings = {
+            "ROCKY_GRANITE_TIMEOUT_SECONDS": (170.0, 0.0, False),
+            "ROCKY_READINESS_TIMEOUT_SECONDS": (2.0, 0.0, False),
+            "ROCKY_OLLAMA_TIMEOUT_SECONDS": (150.0, 0.0, False),
+            "ROCKY_OLLAMA_READY_TIMEOUT_SECONDS": (2.0, 0.0, False),
+            "ROCKY_GRANITE_QUEUE_WAIT_SECONDS": (1.0, 0.0, True),
+            "ROCKY_MONGODB_RETRY_SECONDS": (2.0, 0.0, True),
+            "ROCKY_HARDWARE_COMMAND_TIMEOUT_SECONDS": (3.0, 0.0, False),
+        }
+        for name, (default, minimum, allow_minimum) in float_settings.items():
+            raw_value = env(name, str(default))
+            try:
+                value = float(raw_value)
+            except ValueError:
+                errors.append(f"{name} must be a number")
+                continue
+            if not math.isfinite(value):
+                errors.append(f"{name} must be a finite number")
+            elif value < minimum or (value == minimum and not allow_minimum):
+                comparison = "at least" if allow_minimum else "greater than"
+                errors.append(f"{name} must be {comparison} {minimum:g}")
+
+        return [
+            DoctorCheck(
+                "FAIL" if errors else "PASS",
+                "runtime settings",
+                "; ".join(errors) if errors else "Ports, timeouts, limits, and flags are valid.",
+            )
+        ]
 
     def request_logging_checks(self) -> list[DoctorCheck]:
         default_value = "true" if self.app_env == "production" else "false"
@@ -249,8 +375,18 @@ class RockyDoctor:
         return checks
 
     def authentication_checks(self) -> list[DoctorCheck]:
-        if self.public_app_env != "production":
-            return [DoctorCheck("INFO", "Microsoft authentication", "Not required outside production.")]
+        microsoft_override = env("PUBLIC_ENABLE_MICROSOFT_OAUTH", "false").lower()
+        microsoft_active = self.public_app_env == "production" or (
+            self.public_app_env == "development" and microsoft_override == "true"
+        )
+        if not microsoft_active:
+            return [
+                DoctorCheck(
+                    "INFO",
+                    "Microsoft authentication",
+                    "Not active in the configured authentication mode.",
+                )
+            ]
 
         tenant_id = env("PUBLIC_MICROSOFT_TENANT_ID")
         values = {
@@ -276,7 +412,8 @@ class RockyDoctor:
                         name == "PUBLIC_MICROSOFT_TENANT_ID"
                         and value.lower() in {"common", "organizations", "consumers"}
                     )
-                    else "A specific Kent tenant ID is required in production."
+                    else "Required whenever Microsoft OAuth is active; the tenant must "
+                    "be a specific Kent tenant ID."
                 ),
             )
             for name, value in values.items()
@@ -285,43 +422,33 @@ class RockyDoctor:
             DoctorCheck(
                 "PASS",
                 "Microsoft OAuth mode",
-                "Enabled by PUBLIC_APP_ENV=production.",
+                (
+                    "Enabled by PUBLIC_APP_ENV=production."
+                    if self.public_app_env == "production"
+                    else "Enabled by PUBLIC_ENABLE_MICROSOFT_OAUTH=true."
+                ),
             )
         )
         return checks
 
     def model_checks(self) -> list[DoctorCheck]:
-        checks: list[DoctorCheck] = []
-        if self.public_model and self.inference_model:
-            checks.append(
-                DoctorCheck(
-                    "PASS",
-                    "model mapping",
-                    f"Public '{self.public_model}' maps to inference '{self.inference_model}'.",
-                )
+        return [
+            DoctorCheck(
+                "PASS",
+                "model mapping",
+                f"Public '{self.public_model}' maps to inference '{self.inference_model}'.",
             )
-        else:
-            missing = [
-                name
-                for name, value in (
-                    ("ROCKY_PUBLIC_MODEL", self.public_model),
-                    ("OLLAMA_MODEL", self.inference_model),
-                )
-                if not value
-            ]
-            checks.append(
-                DoctorCheck("FAIL", "model mapping", "Missing: " + ", ".join(missing))
-            )
-        return checks
+        ]
 
     def url_checks(self) -> list[DoctorCheck]:
         urls = {
-            "frontend API URL": env("PUBLIC_API_BASE_URL"),
+            "frontend API URL": derive_frontend_api_url(),
             "backend health URL": derive_backend_health_url(),
-            "chat API URL": derive_chat_base_url(),
-            "Granite generation URL": env("ROCKY_GRANITE_URL"),
-            "Granite readiness URL": env("ROCKY_GRANITE_READY_URL"),
+            "Granite generation URL": derive_granite_generation_url(),
+            "Granite readiness URL": derive_granite_readiness_url(),
         }
+        if env("ROCKY_HARDWARE_TELEMETRY_ENABLED", "false").lower() == "true":
+            urls["hardware metrics URL"] = env("ROCKY_HARDWARE_METRICS_URL")
         checks: list[DoctorCheck] = []
         for name, value in urls.items():
             valid = valid_http_url(value)
@@ -332,6 +459,20 @@ class RockyDoctor:
                     "Valid URL." if valid else "Missing or not an absolute http(s) URL.",
                 )
             )
+
+        chat_base_url = derive_chat_base_url()
+        checks.append(
+            DoctorCheck(
+                "PASS" if chat_base_url else "FAIL",
+                "chat API URL",
+                (
+                    "Valid service base and generation endpoint."
+                    if chat_base_url
+                    else "Must be an absolute http(s) service URL or /v1/responses "
+                    "endpoint without credentials, a query string, or a fragment."
+                ),
+            )
+        )
 
         ollama_url = env("OLLAMA_BASE_URL")
         if ollama_url:
@@ -368,6 +509,14 @@ class RockyDoctor:
                     "FAIL",
                     "MongoDB connection",
                     "ROCKY_MONGODB_URI is required for the MongoDB backend.",
+                )
+            ]
+        if not self.include_network:
+            return [
+                DoctorCheck(
+                    "INFO",
+                    "MongoDB connection",
+                    "Skipped by --skip-network; the required URI is configured.",
                 )
             ]
         try:
@@ -444,7 +593,7 @@ class RockyDoctor:
         return DoctorCheck("PASS" if passed else "FAIL", "chat API readiness", detail)
 
     def check_granite_readiness(self) -> DoctorCheck:
-        url = env("ROCKY_GRANITE_READY_URL")
+        url = derive_granite_readiness_url()
         if not valid_http_url(url):
             return DoctorCheck("FAIL", "Granite readiness", "Service URL is invalid.")
         token = env("ROCKY_GRANITE_TOKEN")

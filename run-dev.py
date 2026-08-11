@@ -16,10 +16,12 @@ from run_env import (
     backend_url,
     chat_api_bind,
     chat_api_url,
+    env_bool,
     frontend_bind,
     granite_bind,
     granite_url,
     load_project_env,
+    normalize_chat_api_urls,
 )
 
 
@@ -107,7 +109,7 @@ def _build_frontend_env(api_base_url: str | None = None, chat_api_url_value: str
         env["PUBLIC_API_BASE_URL"] = api_base_url
 
     if chat_api_url_value is not None:
-        env["ROCKY_CHAT_API_URL"] = chat_api_url_value
+        env["ROCKY_CHAT_API_URL"] = normalize_chat_api_urls(chat_api_url_value)[0]
 
     return env
 
@@ -126,11 +128,8 @@ def wait_for_http(url: str, timeout_seconds: int = 15) -> bool:
 
 
 def chat_api_health_url(generation_url: str) -> str:
-    if generation_url.endswith('/'):
-        generation_url = generation_url.removesuffix("/")
-
-    generation_url = generation_url.removesuffix("/v1/responses")
-    return generation_url + "/health"
+    _, base_url = normalize_chat_api_urls(generation_url)
+    return base_url + "/health"
 
 
 def run_backend_only() -> int:
@@ -158,11 +157,11 @@ def run_both(seed: bool = False) -> int:
     npm_exe = get_npm_executable()
     resolved_backend_url = backend_url()
     resolved_granite_url = os.getenv("ROCKY_GRANITE_URL", "").strip() or granite_url()
-    resolved_chat_api_url = os.getenv("ROCKY_CHAT_API_URL", "").strip() or chat_api_url()
+    resolved_chat_api_url = normalize_chat_api_urls(
+        os.getenv("ROCKY_CHAT_API_URL", "").strip() or chat_api_url()
+    )[0]
     frontend_host, frontend_port = frontend_bind()
-    hardware_enabled = os.getenv(
-        "ROCKY_HARDWARE_TELEMETRY_ENABLED", ""
-    ).strip().lower() in {"1", "true", "yes", "on"}
+    hardware_enabled = env_bool("ROCKY_HARDWARE_TELEMETRY_ENABLED", False)
     backend_env = os.environ.copy()
     if hardware_enabled and not backend_env.get("ROCKY_HARDWARE_METRICS_URL", "").strip():
         backend_env["ROCKY_HARDWARE_METRICS_URL"] = resolved_granite_url.replace(

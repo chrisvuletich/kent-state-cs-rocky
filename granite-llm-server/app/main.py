@@ -15,31 +15,28 @@ load_dotenv(SERVICE_ROOT / ".env", override=False)
 load_dotenv(SERVICE_ROOT / ".env.local", override=True)
 
 from app.ollama_client import OllamaCallError, call_ollama_chat, check_ollama_readiness
+from app.config import app_env, env_float, env_int, env_text, require_production_secret
 from app.hardware_metrics import collect_hardware_snapshot
 from app.runtime_state import begin_inference, end_inference
 from app.request_parser import extract_model, extract_messages, extract_reasoning, extract_generation_options
 
 
 app = Flask(__name__)
-GRANITE_HOST = os.getenv("ROCKY_GRANITE_HOST", "127.0.0.1")
-GRANITE_PORT = int(os.getenv("ROCKY_GRANITE_PORT", "5002"))
-APP_ENV = os.getenv("ROCKY_APP_ENV", "development").strip().lower()
-HARDWARE_METRICS_TOKEN = os.getenv("ROCKY_HARDWARE_METRICS_TOKEN", "").strip()
-GRANITE_AUTH_TOKEN = os.getenv("ROCKY_GRANITE_TOKEN", "").strip()
-MAX_CONCURRENT_INFERENCES = max(
-    1,
-    int(os.getenv("ROCKY_GRANITE_MAX_CONCURRENT", "1")),
+GRANITE_HOST = env_text("ROCKY_GRANITE_HOST", "127.0.0.1") or "127.0.0.1"
+GRANITE_PORT = env_int("ROCKY_GRANITE_PORT", 5002, minimum=1, maximum=65535)
+APP_ENV = app_env()
+HARDWARE_METRICS_TOKEN = env_text("ROCKY_HARDWARE_METRICS_TOKEN")
+GRANITE_AUTH_TOKEN = env_text("ROCKY_GRANITE_TOKEN")
+MAX_CONCURRENT_INFERENCES = env_int(
+    "ROCKY_GRANITE_MAX_CONCURRENT", 1, minimum=1
 )
-QUEUE_WAIT_SECONDS = max(
-    0.0,
-    float(os.getenv("ROCKY_GRANITE_QUEUE_WAIT_SECONDS", "1")),
+QUEUE_WAIT_SECONDS = env_float(
+    "ROCKY_GRANITE_QUEUE_WAIT_SECONDS", 1, minimum=0
 )
 INFERENCE_GATE = threading.BoundedSemaphore(MAX_CONCURRENT_INFERENCES)
 
-if APP_ENV == "production" and len(GRANITE_AUTH_TOKEN) < 32:
-    raise RuntimeError(
-        "ROCKY_GRANITE_TOKEN must contain at least 32 characters in production."
-    )
+if APP_ENV == "production":
+    require_production_secret("ROCKY_GRANITE_TOKEN", GRANITE_AUTH_TOKEN)
 
 
 def granite_request_is_authorized():

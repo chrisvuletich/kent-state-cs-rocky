@@ -31,9 +31,9 @@ Administrators can use the sidebar to open Analytics, Users, Courses, Admin Pane
 
 ## 6. Inspect AI usage analytics
 
-Open **Analytics** to review live AI request telemetry. Choose a time window to compare request and token throughput, model speed, outcomes, and latency. Use **Breakdown** to group the same metrics by user, course, API key, group, model, request source, or outcome.
+Open **Analytics** to review live AI request telemetry. Choose a time window to compare request and token throughput, model speed, outcomes, latency, and rate-limit activity. **Rate-limit rejections** count normal `429` enforcement events; **Limiter unavailable** identifies operational failures that prevented a rate-limit decision. Use the error-type filter to inspect the matching requests, including `rate_limit_exceeded`, `rate_limit_unavailable`, and `rate_limit_identity_unavailable`. Use **Breakdown** to group the same metrics by user, course, API key, group, model, request source, or outcome.
 
-The **Review queue** opens the complete recorded prompt and response text. This conversation content is retained verbatim and is not sanitized. Filter it by request outcome, flagged state, or review status to focus on requests that need attention. Analytics and review controls are restricted to administrators.
+The **Review queue** opens the complete recorded prompt and response text. This conversation content is retained verbatim and is not sanitized. Filter it by request outcome, error type, flagged state, or review status to focus on requests that need attention. Request details show the error stage and type when the request failed or was rejected. Analytics and review controls are restricted to administrators.
 
 For a request that needs follow-up, mark it **Flagged**, choose at least one structured reason, set its status to **Unreviewed**, **In review**, or **Resolved**, and add concise administrative notes. Saving records the reviewing administrator and time. Removing the flag also removes its flag reasons, while notes and workflow status remain available for documenting the decision.
 

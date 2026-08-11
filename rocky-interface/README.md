@@ -88,7 +88,8 @@ Administrators have an `Analytics` frame backed by the Flask Phase 2 telemetry
 endpoints. It provides:
 
 - selectable `15m`, `1h`, `6h`, `24h`, `7d`, and `30d` windows;
-- request/token throughput, model timing, token throughput, outcomes, and latency;
+- request/token throughput, model timing, token throughput, outcomes, latency,
+  and rate-limit enforcement/failure counts;
 - breakdowns by user, course, API key, group, model, source, and outcome;
 - a filterable administrative review queue and complete stored
   request/response inspection;
@@ -100,11 +101,11 @@ endpoints. It provides:
 - responsive desktop and mobile layouts, with request detail presented as a
   mobile bottom sheet.
 
-The selected window, breakdown dimension, request ID, outcome filter, and review
-filter are reflected in the URL as `analytics_window`, `analytics_dimension`,
-`analytics_request`, `analytics_outcome`, and `analytics_review`, so a reload
-restores the same analytical view. These values contain identifiers and view
-choices only; request content and review notes are never placed in the URL.
+The selected window, breakdown dimension, request ID, and request filters are
+reflected in the URL using compact parameters such as `range`, `dimension`,
+`request`, `outcome`, `error_type`, and `review`, so a reload restores the same
+analytical view. These values contain identifiers and view choices only;
+request content and review notes are never placed in the URL.
 
 ## Built-in chat cancellation
 

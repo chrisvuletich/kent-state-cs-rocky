@@ -7,6 +7,7 @@ import json
 import math
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 from uuid import uuid4
 import time
 
@@ -15,6 +16,13 @@ import requests
 import logging
 from mongita import MongitaClientDisk
 from dotenv import load_dotenv
+from rate_limit import (
+    FixedWindowRateLimiter,
+    RATE_LIMIT_WINDOW_SECONDS,
+    RateLimitDecision,
+    RateLimitStoreUnavailable,
+    ensure_rate_limit_ttl_index,
+)
 from telemetry import TelemetryStore, sanitize_model_metrics
 
 # Try PyMongo first (default to localhost). If unavailable, fall back to Mongita.
@@ -34,48 +42,148 @@ load_dotenv(SERVICE_ROOT / ".env", override=False)
 load_dotenv(SERVICE_ROOT / ".env.local", override=True)
 
 
-app = Flask(__name__)
-app.config["MAX_CONTENT_LENGTH"] = int(
-    os.getenv("ROCKY_MAX_REQUEST_BYTES", str(256 * 1024))
-)
+VALID_APP_ENVS = {"development", "testing", "production", "test"}
+VALID_DB_BACKENDS = {"mongita", "mongodb"}
+PLACEHOLDER_PREFIXES = ("replace-with", "change-me", "changeme")
 
-APP_ENV = os.getenv("ROCKY_APP_ENV", "development").strip().lower() or "development"
+
+def _env_value(name, default=""):
+    return os.getenv(name, str(default)).strip()
+
+
+def _env_choice(name, default, choices):
+    value = _env_value(name, default).lower() or default
+    if value not in choices:
+        expected = ", ".join(sorted(choices))
+        raise RuntimeError(f"Invalid {name}: expected one of {expected}.")
+    return value
+
+
+def _env_bool(name, default):
+    value = _env_value(name, "true" if default else "false").lower()
+    if value == "true":
+        return True
+    if value == "false":
+        return False
+    raise RuntimeError(f"Invalid {name}: expected exactly true or false.")
+
+
+def _env_int(name, default, minimum=None, maximum=None):
+    raw_value = _env_value(name, default)
+    try:
+        value = int(raw_value)
+    except ValueError as error:
+        raise RuntimeError(f"Invalid {name}: expected an integer.") from error
+    if minimum is not None and value < minimum:
+        raise RuntimeError(f"Invalid {name}: must be at least {minimum}.")
+    if maximum is not None and value > maximum:
+        raise RuntimeError(f"Invalid {name}: must be at most {maximum}.")
+    return value
+
+
+def _env_float(name, default, minimum=None, allow_minimum=True):
+    raw_value = _env_value(name, default)
+    try:
+        value = float(raw_value)
+    except ValueError as error:
+        raise RuntimeError(f"Invalid {name}: expected a number.") from error
+    if not math.isfinite(value):
+        raise RuntimeError(f"Invalid {name}: expected a finite number.")
+    if minimum is not None and (
+        value < minimum or (value == minimum and not allow_minimum)
+    ):
+        comparison = "at least" if allow_minimum else "greater than"
+        raise RuntimeError(f"Invalid {name}: must be {comparison} {minimum}.")
+    return value
+
+
+def _env_http_url(name, default):
+    value = _env_value(name, default)
+    try:
+        parsed = urlparse(value)
+        hostname = parsed.hostname
+        parsed.port
+    except ValueError:
+        hostname = None
+        parsed = None
+    valid = bool(
+        parsed
+        and parsed.scheme in {"http", "https"}
+        and parsed.netloc
+        and hostname
+        and parsed.username is None
+        and parsed.password is None
+        and not parsed.query
+        and not parsed.fragment
+    )
+    if not valid:
+        raise RuntimeError(
+            f"Invalid {name}: expected an absolute http(s) URL without credentials, "
+            "a query string, or a fragment."
+        )
+    return value
+
+
+def _require_production_secret(name, value):
+    is_placeholder = value.lower().startswith(PLACEHOLDER_PREFIXES)
+    if len(value) < 32 or is_placeholder:
+        raise RuntimeError(
+            f"{name} must be a non-placeholder value of at least 32 characters in production."
+        )
+
+
+APP_ENV = _env_choice("ROCKY_APP_ENV", "development", VALID_APP_ENVS)
+MAX_REQUEST_BYTES = _env_int(
+    "ROCKY_MAX_REQUEST_BYTES", 256 * 1024, minimum=1
+)
+app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = MAX_REQUEST_BYTES
+
 CHAT_API_KEY_CONFIGURED = "ROCKY_CHAT_API_KEY" in os.environ and bool(os.getenv("ROCKY_CHAT_API_KEY", "").strip())
 CHAT_API_KEY = os.getenv("ROCKY_CHAT_API_KEY", "").strip()
 CHAT_SERVICE_OWNER_ID = os.getenv("ROCKY_CHAT_SERVICE_OWNER_ID", "rocky-chat-service@kent.edu").strip() or "rocky-chat-service@kent.edu"
 CHAT_SERVICE_KEY_NAME = "rocky-chat-service"
-GRANITE_URL = os.getenv("ROCKY_GRANITE_URL", "http://127.0.0.1:5002/generate")
+GRANITE_URL = _env_http_url(
+    "ROCKY_GRANITE_URL", "http://127.0.0.1:5002/generate"
+)
 INFERENCE_MODEL = os.getenv(
     "OLLAMA_MODEL",
     "gemma4:latest",
 ).strip() or "gemma4:latest"
 PUBLIC_MODEL = os.getenv("ROCKY_PUBLIC_MODEL", INFERENCE_MODEL).strip() or INFERENCE_MODEL
-CHAT_API_HOST = os.getenv("ROCKY_CHAT_API_HOST", "127.0.0.1")
-CHAT_API_PORT = int(os.getenv("ROCKY_CHAT_API_PORT", "5003"))
-GRANITE_TIMEOUT_SECONDS = int(os.getenv("ROCKY_GRANITE_TIMEOUT_SECONDS", "170"))
-GRANITE_READY_URL = os.getenv(
+CHAT_API_HOST = _env_value("ROCKY_CHAT_API_HOST", "127.0.0.1") or "127.0.0.1"
+CHAT_API_PORT = _env_int("ROCKY_CHAT_API_PORT", 5003, minimum=1, maximum=65535)
+GRANITE_TIMEOUT_SECONDS = _env_float(
+    "ROCKY_GRANITE_TIMEOUT_SECONDS", 170, minimum=0, allow_minimum=False
+)
+GRANITE_READY_URL = _env_http_url(
     "ROCKY_GRANITE_READY_URL",
-    GRANITE_URL.rsplit("/", 1)[0] + "/ready",
-).strip()
+    GRANITE_URL.rstrip("/").rsplit("/", 1)[0] + "/ready",
+)
 GRANITE_AUTH_TOKEN = os.getenv("ROCKY_GRANITE_TOKEN", "").strip()
 INTERNAL_PROXY_SECRET = os.getenv("ROCKY_INTERNAL_PROXY_SECRET", "").strip()
-MAX_OUTPUT_TOKENS = int(os.getenv("ROCKY_MAX_OUTPUT_TOKENS", "2048"))
-MAX_CONTEXT_CHARS = int(os.getenv("ROCKY_MAX_CONTEXT_CHARS", "60000"))
-READINESS_TIMEOUT_SECONDS = float(os.getenv("ROCKY_READINESS_TIMEOUT_SECONDS", "2"))
-REQUIRE_REQUEST_LOGGING = os.getenv(
+MAX_OUTPUT_TOKENS = _env_int("ROCKY_MAX_OUTPUT_TOKENS", 2048, minimum=1)
+MAX_CONTEXT_CHARS = _env_int("ROCKY_MAX_CONTEXT_CHARS", 60000, minimum=1)
+RESPONSES_RATE_LIMIT_PER_MINUTE = _env_int(
+    "ROCKY_RESPONSES_RATE_LIMIT_PER_MINUTE", 10, minimum=1
+)
+MODELS_RATE_LIMIT_PER_MINUTE = _env_int(
+    "ROCKY_MODELS_RATE_LIMIT_PER_MINUTE", 120, minimum=1
+)
+READINESS_TIMEOUT_SECONDS = _env_float(
+    "ROCKY_READINESS_TIMEOUT_SECONDS", 2, minimum=0, allow_minimum=False
+)
+REQUIRE_REQUEST_LOGGING = _env_bool(
     "ROCKY_REQUIRE_REQUEST_LOGGING",
-    "true" if APP_ENV == "production" else "false",
-).strip().lower() in {"1", "true", "yes", "on"}
+    APP_ENV == "production",
+)
 
 if APP_ENV == "production":
-    if len(INTERNAL_PROXY_SECRET) < 32:
+    _require_production_secret("ROCKY_INTERNAL_PROXY_SECRET", INTERNAL_PROXY_SECRET)
+    _require_production_secret("ROCKY_GRANITE_TOKEN", GRANITE_AUTH_TOKEN)
+    if not REQUIRE_REQUEST_LOGGING:
         raise RuntimeError(
-            "ROCKY_INTERNAL_PROXY_SECRET must contain at least 32 characters "
-            "in production."
-        )
-    if len(GRANITE_AUTH_TOKEN) < 32:
-        raise RuntimeError(
-            "ROCKY_GRANITE_TOKEN must contain at least 32 characters in production."
+            "ROCKY_REQUIRE_REQUEST_LOGGING must be true in production."
         )
 
 def resolve_mongita_path(value):
@@ -97,7 +205,11 @@ responses_col = None
 telemetry_interactions_col = None
 telemetry_current_col = None
 telemetry_store = None
+rate_limit_windows_col = None
+rate_limiter = None
 MONGITA_KEY_READ_REFRESH_ENABLED = False
+
+DEVELOPMENT_BYPASS_KEY_ID = "akid_local_development_bypass"
 
 
 def normalize_api_key_value(key):
@@ -208,21 +320,25 @@ def ensure_chat_indexes():
 # Database configuration
 DEFAULT_DB_BACKEND = (
     "mongodb"
-    if os.getenv("ROCKY_APP_ENV", "development").strip().lower() == "production"
+    if APP_ENV == "production"
     else "mongita"
 )
-DB_BACKEND = os.getenv("ROCKY_DB_BACKEND", DEFAULT_DB_BACKEND).strip().lower()
+DB_BACKEND = _env_choice(
+    "ROCKY_DB_BACKEND", DEFAULT_DB_BACKEND, VALID_DB_BACKENDS
+)
+if APP_ENV == "production" and DB_BACKEND != "mongodb":
+    raise RuntimeError("ROCKY_DB_BACKEND must be mongodb in production.")
 MONGODB_URI = os.getenv(
     "ROCKY_MONGODB_URI",
     ""
 ).strip()
 DB_NAME = os.getenv("ROCKY_DB_NAME", "rocky_db").strip() or "rocky_db"
 
-MONGODB_CONNECT_ATTEMPTS = int(
-    os.getenv("ROCKY_MONGODB_CONNECT_ATTEMPTS", "10")
+MONGODB_CONNECT_ATTEMPTS = _env_int(
+    "ROCKY_MONGODB_CONNECT_ATTEMPTS", 10, minimum=1
 )
-MONGODB_RETRY_SECONDS = float(
-    os.getenv("ROCKY_MONGODB_RETRY_SECONDS", "2")
+MONGODB_RETRY_SECONDS = _env_float(
+    "ROCKY_MONGODB_RETRY_SECONDS", 2, minimum=0
 )
 
 
@@ -233,6 +349,7 @@ def initialize_database():
     global responses_col
     global telemetry_interactions_col
     global telemetry_current_col
+    global rate_limit_windows_col
     global MONGITA_KEY_READ_REFRESH_ENABLED
 
     MONGITA_KEY_READ_REFRESH_ENABLED = False
@@ -271,6 +388,7 @@ def initialize_database():
                 responses_col = database["responses"]
                 telemetry_interactions_col = database["telemetry_interactions"]
                 telemetry_current_col = database["telemetry_current"]
+                rate_limit_windows_col = database["rate_limit_windows"]
 
                 logging.info(
                     "Using MongoDB database=%s",
@@ -313,6 +431,7 @@ def initialize_database():
         responses_col = database["responses"]
         telemetry_interactions_col = database["telemetry_interactions"]
         telemetry_current_col = database["telemetry_current"]
+        rate_limit_windows_col = database["rate_limit_windows"]
         MONGITA_KEY_READ_REFRESH_ENABLED = True
         return
 
@@ -322,9 +441,9 @@ def initialize_database():
     )
 
 
-telemetry_enabled = os.getenv(
-    "ROCKY_TELEMETRY_ENABLED", "true"
-).strip().lower() not in {"0", "false", "no", "off"}
+telemetry_enabled = _env_bool("ROCKY_TELEMETRY_ENABLED", True)
+if APP_ENV == "production" and not telemetry_enabled:
+    raise RuntimeError("ROCKY_TELEMETRY_ENABLED must be true in production.")
 
 
 def should_skip_database_initialization_for_tests():
@@ -340,10 +459,33 @@ def should_skip_database_initialization_for_tests():
 
     return True
 
-if not should_skip_database_initialization_for_tests():
+
+def initialize_rate_limiter():
+    """Initialize the shared limiter after the configured database is ready."""
+    global rate_limiter
+
+    if rate_limit_windows_col is None:
+        raise RuntimeError("Rate-limit storage is unavailable.")
+
+    if DB_BACKEND == "mongodb":
+        ensure_rate_limit_ttl_index(rate_limit_windows_col)
+
+    rate_limiter = FixedWindowRateLimiter(
+        rate_limit_windows_col,
+        cleanup_expired=DB_BACKEND == "mongita",
+        logger=app.logger,
+    )
+
+
+DATABASE_INITIALIZATION_SKIPPED_FOR_TESTS = (
+    should_skip_database_initialization_for_tests()
+)
+
+if not DATABASE_INITIALIZATION_SKIPPED_FOR_TESTS:
     initialize_database()
     ensure_chat_indexes()
     ensure_chat_service_api_key()
+    initialize_rate_limiter()
 
     if telemetry_enabled:
         telemetry_store = TelemetryStore(
@@ -719,6 +861,132 @@ def terminal_telemetry_json(
     return telemetry_json(payload, status, interaction, headers=headers)
 
 
+def rate_limit_key_doc(key_doc):
+    """Return a credential with a stable public key ID, backfilling legacy rows."""
+    if not isinstance(key_doc, dict):
+        return None
+
+    stored_key_id = key_doc.get("key_id")
+    key_id = stored_key_id.strip() if isinstance(stored_key_id, str) else ""
+    if key_id:
+        return key_doc
+
+    # Database-free route tests intentionally use synthetic key documents. This
+    # seam cannot be enabled outside ROCKY_APP_ENV=test.
+    if DATABASE_INITIALIZATION_SKIPPED_FOR_TESTS and rate_limiter is None:
+        return key_doc
+
+    document_id = key_doc.get("_id")
+    collection = current_api_keys_collection()
+    if document_id is None or collection is None:
+        return None
+
+    candidate_key_id = generate_public_key_id()
+    legacy_key_id_query = (
+        {"$in": [None, ""]}
+        if stored_key_id is None or stored_key_id == ""
+        else stored_key_id
+    )
+    try:
+        collection.update_one(
+            {
+                "_id": document_id,
+                "key_id": legacy_key_id_query,
+            },
+            {"$set": {"key_id": candidate_key_id}},
+        )
+        refreshed = collection.find_one({"_id": document_id})
+    except Exception as error:
+        app.logger.warning(
+            "rate_limit.key_id_backfill_failed error_type=%s",
+            type(error).__name__,
+        )
+        return None
+
+    if not isinstance(refreshed, dict):
+        return None
+    return refreshed if optional_text(refreshed.get("key_id"), 256) else None
+
+
+def rate_limit_response_headers(decision):
+    """Return the request-limit headers supported by Rocky's RPM policy."""
+    return {
+        "x-ratelimit-limit-requests": str(decision.limit),
+        "x-ratelimit-remaining-requests": str(decision.remaining_requests),
+        "x-ratelimit-reset-requests": f"{decision.retry_after_seconds}s",
+    }
+
+
+@app.after_request
+def attach_rate_limit_headers(response):
+    decision = getattr(g, "rocky_rate_limit_decision", None)
+    if isinstance(decision, RateLimitDecision):
+        for name, value in rate_limit_response_headers(decision).items():
+            response.headers[name] = value
+    return response
+
+
+def enforce_public_rate_limit(interaction, key_doc, *, operation, limit):
+    """Consume one authenticated request and return an error response if blocked."""
+    if rate_limiter is None and DATABASE_INITIALIZATION_SKIPPED_FOR_TESTS:
+        return None
+
+    try:
+        decision: RateLimitDecision = rate_limiter.consume(
+            key_id=key_doc.get("key_id"),
+            operation=operation,
+            limit=limit,
+        )
+    except (RateLimitStoreUnavailable, AttributeError, TypeError, ValueError) as error:
+        app.logger.warning(
+            "rate_limit.decision_failed request_id=%s operation=%s error_type=%s",
+            interaction.get("request_id") if isinstance(interaction, dict) else None,
+            operation,
+            type(error).__name__,
+        )
+        return terminal_telemetry_json(
+            interaction,
+            api_error(
+                "Rate limiting is temporarily unavailable.",
+                error_type="server_error",
+                code="rate_limit_unavailable",
+            ),
+            503,
+            "failed",
+            error_stage="rate_limit",
+            error_type="rate_limit_unavailable",
+        )
+
+    g.rocky_rate_limit_decision = decision
+    if decision.allowed:
+        return None
+
+    retry_after = decision.retry_after_seconds
+    rate_limit_record = {
+        "rate_limit": {
+            "scope": "api_key",
+            "operation": operation,
+            "limit": decision.limit,
+            "remaining_requests": decision.remaining_requests,
+            "window_seconds": RATE_LIMIT_WINDOW_SECONDS,
+            "retry_after_seconds": retry_after,
+        }
+    }
+    return terminal_telemetry_json(
+        interaction,
+        api_error(
+            "Rate limit reached for this API key. Please retry shortly.",
+            error_type="rate_limit_error",
+            code="rate_limit_exceeded",
+        ),
+        429,
+        "rejected",
+        error_stage="rate_limit",
+        error_type="rate_limit_exceeded",
+        additional_fields=rate_limit_record,
+        headers={"Retry-After": str(retry_after)},
+    )
+
 
 @app.route("/health", methods=["GET"])
 def health():
@@ -806,6 +1074,21 @@ def list_models():
             error_type="invalid_proxy_authentication",
         )
 
+    key_doc = rate_limit_key_doc(key_doc)
+    if not key_doc:
+        return terminal_telemetry_json(
+            interaction,
+            api_error(
+                "Rate-limit identity is temporarily unavailable.",
+                error_type="server_error",
+                code="rate_limit_identity_unavailable",
+            ),
+            503,
+            "failed",
+            error_stage="rate_limit",
+            error_type="rate_limit_identity_unavailable",
+        )
+
     identity_logged = enrich_telemetry_interaction(
         interaction,
         telemetry_identity_record(key_doc),
@@ -823,6 +1106,15 @@ def list_models():
             error_stage="telemetry",
             error_type="identity_persistence_failed",
         )
+
+    rate_limit_response = enforce_public_rate_limit(
+        interaction,
+        key_doc,
+        operation="models.list",
+        limit=MODELS_RATE_LIMIT_PER_MINUTE,
+    )
+    if rate_limit_response is not None:
+        return rate_limit_response
 
     return terminal_telemetry_json(
         interaction,
@@ -1000,6 +1292,21 @@ def rocky_api():
             error_type="invalid_proxy_authentication",
         )
 
+    key_doc = rate_limit_key_doc(key_doc)
+    if not key_doc:
+        return terminal_telemetry_json(
+            interaction,
+            api_error(
+                "Rate-limit identity is temporarily unavailable.",
+                error_type="server_error",
+                code="rate_limit_identity_unavailable",
+            ),
+            503,
+            "failed",
+            error_stage="rate_limit",
+            error_type="rate_limit_identity_unavailable",
+        )
+
     identity_logged = enrich_telemetry_interaction(
         interaction,
         telemetry_identity_record(key_doc),
@@ -1017,6 +1324,15 @@ def rocky_api():
             error_stage="telemetry",
             error_type="identity_persistence_failed",
         )
+
+    rate_limit_response = enforce_public_rate_limit(
+        interaction,
+        key_doc,
+        operation="responses.create",
+        limit=RESPONSES_RATE_LIMIT_PER_MINUTE,
+    )
+    if rate_limit_response is not None:
+        return rate_limit_response
 
     validation_error = validate_public_request(request_body)
     if validation_error:
@@ -1851,7 +2167,8 @@ def get_key_doc(key):
     if development_auth_bypass_enabled():
         return {
             "api-key": "dev-bypass",
-            "owner_id": "dev-user"
+            "key_id": DEVELOPMENT_BYPASS_KEY_ID,
+            "owner_id": "dev-user",
         }
 
     normalized_key = key.strip() if isinstance(key, str) else ""
