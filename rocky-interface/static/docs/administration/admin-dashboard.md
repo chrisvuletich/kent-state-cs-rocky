@@ -7,9 +7,11 @@ The Admin Dashboard summarizes current Rocky data and provides quick access to a
 
 ## 1. Read the dashboard overview
 
-**Total Users** counts loaded user accounts, **Active Users** counts active accounts, and **Total Courses** counts loaded courses. **API Keys Issued** counts API-key summaries returned for those courses. **Requests Today** counts recorded request events dated today when the dashboard loads.
+**Total Users** counts loaded user accounts, **Active Users** counts active
+accounts, and **Total Courses** counts loaded courses. **API Keys Issued** counts
+API-key summaries returned for those courses.
 
-![Admin Dashboard showing summary cards, audit logs, system status, and top active courses](/Admin-1.Panel.png)
+![Current Admin Dashboard showing four summary metrics, audit logs, and system status](/Admin-1.Panel.png)
 
 _The dashboard provides an overview of administrative information and activity._
 
@@ -23,7 +25,10 @@ The dashboard checks Backend API, Granite Bridge, Chat API, and Ollama / Model l
 
 ## 4. Compare active courses
 
-Top Active Courses ranks up to five courses by recorded request events. Its progress bars compare each course’s request count with the highest displayed count; they are a relative comparison, not a utilization percentage.
+**Top Courses — Last 30 Days** ranks up to five courses by attributed request
+events during that window. Its progress bars compare each course's request count
+with the highest displayed count; they are a relative comparison, not a
+utilization percentage.
 
 ## 5. Continue administration
 

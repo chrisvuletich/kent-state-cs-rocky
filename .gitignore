@@ -4,12 +4,17 @@ __pycache__/
 .venv/
 env/
 .rocky-data/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
 
 # Node / SvelteKit
 node_modules/
 rocky-interface/.svelte-kit/
 rocky-interface/build/
 rocky-interface/.output/
+rocky-interface/coverage/
 
 # Env and secrets
 .env

@@ -102,9 +102,11 @@ print(response.output_text)
 
 ## Next Steps
 
-- Generate your API key.
-- Read the API Reference.
-- Learn authentication best practices.
-- Try the JavaScript example.
-- Stream text incrementally with the Streaming Example.
-- Analyze a local image with the Image Input Example.
+- [Generate your API key](/?frame=help&doc=apikey).
+- Read the [API Reference](/?frame=help&doc=reference).
+- Learn authentication [best practices](/?frame=help&doc=best-practices).
+- Try the [JavaScript example](/?frame=help&doc=javascript).
+- Stream text incrementally with the
+  [Streaming Example](/?frame=help&doc=streaming).
+- Analyze a local image with the
+  [Image Input Example](/?frame=help&doc=image-input).

@@ -17,8 +17,8 @@ omitted optional values use the defaults in `.env.example`.
 `ROCKY_ENABLE_STREAMING` is a disabled-by-default rollout gate for Granite's
 internal text stream. When enabled, `POST /generate` accepts `"stream": true`,
 requests Ollama's chat stream, and returns provider-neutral NDJSON. The regular
-JSON response remains the default. Phase 3 uses `ROCKY_ENABLE_IMAGE_INPUT` to
-accept Rocky's strictly normalized private image blocks and map them to
+JSON response remains the default. `ROCKY_ENABLE_IMAGE_INPUT` gates Rocky's
+strictly normalized private image blocks and maps them to
 Ollama's per-message `images` array. Both JSON and streaming generation support
 them. The complete contract is documented in
 [`../api-rocky/STREAMING_AND_IMAGE_CONTRACT.md`](../api-rocky/STREAMING_AND_IMAGE_CONTRACT.md)
@@ -42,11 +42,11 @@ The bridge bounds individual provider lines to 1 MiB and each provider stream
 to 16 MiB. A downstream disconnect closes the Ollama response and releases the
 inference slot immediately.
 
-Phase 2 consumes this private stream in Rocky and translates it into public
-Responses SSE. Phase 3 adds defense-in-depth image verification. Public rollout
-for either feature requires its matching flag in both services, and Granite
-readiness verifies the installed Ollama model advertises `vision` before image
-input can be ready.
+Rocky consumes this private stream and translates it into public Responses SSE.
+Granite performs defense-in-depth image verification before contacting Ollama.
+Public rollout for either feature requires its matching flag in both services,
+and Granite readiness verifies the installed Ollama model advertises `vision`
+before image input can be ready.
 
 Set the same `ROCKY_GRANITE_TOKEN` here and on the Rocky chat API. The public
 model identifier is configured with `ROCKY_PUBLIC_MODEL`; the bridge sends the

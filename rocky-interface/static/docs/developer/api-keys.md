@@ -4,7 +4,9 @@ Your API key allows your application to securely authenticate with the Rocky API
 
 ## What is an API Key?
 
-An API key is a unique token that identifies your application when it communicates with Rocky. Every request to the Rocky API must include a valid API key. Keys are tied to a course.
+An API key is a unique credential that identifies its owner and course when an
+application communicates with Rocky. Every student API request must include a
+valid key.
 
 ## Generate an API Key
 
@@ -12,7 +14,7 @@ Generate your API key from an enrolled course.
 
 1. Open the **Courses** view and select an enrolled course.
 2. Select **Home**.
-3. Click **Generate API Key**.
+3. Click **Generate Key**.
 4. Copy and securely store your new API key.
 
 ## Using Your API Key
@@ -27,7 +29,8 @@ Do not put the key in the JSON request body or in a URL.
 
 ## Reset an API Key
 
-Click **Generate API Key** again for the same key slot to regenerate it. This invalidates the old key immediately.
+Click **Regenerate Key** for the same key slot. Confirm the warning before
+continuing; regeneration invalidates the old key immediately.
 
 ## Security Best Practices
 
@@ -40,6 +43,6 @@ Click **Generate API Key** again for the same key slot to regenerate it. This in
 
 Once you have generated your API key, you're ready to make your first request to the Rocky API.
 
-- Read the Python Example.
-- Read the JavaScript Example.
-- Explore the API Reference.
+- Read the [Python Example](/?frame=help&doc=python).
+- Read the [JavaScript Example](/?frame=help&doc=javascript).
+- Explore the [API Reference](/?frame=help&doc=reference).

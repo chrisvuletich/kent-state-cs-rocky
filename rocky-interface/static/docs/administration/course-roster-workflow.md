@@ -6,13 +6,13 @@ After creating a course, use the roster tools to add students individually or im
 
 Open **Courses**, select your course, then choose **Edit Roster**.
 
-![The Edit Roster tab highlighted on a course page](/class_doc_1.png)
+![The Edit Roster tab in the current course workspace](/class_doc_1.png)
 
 ## 2. Add a student manually
 
 On the Edit Roster tab, click **Add Email**.
 
-![The Add Email button highlighted on the Edit Roster page](/class_doc_2.png)
+![The Add Email and Import Canvas CSV controls on the current Edit Roster page](/class_doc_2.png)
 
 ## 3. Enter the student’s email
 
@@ -24,7 +24,7 @@ Enter the student’s Kent email address, then select **Add User**.
 
 To add the full class at once, select **Import Canvas CSV** and upload the roster exported from Canvas.
 
-![The Import Canvas CSV button on the Edit Roster page](/class_doc_2.9.png)
+![The current Edit Roster page with the Import Canvas CSV control above the roster](/class_doc_2.9.png)
 
 ## 5. Confirm the roster
 

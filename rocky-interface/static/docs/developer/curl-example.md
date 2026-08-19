@@ -4,13 +4,17 @@ Use curl to send a Rocky API request from a terminal.
 
 ## Before you begin
 
-Replace the environment-variable value with your own course API key. Keep the key out of shared shell history, code, and screenshots.
+Read your course API key through a hidden prompt so it does not appear on screen
+or in shell history. Keep it out of code and screenshots.
 
 ## Send a request
 
 ```bash
-export ROCKY_API_KEY='replace-with-your-course-api-key'
 export ROCKY_MODEL='paste-the-id-returned-by-v1-models'
+printf 'Rocky API key: '
+IFS= read -r -s ROCKY_API_KEY
+printf '\n'
+export ROCKY_API_KEY
 
 curl --request GET https://rocky.cs.kent.edu/v1/models \
   --header "Authorization: Bearer $ROCKY_API_KEY"
@@ -19,6 +23,8 @@ curl --request POST https://rocky.cs.kent.edu/v1/responses \
   --header "Authorization: Bearer $ROCKY_API_KEY" \
   --header 'Content-Type: application/json' \
   --data "{\"model\":\"$ROCKY_MODEL\",\"input\":\"Explain recursion in one paragraph.\",\"store\":false}"
+
+unset ROCKY_API_KEY
 ```
 
 `https://rocky.cs.kent.edu/v1/responses` is Rocky’s public Chat API endpoint.
@@ -30,15 +36,23 @@ If the selected model's metadata reports `supports_streaming: true`, use
 curl's `--no-buffer` option and add `"stream":true`:
 
 ```bash
+printf 'Rocky API key: '
+IFS= read -r -s ROCKY_API_KEY
+printf '\n'
+export ROCKY_API_KEY
+
 curl --no-buffer --request POST https://rocky.cs.kent.edu/v1/responses \
   --header "Authorization: Bearer $ROCKY_API_KEY" \
   --header 'Content-Type: application/json' \
   --header 'Accept: text/event-stream' \
   --data "{\"model\":\"$ROCKY_MODEL\",\"input\":\"Explain recursion in one paragraph.\",\"stream\":true,\"store\":false}"
+
+unset ROCKY_API_KEY
 ```
 
 The final success event is `response.completed`; Rocky does not send `[DONE]`.
-See the Streaming Example before writing an application parser.
+See the [Streaming Example](/?frame=help&doc=streaming) before writing an
+application parser.
 
 ## Example response
 

@@ -31,7 +31,7 @@ The table includes selection, semester, owner, role or owner type, course, key n
 
 Active rows have a subtle green tint and inactive rows have a subtle red tint. The Active or Inactive badge remains visible, so status does not depend on color alone.
 
-![Active and inactive API key rows with visible status badges](/API-4.Tint.png)
+![API key rows with visible status badges and supporting row tint](/API-4.Tint.png)
 
 _Row color supports the visible status badge rather than replacing it._
 

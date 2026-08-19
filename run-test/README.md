@@ -43,15 +43,16 @@ Install the backend and compatibility-test dependencies with:
 
 - `pip install -r rocky-backend/requirements.txt -r run-test/requirements-compat.txt`
 
-`openai` is only a test dependency. The compatibility test verifies that the
-official Python client can consume Rocky's OpenAI-compatible HTTP responses;
-students may continue to use `requests`, `curl`, or any other HTTP client.
+`openai` and `coverage` are test-only dependencies. The compatibility test
+verifies that the official Python client can consume Rocky's OpenAI-compatible
+HTTP responses; students may continue to use `requests`, `curl`, or any other
+HTTP client.
 
 ## Frontend tests
 
 Path: run-test/frontend
 
-The compact viewport, state, and per-phase UI acceptance matrix is documented
+The compact viewport, state, and UI acceptance matrix is documented
 in [UI_UX_ACCEPTANCE.md](UI_UX_ACCEPTANCE.md). Keep new UI regression coverage
 inside the existing Selenium harness unless a future requirement cannot be
 tested there.
@@ -117,6 +118,7 @@ From the repository root on macOS/Linux:
 
 - Complete local release gate: `python run-test/test_all.py`
 - Release gate without Selenium: `python run-test/test_all.py --skip-browser`
+- Python and frontend code coverage: `python run-test/coverage_all.py`
 - Backend only: `PYTHONPATH=rocky-backend python -m unittest discover -s run-test/backend -p "test_*.py"`
 - Frontend only: `PYTHONPATH=run-test:rocky-backend python -m unittest discover -s run-test/frontend -p "test_*.py"`
 - Granite bridge only: `cd granite-llm-server && python -m unittest discover -s tests -p "test_*.py"`
@@ -131,6 +133,19 @@ failing surface, then exits nonzero if any step failed. `--skip-browser` is for
 machines without Chrome/Edge or WebDriver; do not use it for the final release
 candidate.
 
+The coverage runner measures branch and line coverage for the management
+backend, Chat API, and Granite services, then measures statements, branches,
+functions, and lines for all frontend TypeScript and Svelte source files. It
+prints reports to the terminal and writes an ignored frontend JSON summary to
+`rocky-interface/coverage/coverage-summary.json`. Selenium remains part of the
+release gate but is intentionally separate from source-code coverage because it
+exercises the running application from another process.
+
+The thresholds in `.coveragerc` and `rocky-interface/vite.config.ts` are
+conservative regression floors based on the measured all-source baseline. Raise
+them as coverage improves; do not lower them simply to make a failing change
+pass.
+
 From the repository root in Windows PowerShell, set the Python import path first:
 
 ```powershell
@@ -144,7 +159,8 @@ that port, set a different one, such as `ROCKY_WEB_PORT=4273`, before running
 the frontend suite.
 
 The frontend also has Node-based checks. From `rocky-interface`, run
-`npm run lint`, `npm run check`, `npm run test:unit`, and `npm run build`.
+`npm run lint`, `npm run check`, `npm run test:unit`, `npm run test:coverage`,
+and `npm run build`.
 Those direct commands expect the frontend `.env` described in
 `rocky-interface/README.md`; the full test runner supplies its own testing
 environment.
@@ -176,8 +192,12 @@ rate-limit headers and their value ranges.
 
 ```sh
 export ROCKY_BASE_URL='https://rocky.cs.kent.edu'
-export ROCKY_API_KEY='sk_kent_replace_with_test_key'
+printf 'Rocky deployment test API key: '
+IFS= read -r -s ROCKY_API_KEY
+printf '\n'
+export ROCKY_API_KEY
 python run-test/integration/deployment_smoke.py
+unset ROCKY_API_KEY
 ```
 
 The default checks do not generate model output or modify application content.

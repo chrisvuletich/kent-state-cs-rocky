@@ -31,7 +31,8 @@ pip install requests
 
 ## Python Example
 
-Replace the placeholder with your course API key. Do not share or commit your key.
+Set `ROCKY_API_KEY` and `ROCKY_MODEL` in your environment before running the
+example. Do not share or commit your key.
 
 ```python
 import os

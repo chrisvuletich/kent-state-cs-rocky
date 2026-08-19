@@ -54,7 +54,10 @@ model:
 ```sh
 export ROCKY_BASE_URL=https://rocky.cs.kent.edu
 export ROCKY_EXPECTED_MODEL=gemma4:latest
-export ROCKY_API_KEY=...
+printf 'Rocky deployment test API key: '
+IFS= read -r -s ROCKY_API_KEY
+printf '\n'
+export ROCKY_API_KEY
 python run-test/integration/deployment_smoke.py --include-advertised
 unset ROCKY_API_KEY
 ```

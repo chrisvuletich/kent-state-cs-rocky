@@ -48,12 +48,22 @@ APIs use different HTTP methods depending on the action being performed.
 
 API keys are tied to a course. Open an enrolled course to generate and manage its key. Instructors can use the Course Roster Workflow in the Help Center to add students.
 
+## Institutional logging
+
+Rocky retains submitted prompts, images, generated responses, and relevant
+request metadata for university safety and academic-resource oversight. Use it
+only for course-appropriate work and do not submit personal, confidential,
+regulated, or otherwise sensitive material. The API's `store` field controls
+response continuation; it does not disable institutional audit logging.
+
 ## Next Steps
 
 Now that you understand the basics of APIs, you're ready to begin using the Rocky API.
 
-- Generate your API key.
-- Read the Python example.
-- Explore the API Reference.
-- Try the Streaming Example when your model advertises streaming.
-- Try the Image Input Example with course-appropriate local images.
+- [Generate your API key](/?frame=help&doc=apikey).
+- Read the [Python example](/?frame=help&doc=python).
+- Explore the [API Reference](/?frame=help&doc=reference).
+- Try the [Streaming Example](/?frame=help&doc=streaming) when your model
+  advertises streaming.
+- Try the [Image Input Example](/?frame=help&doc=image-input) with
+  course-appropriate local images.

@@ -14,8 +14,8 @@ an exhaustive browser-testing framework.
   screenshots are not committed release assets.
 - Every UI change must preserve authentication, account-deactivation checks,
   audit logging, chat retention, and administrative visibility.
-- Keep the release suite green between phases. Add a regression test in the
-  same phase that fixes the behavior it protects.
+- Keep the release suite green while making changes. Add a regression test with
+  the fix for the behavior it protects.
 
 ## Reference viewports
 
@@ -48,36 +48,36 @@ must remain fluid between them.
 Not every state needs its own browser test. Prefer unit tests for data
 transformation and browser tests for the critical path through rendered UI.
 
-## Phase gates
+## Acceptance areas
 
-### Phase 0: Baseline and guardrails
+### Baseline and guardrails
 
 - The dashboard renders at every reference viewport.
 - The document has no horizontal overflow on the baseline dashboard.
 - No framework error overlay or unexpected severe browser-console error appears.
 - The existing release-gate commands remain authoritative.
 
-### Phase 1: Navigation
+### Navigation
 
 - Dashboard course and conversation links open the requested record.
 - Sidebar, Account, Help, Admin, and post-create navigation update the URL.
 - Direct load, refresh, back, and forward preserve the selected view.
 - Invalid and unauthorized deep links fail safely.
 
-### Phase 2: Dialogs, drawers, and disclosures
+### Dialogs, drawers, and disclosures
 
 - Focus enters the opened surface and returns to its opener.
 - Escape closes the surface.
 - Tab cannot move into inert background content.
 - The mobile menu reports its expanded state.
 
-### Phase 3: Responsive layout
+### Responsive layout
 
 - All navigation remains reachable at the short-laptop and landscape sizes.
 - Tables scroll inside their region rather than widening the document.
 - Analytics summaries wrap without clipping.
 
-### Phase 4: Forms and semantics
+### Forms and semantics
 
 - Inputs have labels and errors are associated with their fields.
 - Tabs and sortable headers support the expected keyboard behavior.
@@ -85,7 +85,7 @@ transformation and browser tests for the critical path through rendered UI.
 
 Regression coverage lives in `frontend/test_form_semantics_chromedriver.py`.
 
-### Phase 5: Chat resilience
+### Chat resilience
 
 - Unavailable chat explains why sending is disabled and preserves the draft.
 - Conversation-history failures offer Retry without discarding cached results.
@@ -93,7 +93,7 @@ Regression coverage lives in `frontend/test_form_semantics_chromedriver.py`.
 
 Regression coverage lives in `frontend/test_chat_resilience_chromedriver.py`.
 
-### Phase 6: Theme and inactive accounts
+### Theme and inactive accounts
 
 - Light and dark preferences persist after reload.
 - Normal-size dark-theme text reaches 4.5:1 contrast.
@@ -101,7 +101,7 @@ Regression coverage lives in `frontend/test_chat_resilience_chromedriver.py`.
 
 Regression coverage lives in `frontend/test_theme_and_inactive_chromedriver.py`.
 
-### Phase 7: Request-path performance
+### Request-path performance
 
 - Unrelated API requests do not load user appearance settings.
 - Authentication and inactive-account enforcement remain unchanged.
@@ -109,7 +109,7 @@ Regression coverage lives in `frontend/test_theme_and_inactive_chromedriver.py`.
 Regression coverage lives in `rocky-interface/src/hooks.server.test.ts` and
 `rocky-interface/src/routes/layoutServer.test.ts`.
 
-### Phase 8: CSS and motion
+### CSS and motion
 
 - Component styles have one clear owner.
 - The chosen font is actually available or the system stack is explicit.
@@ -118,7 +118,7 @@ Regression coverage lives in `rocky-interface/src/hooks.server.test.ts` and
 Regression coverage lives in `rocky-interface/src/lib/styles/styleOwnership.test.ts`
 and `frontend/test_css_motion_chromedriver.py`.
 
-### Phase 9: Final regression and intern handoff
+### Final regression and intern handoff
 
 - The complete release gate passes without skipping browser tests.
 - Student, instructor, and administrator journeys remain covered.

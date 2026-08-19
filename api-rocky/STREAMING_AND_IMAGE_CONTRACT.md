@@ -1,19 +1,14 @@
 # Streaming and image-input contract
 
-This document defines Rocky's public and internal contracts. Phase 2 implements
-the student-facing text stream on top of Phase 1's private Granite-to-Ollama
-stream. Phase 3 implements the bounded base64 image-input subset for both JSON
-and streamed text output. Phase 4 lets Rocky's built-in SvelteKit chat consume
-the public stream incrementally. Phase 5 adds bounded local image attachments
-to that built-in chat. Phase 6 adds student-facing examples and opt-in,
-capability-aware deployment verification for both extensions. Phase 7 adds one
-local release gate, fail-safe CI log pipelines, and configuration-doctor checks
-that compare the deployed feature flags and image limits with the candidate
-environment. Phase 8 completes the rollout handoff with a capability-aware
-public deployment check, a concise release/rollback checklist, and official SDK
-coverage for image input and streaming in the same request. Each feature remains independently disabled
-by default; streaming must be enabled in Granite, Rocky, and the web frontend,
-while image input must be enabled in Granite and Rocky.
+This document defines Rocky's current public and internal streaming and image
+contracts. The student-facing Responses stream is translated from Granite's
+private Ollama stream. Bounded base64 image input works with buffered or
+streamed text output, and the built-in SvelteKit chat consumes both capabilities
+with durable owned-history rendering. Student examples, capability-aware
+deployment checks, the local release gate, configuration-doctor comparisons,
+and official SDK tests cover the advertised paths. Each feature remains
+independently disabled by default: streaming must be enabled in Granite, Rocky,
+and the web frontend, while image input must be enabled in Granite and Rocky.
 
 The public shape follows the OpenAI Responses API's documented SSE and
 `input_image` conventions:
@@ -110,7 +105,7 @@ messages with `failed` status rather than leaving an unaudited success behind.
 
 ## Built-in web chat stream
 
-Phase 4 keeps the SvelteKit proxy streaming end to end. It requests SSE only
+The built-in web chat keeps the SvelteKit proxy streaming end to end. It requests SSE only
 when `ROCKY_ENABLE_STREAMING=true`, returns the upstream `ReadableStream`
 without buffering it, and sends `X-Accel-Buffering: no` so the outer Nginx
 proxy forwards deltas immediately. When the flag is false, the established
@@ -179,7 +174,7 @@ The initial public image contract uses an OpenAI-style content block:
 }
 ```
 
-Phase 3:
+Image-input rules:
 
 - Accept base64 data URLs only.
 - Accept JPEG, PNG, and static WebP only after server-side container and pixel
@@ -210,13 +205,13 @@ Rocky's institutional logging policy. The separately normalized `model_input`
 record replaces its duplicate base64 field with an omission marker and records
 safe image metadata including SHA-256, dimensions, media type, and byte length.
 
-The planned request fixture is
+The canonical request fixture is
 [`run-test/fixtures/responses_image_input.json`](../run-test/fixtures/responses_image_input.json).
 It is accepted only when `ROCKY_ENABLE_IMAGE_INPUT=true` in both services.
 
 ## Built-in web chat image input
 
-Phase 5 discovers image support through an authenticated SvelteKit capability
+The built-in web chat discovers image support through an authenticated SvelteKit capability
 route backed by Rocky's `/ready` response. The attachment control is enabled
 only when `/ready` is healthy, Rocky and Granite both report image input, and
 their configured limits match. No additional browser-visible rollout setting is
@@ -257,7 +252,7 @@ configured, and the total decoded-byte limit cannot be lower than the per-image
 limit. The total pixel limit cannot be lower than the per-image pixel limit.
 
 `ROCKY_MAX_REQUEST_BYTES` remains 262144 while image input is disabled. Set it
-to 9437184 with the example image budgets before enabling Phase 3. Granite uses
+to 9437184 with the example image budgets before enabling image input. Granite uses
 `ROCKY_GRANITE_MAX_REQUEST_BYTES=10485760`. Startup and `manage.py doctor`
 reject either limit when it cannot carry the configured decoded image budget.
 The tracked Nginx route retains a hard 10 MiB outer ceiling.

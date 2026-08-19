@@ -9,7 +9,9 @@ Your API key identifies your application when communicating with Rocky. Never sh
 ```javascript
 // ❌ Don't do this
 const apiKey = "abc123xyz";
+```
 
+```javascript
 // ✅ Better
 const apiKey = process.env.ROCKY_API_KEY;
 ```
@@ -66,7 +68,9 @@ responses to additional application logs unless the assignment requires it.
 
 You're now ready to explore the Rocky API in more detail.
 
-- Browse the API Reference.
-- Experiment with the Python and JavaScript examples.
-- Try the Streaming and Image Input examples.
+- Browse the [API Reference](/?frame=help&doc=reference).
+- Experiment with the [Python](/?frame=help&doc=python) and
+  [JavaScript](/?frame=help&doc=javascript) examples.
+- Try the [Streaming](/?frame=help&doc=streaming) and
+  [Image Input](/?frame=help&doc=image-input) examples.
 - Start building your own Rocky integrations.

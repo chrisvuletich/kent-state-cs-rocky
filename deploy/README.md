@@ -8,15 +8,22 @@ Services:
 - `rocky-frontend.service`: SvelteKit Node server on `127.0.0.1:8000`.
 - `rocky-backend.service`: Flask/Gunicorn API on `127.0.0.1:5001`.
 - `rocky-granite.service`: authenticated Granite/Ollama bridge on Granite port `5002`.
+- `granite-hardware-metrics.service`: optional private Granite hardware endpoint on port `5010`.
 - `rocky-chat-api.service`: Chat API on `127.0.0.1:5003`.
-- `rocky-hardware-sampler.service`: bounded Granite hardware history collector.
+- `rocky-hardware-sampler.service`: optional bounded Granite hardware history collector on Rocky.
 
-The tracked service files are examples:
+The tracked service files are examples. Replace every placeholder before
+installing them:
 
-- Replace `{{ROCKY_USER}}` with the Linux user that should run the app.
-- Replace `{{ROCKY_GROUP}}` with that user's primary group or another readable app group.
-- Replace `{{ROCKY_APP_DIR}}` with the release path on the relevant host.
-- Replace `{{GRANITE_BIND_IP}}` with the Granite address reachable only from Rocky.
+| Placeholder | Meaning |
+| --- | --- |
+| `{{ROCKY_USER}}` | Linux user that runs the Rocky services and backups. |
+| `{{ROCKY_GROUP}}` | That user's primary group or another readable application group. |
+| `{{ROCKY_APP_DIR}}` | Absolute release path on the relevant host. |
+| `{{GRANITE_BIND_IP}}` | Private Granite address used by the model bridge. |
+| `{{GRANITE_USER}}` | Linux user that runs the Granite metrics-only service. |
+| `{{GRANITE_GROUP}}` | That user's primary group or another readable application group. |
+| `{{GRANITE_PRIVATE_IP}}` | Private Granite address used by the metrics-only service. |
 
 Copy the edited files to `/etc/systemd/system/*.service`, then run:
 
@@ -32,11 +39,17 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now rocky-granite
 ```
 
+If hardware history is enabled, also install and start
+`granite-hardware-metrics.service.example` on Granite and
+`rocky-hardware-sampler.service.example` on Rocky after configuring the
+environment files described below.
+
 Environment files stay outside the repo:
 
 - `/etc/rocky/frontend.env`
 - `/etc/rocky/backend.env`
 - `/etc/rocky/granite.env` on Granite
+- `/etc/rocky/hardware.env` on Granite when hardware history is enabled
 
 For a true production database, add these to `/etc/rocky/backend.env` and restart `rocky-backend.service`:
 
@@ -145,7 +158,7 @@ to roll back. The tracked Nginx route has a fixed 10 MiB outer body ceiling;
 configure Rocky's application ceiling back to 256 KiB after disabling image
 input.
 
-Phase 3 accepts only base64 data URLs containing JPEG, PNG, or static WebP
+Image input accepts only base64 data URLs containing JPEG, PNG, or static WebP
 images with `detail` omitted or `auto`; it intentionally rejects remote URLs,
 file IDs, GIF/SVG, animation, audio, and video. Validate one request using the
 shape in `run-test/fixtures/responses_image_input.json`, replacing its model
@@ -188,7 +201,7 @@ set +a
 Production defaults to `ROCKY_REQUIRE_REQUEST_LOGGING=true`; set it explicitly
 in `/etc/rocky/backend.env` to document that unlogged inference is prohibited.
 
-The backend reads Phase 2 analytics from the same `telemetry_interactions` and
+The backend reads live analytics from the same `telemetry_interactions` and
 `telemetry_current` collections. No additional service, scheduler, or database
 is required. After deploying, restart both `rocky-chat-api` and `rocky-backend`
 so the writer and analytics API use the same schema and indexes.
@@ -204,6 +217,12 @@ long random token in Granite's `/etc/rocky/hardware.env` and Rocky's
 ```sh
 ROCKY_APP_ENV=production
 ROCKY_HARDWARE_METRICS_TOKEN=...
+```
+
+After creating `/etc/rocky/hardware.env`, start the private endpoint on Granite:
+
+```sh
+sudo systemctl enable --now granite-hardware-metrics
 ```
 
 Rocky's backend environment additionally needs:
@@ -244,7 +263,7 @@ checks the backend, chat API, Granite, Ollama, and model mapping. It does not
 write application data or print secret values.
 
 ```sh
-cd /home/bboggia/rocky/current
+cd {{ROCKY_APP_DIR}}
 source .venv/bin/activate
 python manage.py doctor \
   --env-file /etc/rocky/backend.env \
@@ -259,16 +278,21 @@ The doctor also compares the loaded `ROCKY_ENABLE_STREAMING`,
 `ROCKY_ENABLE_IMAGE_INPUT`, and image-limit settings with the capabilities and
 Rocky/Granite rollout state reported by the chat API's `/ready` response. This
 catches a frontend environment file, Rocky service, or Granite service left on
-a different rollout phase before student traffic is enabled.
+different rollout settings before student traffic is enabled.
 
-Then verify the same public routes students use. Keep the test API key in the
-shell environment rather than a tracked file.
+Then verify the same public routes students use. Read the key without echoing it
+or writing it into shell history, keep it only in the current shell environment,
+and unset it immediately after the check.
 
 ```sh
 export ROCKY_BASE_URL='https://rocky.cs.kent.edu'
-export ROCKY_API_KEY='sk_kent_replace_with_test_key'
 export ROCKY_EXPECTED_MODEL='gemma4:latest'
+printf 'Rocky deployment test API key: '
+IFS= read -r -s ROCKY_API_KEY
+printf '\n'
+export ROCKY_API_KEY
 python run-test/integration/deployment_smoke.py
+unset ROCKY_API_KEY
 ```
 
 That command is non-generating: it checks web health, aggregate service health,
@@ -391,7 +415,7 @@ file, and no other account should be able to read it:
 ```sh
 MONGODB_TOOLS_CONFIG=/etc/rocky/mongodb-tools.yml
 sudo touch "$MONGODB_TOOLS_CONFIG"
-sudo chown bboggia:bboggia "$MONGODB_TOOLS_CONFIG"
+sudo chown {{ROCKY_USER}}:{{ROCKY_GROUP}} "$MONGODB_TOOLS_CONFIG"
 sudo chmod 600 "$MONGODB_TOOLS_CONFIG"
 sudoedit "$MONGODB_TOOLS_CONFIG"
 ```
@@ -413,7 +437,7 @@ a deployment, migration, retention purge, or other planned database change.
 Run the following from the release checkout on Rocky:
 
 ```sh
-cd /home/bboggia/rocky/current
+cd {{ROCKY_APP_DIR}}
 source .venv/bin/activate
 set -a
 . /etc/rocky/backend.env

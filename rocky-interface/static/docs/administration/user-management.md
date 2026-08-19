@@ -29,7 +29,7 @@ The table shows a selection checkbox, name, email, role, status, and actions. Us
 
 Choose **Student**, **Instructor**, or **Admin** from the role dropdown. Rocky asks for confirmation before changing a role and provides feedback after the update. Verify the account identity before changing permissions.
 
-![Role dropdown with Student, Instructor, and Admin options](/UM-4.Role-Dropdown.png)
+![Role selectors in the Actions column of the current User Management table](/UM-4.Role-Dropdown.png)
 
 _Confirm the correct account before changing permissions._
 

@@ -103,7 +103,7 @@ are still checked on the server and unauthorized links resolve to Dashboard.
 
 ## Administrator analytics workspace
 
-Administrators have an `Analytics` frame backed by the Flask Phase 2 telemetry
+Administrators have an `Analytics` frame backed by the Flask telemetry
 endpoints. It provides:
 
 - selectable `15m`, `1h`, `6h`, `24h`, `7d`, and `30d` windows;

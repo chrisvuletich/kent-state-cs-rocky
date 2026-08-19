@@ -5,6 +5,8 @@
 - Python 3.11 or newer
 - Node.js 20 or newer
 - npm
+- Ollama, with the model named by `OLLAMA_MODEL` installed locally when you want
+  to run inference on the development machine
 
 ## First-time setup
 
@@ -18,6 +20,12 @@ py -3 -m venv .venv
 
 If you need a different Python executable, use the full path with `&`.
 
+On macOS or Linux:
+
+```sh
+python3 -m venv .venv
+```
+
 ### 2. Activate the virtual environment
 
 ```powershell
@@ -30,11 +38,23 @@ If PowerShell blocks activation, run once:
 Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 ```
 
+On macOS or Linux:
+
+```sh
+source .venv/bin/activate
+```
+
 ### 3. Install backend dependencies
 
 ```powershell
-pip install -r rocky-backend\requirements.txt -r granite-llm-server\requirements.txt
+pip install -r rocky-backend\requirements.txt -r granite-llm-server\requirements.txt -r run-test\requirements-compat.txt
 ```
+
+On macOS or Linux, use `/` instead of `\` in those paths.
+
+The compatibility requirements are used only by the test and coverage tools;
+Rocky's runtime does not depend on an external AI-provider SDK or coverage
+collector.
 
 ### 4. Install frontend dependencies
 
@@ -58,13 +78,19 @@ Development minimum:
 
 For development Microsoft OAuth, set:
 
-- [rocky-interface/.env](rocky-interface/.env): `PUBLIC_ENABLE_MICROSOFT_OAUTH=true`, `PUBLIC_MICROSOFT_CLIENT_ID`, the specific `PUBLIC_MICROSOFT_TENANT_ID`, `ROCKY_SESSION_SECRET`, and `ROCKY_INTERNAL_PROXY_SECRET`
-- [rocky-backend/.env](rocky-backend/.env): `ROCKY_ENABLE_MICROSOFT_OAUTH=true` and the same `ROCKY_INTERNAL_PROXY_SECRET`
+- `rocky-interface/.env`: start from [rocky-interface/.env.example](rocky-interface/.env.example), then set `PUBLIC_ENABLE_MICROSOFT_OAUTH=true`, `PUBLIC_MICROSOFT_CLIENT_ID`, the specific `PUBLIC_MICROSOFT_TENANT_ID`, `ROCKY_SESSION_SECRET`, and `ROCKY_INTERNAL_PROXY_SECRET`
+- `rocky-backend/.env`: start from [rocky-backend/.env.example](rocky-backend/.env.example), then set `ROCKY_ENABLE_MICROSOFT_OAUTH=true` and the same `ROCKY_INTERNAL_PROXY_SECRET`
 
-Production minimum:
+Production-preview minimum:
 
-- [rocky-backend/.env](rocky-backend/.env): `ROCKY_APP_ENV=production`, `ROCKY_DB_BACKEND=mongodb`, `ROCKY_MONGODB_URI`, `ROCKY_HIDDEN_API_KEY_SECRET`, `ROCKY_INTERNAL_PROXY_SECRET`, `ROCKY_ENABLE_DB_INSPECTOR=false`, `ROCKY_API_HOST`, `ROCKY_API_PORT`
-- [rocky-interface/.env](rocky-interface/.env): `PUBLIC_APP_ENV=production`, `PUBLIC_API_BASE_URL`, `PUBLIC_MICROSOFT_CLIENT_ID`, the specific `PUBLIC_MICROSOFT_TENANT_ID`, the same `ROCKY_HIDDEN_API_KEY_SECRET`, `ROCKY_SESSION_SECRET`, the same `ROCKY_INTERNAL_PROXY_SECRET`, `ROCKY_WEB_HOST`, `ROCKY_WEB_PORT`, `ROCKY_ALLOWED_HOSTS`
+- `rocky-backend/.env`: start from [rocky-backend/.env.example](rocky-backend/.env.example), then set `ROCKY_APP_ENV=production`, `ROCKY_DB_BACKEND=mongodb`, `ROCKY_MONGODB_URI`, `ROCKY_HIDDEN_API_KEY_SECRET`, `ROCKY_INTERNAL_PROXY_SECRET`, `ROCKY_ENABLE_DB_INSPECTOR=false`, `ROCKY_API_HOST`, and `ROCKY_API_PORT`
+- `rocky-interface/.env`: start from [rocky-interface/.env.example](rocky-interface/.env.example), then set `PUBLIC_APP_ENV=production`, `PUBLIC_API_BASE_URL`, `PUBLIC_MICROSOFT_CLIENT_ID`, the specific `PUBLIC_MICROSOFT_TENANT_ID`, the same `ROCKY_HIDDEN_API_KEY_SECRET`, `ROCKY_SESSION_SECRET`, the same `ROCKY_INTERNAL_PROXY_SECRET`, `ROCKY_WEB_HOST`, `ROCKY_WEB_PORT`, and `ROCKY_ALLOWED_HOSTS`
+
+That preview runs only the management backend and built frontend. A real Rocky
+deployment also requires the Chat API, Granite bridge, Ollama, Nginx, and their
+shared production settings. Follow the authoritative
+[Ubuntu deployment guide](deploy/README.md) instead of treating the preview
+settings as a complete deployment recipe.
 
 Auth mode behavior:
 
@@ -91,6 +117,11 @@ Run both backend and frontend together:
 ```powershell
 python run-dev.py --mode both
 ```
+
+This launches the local Granite bridge, Chat API, management backend, and
+frontend. Ollama must already be running with the configured model for chat
+generation to succeed. `python manage.py doctor` performs the deeper readiness
+checks when you need to verify inference, not only process startup.
 
 Normal startup preserves the existing local database. To load the fixture data explicitly:
 
@@ -149,18 +180,13 @@ installed `OLLAMA_MODEL`. Clients should discover it through `GET /v1/models`.
 
 The documented Python client uses `requests`; Rocky has no runtime dependency on an external AI-provider SDK.
 
-The streaming and base64 image-input extensions have frozen contracts. Phase 2
-adds opt-in OpenAI-style public SSE; Phase 3 adds opt-in, bounded JPEG/PNG/WebP
-image analysis with either JSON or streamed text output; Phase 4 adds
-incremental SSE rendering to the built-in web chat while retaining its buffered
-fallback; Phase 5 adds locally selected, pasted, or dropped image attachments
-to that chat with server-advertised limits and durable history rendering. Phase
-6 completes the student-facing examples and adds capability-aware deployment
-smoke checks for buffered generation, SSE, and image input. Phase 7 adds the
-unified local release gate, CI failure propagation, and deployed capability
-checks. Phase 8 completes the rollout handoff with combined official-SDK
-coverage, automatic verification of every advertised inference path, and a
-concise release/rollback checklist. The precise public and internal contracts are in
+Streaming and base64 image input are disabled-by-default capabilities. When
+enabled consistently across the relevant services, Rocky provides OpenAI-style
+Responses SSE, bounded JPEG/PNG/static-WebP analysis, incremental built-in chat
+rendering with buffered fallback, and durable image-aware conversation history.
+Student examples, SDK compatibility coverage, deployment smoke checks, and the
+release checklist verify every capability the selected model advertises. The
+precise public and internal contracts are in
 [`api-rocky/STREAMING_AND_IMAGE_CONTRACT.md`](api-rocky/STREAMING_AND_IMAGE_CONTRACT.md).
 
 ## Seed data
@@ -192,6 +218,17 @@ This covers backend, Granite, frontend unit/type/format/build checks, and the
 browser suite. Use `--skip-browser` only for an intermediate run on a machine
 without a usable browser. The individual commands remain useful while
 developing a focused change.
+
+Measure Python and frontend source coverage separately from the browser release
+gate:
+
+```sh
+python run-test/coverage_all.py
+```
+
+This command enforces the conservative baseline thresholds stored in
+`.coveragerc` and `rocky-interface/vite.config.ts`. See
+[`run-test/README.md`](run-test/README.md) for what is included in each metric.
 
 Backend unit tests:
 

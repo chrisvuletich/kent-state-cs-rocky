@@ -68,8 +68,10 @@ If the request succeeds, Rocky returns a JSON response similar to the example be
 
 ## Next Steps
 
-- Review the API Reference.
-- Read the Best Practices guide.
-- Learn correct SSE parsing in the Streaming Example.
-- Send a local image with the Image Input Example.
+- Review the [API Reference](/?frame=help&doc=reference).
+- Read the [Best Practices](/?frame=help&doc=best-practices) guide.
+- Learn correct SSE parsing in the
+  [Streaming Example](/?frame=help&doc=streaming).
+- Send a local image with the
+  [Image Input Example](/?frame=help&doc=image-input).
 - Build your first Rocky application.

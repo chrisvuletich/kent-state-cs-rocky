@@ -1,6 +1,6 @@
 import { sveltekit } from '@sveltejs/kit/vite';
-import { defineConfig } from 'vite';
 import { loadEnv } from 'vite';
+import { defineConfig } from 'vitest/config';
 
 export default defineConfig(({ mode }) => {
 	const env = loadEnv(mode, '.', '');
@@ -8,6 +8,23 @@ export default defineConfig(({ mode }) => {
 		plugins: [sveltekit()],
 		optimizeDeps: {
 			exclude: ['@azure/msal-browser']
+		},
+		test: {
+			coverage: {
+				provider: 'v8' as const,
+				include: ['src/**/*.{ts,svelte}'],
+				exclude: ['src/**/*.test.ts', 'src/**/*.spec.ts', 'src/**/*.d.ts'],
+				reporter: ['text-summary', 'json-summary'],
+				reportsDirectory: 'coverage',
+				reportOnFailure: true,
+				skipFull: true,
+				thresholds: {
+					statements: 13,
+					branches: 14,
+					functions: 12,
+					lines: 14
+				}
+			}
 		}
 	};
 
