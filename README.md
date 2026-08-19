@@ -149,6 +149,20 @@ installed `OLLAMA_MODEL`. Clients should discover it through `GET /v1/models`.
 
 The documented Python client uses `requests`; Rocky has no runtime dependency on an external AI-provider SDK.
 
+The streaming and base64 image-input extensions have frozen contracts. Phase 2
+adds opt-in OpenAI-style public SSE; Phase 3 adds opt-in, bounded JPEG/PNG/WebP
+image analysis with either JSON or streamed text output; Phase 4 adds
+incremental SSE rendering to the built-in web chat while retaining its buffered
+fallback; Phase 5 adds locally selected, pasted, or dropped image attachments
+to that chat with server-advertised limits and durable history rendering. Phase
+6 completes the student-facing examples and adds capability-aware deployment
+smoke checks for buffered generation, SSE, and image input. Phase 7 adds the
+unified local release gate, CI failure propagation, and deployed capability
+checks. Phase 8 completes the rollout handoff with combined official-SDK
+coverage, automatic verification of every advertised inference path, and a
+concise release/rollback checklist. The precise public and internal contracts are in
+[`api-rocky/STREAMING_AND_IMAGE_CONTRACT.md`](api-rocky/STREAMING_AND_IMAGE_CONTRACT.md).
+
 ## Seed data
 
 Backend-owned fixtures live in:
@@ -167,6 +181,17 @@ python rocky-backend\seed_from_backend.py
 ```
 
 ## Tests
+
+Run the complete local release gate from an activated project environment:
+
+```sh
+python run-test/test_all.py
+```
+
+This covers backend, Granite, frontend unit/type/format/build checks, and the
+browser suite. Use `--skip-browser` only for an intermediate run on a machine
+without a usable browser. The individual commands remain useful while
+developing a focused change.
 
 Backend unit tests:
 

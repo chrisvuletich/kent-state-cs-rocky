@@ -47,6 +47,44 @@ After Rocky authenticates and counts a request, the response includes
 Rocky enforces request limits only, so token-limit headers are not present.
 `Retry-After` is returned in whole seconds when a temporary `429` limit is hit.
 
+## Image-input errors
+
+Image validation failures use HTTP 400 and identify the exact content block in
+`error.param`. Common codes are:
+
+| Code | Meaning |
+| --- | --- |
+| `unsupported_image_source` | `image_url` was not a Base64 JPEG, PNG, or WebP data URL. Remote URLs and file IDs are not accepted. |
+| `invalid_image` | The Base64 or image container was empty, malformed, corrupt, or truncated. |
+| `image_type_mismatch` | The decoded file format did not match the data URL's declared media type. |
+| `image_too_large` / `image_total_too_large` | One decoded image or all decoded images exceeded the advertised byte budget. |
+| `image_too_many_pixels` / `image_total_too_many_pixels` | One image or all images exceeded the advertised pixel budget. |
+| `too_many_images` | The request exceeded `max_images_per_request`. |
+| `animated_image_not_supported` | A WebP or other accepted container had more than one frame. |
+| `invalid_image_role` | An image block appeared in a non-user message. |
+| `unsupported_value` | The image `detail` value was not `auto`. |
+
+Read these limits from `GET /v1/models`; do not hard-code the example values
+from the API Reference.
+
+## Errors during streaming
+
+An invalid streaming request fails before SSE begins and returns the same JSON
+error object and HTTP status described above. Once Rocky has started an SSE
+response, its HTTP status cannot be changed. A later model, timeout, persistence,
+or delivery failure therefore ends the stream with an `error` event:
+
+```text
+event: error
+data: {"type":"error","sequence_number":5,"code":"model_timeout","message":"Model request timed out.","param":null}
+
+```
+
+Treat only `response.completed` as success. An `error` event is terminal, and a
+connection that closes without either terminal event is an incomplete request.
+Keep the response's `x-request-id` so an administrator can find the matching
+audit record. Rocky streams do not use a `[DONE]` sentinel.
+
 ## Handle errors with Python requests
 
 ```python

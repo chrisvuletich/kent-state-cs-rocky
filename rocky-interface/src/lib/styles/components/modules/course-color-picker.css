@@ -1,0 +1,57 @@
+/* Course color controls owned by CourseColorPicker.svelte. */
+.course-color-picker {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-md);
+}
+
+.color-grid {
+	display: grid;
+	grid-template-columns: repeat(5, 40px);
+	gap: var(--space-sm);
+}
+
+.color-swatch {
+	width: 40px;
+	height: 40px;
+	border: 3px solid transparent;
+	border-radius: var(--radius-sm);
+	cursor: pointer;
+}
+
+.color-swatch.is-selected {
+	border-color: var(--color-text-primary);
+	box-shadow:
+		0 0 0 2px var(--color-bg-primary),
+		0 0 0 4px var(--color-accent);
+}
+
+.color-preview {
+	width: 40px;
+	height: 40px;
+	border-radius: var(--radius-sm);
+	border: 2px solid var(--color-gray-300);
+	flex-shrink: 0;
+}
+
+.color-code-row {
+	display: flex;
+	align-items: center;
+	gap: var(--space-sm);
+}
+
+.color-code-input {
+	max-width: 180px;
+}
+
+.color-picker-actions {
+	display: flex;
+	gap: var(--space-sm);
+}
+
+.color-apply-message {
+	margin: 0;
+	font-size: var(--font-size-sm);
+	font-weight: var(--font-weight-medium);
+	color: var(--color-text-success);
+}

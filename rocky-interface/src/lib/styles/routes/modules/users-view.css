@@ -13,8 +13,12 @@
 .user-tab-active {
 	background: var(--color-accent-light);
 	border-color: var(--color-accent);
-	color: var(--color-accent);
+	color: var(--color-text-accent);
 	font-weight: var(--font-weight-semibold);
+}
+
+.user-account-panel {
+	min-width: 0;
 }
 
 .management-intro {
@@ -23,8 +27,7 @@
 }
 
 .user-filters,
-.bulk-toolbar,
-.bulk-confirmation {
+.bulk-toolbar {
 	display: flex;
 	gap: 10px;
 	align-items: center;
@@ -35,10 +38,11 @@
 .user-filters input,
 .user-filters select {
 	min-height: 38px;
-	border: 1px solid var(--color-border, #d0d5dd);
+	border: 1px solid var(--color-gray-300);
 	border-radius: 6px;
 	padding: 0 10px;
-	background: white;
+	background: var(--color-bg-primary);
+	color: var(--color-text-primary);
 }
 
 .user-filters input {
@@ -54,18 +58,30 @@
 }
 .bulk-toolbar {
 	padding: 10px 12px;
-	background: #eef5ff;
-	border: 1px solid #b9d4fb;
+	background: var(--color-accent-light);
+	border: 1px solid color-mix(in srgb, var(--color-accent) 35%, var(--color-gray-300));
 	border-radius: 8px;
 }
 .bulk-confirmation {
+	display: grid;
+	gap: 14px;
+	margin: 0;
 	padding: 12px;
-	border: 1px solid #c88a00;
-	background: #fff8e1;
+	border: 1px solid var(--color-text-warning);
+	background: color-mix(in srgb, var(--color-text-warning) 10%, var(--color-bg-primary));
+	color: var(--color-text-primary);
 	border-radius: 8px;
 }
 .bulk-confirmation span {
-	flex: 1;
+	line-height: 1.5;
+}
+.bulk-confirmation h3 {
+	margin: 0;
+}
+.bulk-confirmation-actions {
+	display: flex;
+	justify-content: flex-end;
+	gap: 10px;
 }
 .role-badge,
 .status-badge {
@@ -73,17 +89,17 @@
 	border-radius: 999px;
 	padding: 3px 9px;
 	font-size: 0.82rem;
-	background: #edf1f5;
-	color: #475467;
+	background: var(--color-bg-secondary);
+	color: var(--color-text-secondary);
 }
 .role-admin {
-	background: #e8edff;
-	color: #3048a5;
+	background: var(--color-accent-light);
+	color: var(--color-text-accent);
 	font-weight: 600;
 }
 .status-active {
-	background: #e8f7ed;
-	color: #18743b;
+	background: color-mix(in srgb, var(--color-text-success) 12%, var(--color-bg-primary));
+	color: var(--color-text-success);
 	font-weight: 600;
 }
 
@@ -101,16 +117,34 @@
 .whitelist-form input,
 .whitelist-form select {
 	min-height: 38px;
-	border: 1px solid var(--color-border, #d0d5dd);
+	border: 1px solid var(--color-gray-300);
 	border-radius: 6px;
 	padding: 0 10px;
-	background: white;
+	background: var(--color-bg-primary);
+	color: var(--color-text-primary);
 }
 
 .whitelist-form .view-btn {
+	align-self: start;
 	justify-self: end;
 	justify-content: center;
 	min-width: 112px;
+}
+
+.whitelist-field {
+	display: grid;
+	gap: 4px;
+	min-width: 0;
+}
+
+.whitelist-form [aria-invalid='true'] {
+	border-color: var(--color-text-danger);
+}
+
+.whitelist-field-error {
+	margin: 0;
+	color: var(--color-text-danger);
+	font-size: var(--font-size-xs);
 }
 
 .whitelist-feedback {
@@ -118,7 +152,7 @@
 }
 
 .whitelist-error {
-	color: #991b1b;
+	color: var(--color-text-danger);
 }
 
 .user-actions {
@@ -135,9 +169,10 @@
 }
 .role-select {
 	min-height: 30px;
-	border: 1px solid var(--color-border, #d0d5dd);
+	border: 1px solid var(--color-gray-300);
 	border-radius: 5px;
-	background: white;
+	background: var(--color-bg-primary);
+	color: var(--color-text-primary);
 	padding: 0 5px;
 }
 
@@ -219,13 +254,16 @@
 		flex-basis: 100%;
 	}
 
-	.bulk-toolbar,
-	.bulk-confirmation {
+	.bulk-toolbar {
 		align-items: stretch;
 	}
 
 	.bulk-toolbar .view-btn,
-	.bulk-confirmation .view-btn {
+	.bulk-confirmation-actions .view-btn {
 		flex: 1 1 100%;
+	}
+
+	.bulk-confirmation-actions {
+		flex-direction: column;
 	}
 }

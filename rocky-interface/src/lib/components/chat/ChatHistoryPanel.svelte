@@ -13,6 +13,7 @@
 		groupConversations
 	} from '$lib/chat/conversations';
 	import type { ChatConversation } from '$lib/types/chat';
+	import { focusScope } from '$lib/actions/focusScope';
 
 	export let conversations: ChatConversation[];
 	export let activeConversationId: string;
@@ -25,37 +26,16 @@
 	export let onNewChat: () => void;
 	export let onSelectConversation: (conversationId: string) => void;
 	export let onToggle: () => void;
+	export let onRetry: () => void;
 
 	let query = '';
-	let closeButton: HTMLButtonElement;
-	let panel: HTMLElement;
 	$: groups = groupConversations(conversations, query);
-
-	export function focusCloseButton() {
-		closeButton?.focus();
-	}
-
-	function trapFocus(event: KeyboardEvent) {
-		if (!mobile || collapsed || event.key !== 'Tab' || !panel) return;
-		const focusable = Array.from(
-			panel.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled)')
-		).filter((element) => element.offsetParent !== null);
-		if (focusable.length === 0) return;
-		const first = focusable[0];
-		const last = focusable[focusable.length - 1];
-		if (event.shiftKey && document.activeElement === first) {
-			event.preventDefault();
-			last.focus();
-		} else if (!event.shiftKey && document.activeElement === last) {
-			event.preventDefault();
-			first.focus();
-		}
-	}
 </script>
 
 {#if !collapsed}
 	<button
 		class="chat-history-backdrop"
+		data-focus-scope-allow
 		type="button"
 		onclick={onToggle}
 		tabindex="-1"
@@ -64,21 +44,25 @@
 {/if}
 
 <aside
-	bind:this={panel}
+	id="rocky-chat-history"
 	class:chat-history-collapsed={collapsed}
 	class:chat-history-open={!collapsed}
 	class="chat-history"
 	role={mobile && !collapsed ? 'dialog' : undefined}
 	aria-modal={mobile && !collapsed ? 'true' : undefined}
 	aria-label="Chat history"
-	onkeydown={trapFocus}
+	use:focusScope={{
+		active: mobile && !collapsed,
+		initialFocus: '[data-autofocus]',
+		onEscape: onToggle
+	}}
 >
 	<div class="chat-history-heading">
 		{#if !collapsed}<strong>Chat History</strong>{/if}
 		<button
-			bind:this={closeButton}
 			class="chat-icon-button chat-history-toggle"
 			type="button"
+			data-autofocus={!collapsed ? true : undefined}
 			onclick={onToggle}
 			aria-label={collapsed ? 'Open chat history' : 'Close chat history'}
 			title={collapsed ? 'Open chat history' : 'Close chat history'}
@@ -122,13 +106,22 @@
 
 		<div class="chat-history-list">
 			{#if loading}
-				<div class="chat-history-state" role="status">Loading conversations…</div>
-			{:else if error}
-				<div class="chat-history-state chat-history-error">{error}</div>
-			{:else if groups.length === 0}
-				<div class="chat-history-state">
-					{query ? 'No conversations match your search.' : 'Your conversations will appear here.'}
+				<div class="chat-history-state" role="status">
+					{conversations.length > 0 ? 'Refreshing conversations…' : 'Loading conversations…'}
 				</div>
+			{/if}
+			{#if error}
+				<div class="chat-history-state chat-history-error" role="alert">
+					<span>{error}</span>
+					<button type="button" onclick={onRetry} disabled={loading}>Retry</button>
+				</div>
+			{/if}
+			{#if groups.length === 0}
+				{#if !loading && (!error || (query && conversations.length > 0))}
+					<div class="chat-history-state">
+						{query ? 'No conversations match your search.' : 'Your conversations will appear here.'}
+					</div>
+				{/if}
 			{:else}
 				{#each groups as group}
 					<section

@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { normalizeUsers, type ApiUser, type User } from '$lib/types/user';
-	import '$lib/styles/routes/modules/login-view.css';
 
 	let users: User[] = [];
 	let isLoading = true;

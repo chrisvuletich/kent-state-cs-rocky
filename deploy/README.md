@@ -69,13 +69,18 @@ ROCKY_GRANITE_READY_URL=http://GRANITE_PRIVATE_ADDRESS:5002/ready
 ROCKY_GRANITE_TOKEN=...
 ROCKY_MAX_CONTEXT_CHARS=60000
 ROCKY_MAX_OUTPUT_TOKENS=2048
+ROCKY_MAX_REQUEST_BYTES=262144
+ROCKY_ENABLE_STREAMING=false
+ROCKY_ENABLE_IMAGE_INPUT=false
 ```
 
 Set the same student-facing model in `/etc/rocky/frontend.env` so the built-in
-chat sends the advertised identifier:
+chat sends the advertised identifier. Keep its streaming flag aligned with the
+Rocky chat API during rollout:
 
 ```sh
 ROCKY_PUBLIC_MODEL=gemma4:latest
+ROCKY_ENABLE_STREAMING=false
 ```
 
 Granite's `/etc/rocky/granite.env` needs:
@@ -88,7 +93,67 @@ OLLAMA_MODEL=gemma4:latest
 ROCKY_MAX_OUTPUT_TOKENS=2048
 ROCKY_GRANITE_MAX_CONCURRENT=1
 ROCKY_GRANITE_QUEUE_WAIT_SECONDS=1
+ROCKY_GRANITE_MAX_REQUEST_BYTES=10485760
+ROCKY_ENABLE_STREAMING=false
+ROCKY_ENABLE_IMAGE_INPUT=false
+ROCKY_MAX_IMAGES_PER_REQUEST=4
+ROCKY_MAX_IMAGE_BYTES=4194304
+ROCKY_MAX_IMAGE_TOTAL_BYTES=6291456
+ROCKY_MAX_IMAGE_PIXELS=20000000
+ROCKY_MAX_IMAGE_TOTAL_PIXELS=40000000
 ```
+
+To roll out Responses streaming, first deploy this code with the flag left
+`false` in all three environments. Then set `ROCKY_ENABLE_STREAMING=true` in Granite's environment and
+restart `rocky-granite`. After its `/ready` check passes, set the same flag in
+Rocky's backend environment and restart `rocky-chat-api`. Verify the public
+stream, then enable the flag in `/etc/rocky/frontend.env` and restart the web
+service. To roll back without disrupting built-in chat, disable the frontend
+flag first, then disable Rocky, and finally Granite. The public API location
+disables buffering directly; the SvelteKit stream sends `X-Accel-Buffering: no`
+through the general frontend location so browser deltas are also forwarded
+immediately.
+
+Verify one short streamed request from a shell that keeps the API key outside
+tracked files:
+
+```sh
+curl -N "$ROCKY_BASE_URL/v1/responses" \
+  -H "Authorization: Bearer $ROCKY_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d "{\"model\":\"$ROCKY_EXPECTED_MODEL\",\"input\":\"Reply with hello.\",\"stream\":true,\"store\":false}"
+```
+
+The stream should begin with `response.created`, end with
+`response.completed`, and include no `[DONE]` sentinel.
+
+After enabling the frontend flag, verify that a longer built-in chat response
+appears incrementally, its Stop control cancels an in-progress stream, and the
+conversation can be reopened from history afterward.
+
+To roll out image input, first confirm the installed Ollama model advertises
+the `vision` capability. Leave both image flags `false` while deploying, set
+`ROCKY_GRANITE_MAX_REQUEST_BYTES=10485760`, then enable
+`ROCKY_ENABLE_IMAGE_INPUT=true` on Granite and restart it. After Granite
+readiness passes, configure the same image count, byte, and pixel limits in
+Rocky and Granite, set Rocky's `ROCKY_MAX_REQUEST_BYTES=9437184`, enable the
+same image flag there, and restart `rocky-chat-api`. Rocky readiness rejects a
+limit mismatch. On the next chat load, the web application reads this readiness
+contract and exposes its local image picker automatically; there is no separate
+frontend image flag. Disable Rocky's flag first
+to roll back. The tracked Nginx route has a fixed 10 MiB outer body ceiling;
+configure Rocky's application ceiling back to 256 KiB after disabling image
+input.
+
+Phase 3 accepts only base64 data URLs containing JPEG, PNG, or static WebP
+images with `detail` omitted or `auto`; it intentionally rejects remote URLs,
+file IDs, GIF/SVG, animation, audio, and video. Validate one request using the
+shape in `run-test/fixtures/responses_image_input.json`, replacing its model
+with the identifier returned by `/v1/models`.
+
+Finally, verify the built-in chat with a local JPEG, PNG, or WebP: confirm its
+preview can be removed, an image-only turn can be sent, text output can stream,
+and the attached image remains visible after reopening the conversation.
 
 For a direct readiness check on Granite, load `/etc/rocky/granite.env` and send
 `ROCKY_GRANITE_TOKEN` in the `X-Rocky-Granite-Token` header. Rocky's own
@@ -157,6 +222,22 @@ responses, API keys, or Microsoft credentials.
 
 ## Verify a deployment
 
+The concise operator sequence is in
+[`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md). The sections below provide the
+configuration rationale, individual verification commands, and recovery detail.
+
+Before copying a release to either host, run the complete local acceptance gate
+from the candidate checkout:
+
+```sh
+python run-test/test_all.py
+```
+
+The command is non-deploying and uses testing-mode frontend configuration. It
+runs the backend, Granite, Node, production-build, and Selenium surfaces and
+returns nonzero if any step fails. Unlike the public smoke test below, it does
+not submit requests to the deployed model.
+
 Run the configuration doctor from the release checkout on Rocky after loading
 both production environment files. It reads configuration, pings MongoDB, and
 checks the backend, chat API, Granite, Ollama, and model mapping. It does not
@@ -173,6 +254,12 @@ python manage.py doctor \
 Use `--skip-network` to inspect configuration without contacting services. A
 successful run exits `0`; a failed check exits `1`; invalid command usage exits
 `2`.
+
+The doctor also compares the loaded `ROCKY_ENABLE_STREAMING`,
+`ROCKY_ENABLE_IMAGE_INPUT`, and image-limit settings with the capabilities and
+Rocky/Granite rollout state reported by the chat API's `/ready` response. This
+catches a frontend environment file, Rocky service, or Granite service left on
+a different rollout phase before student traffic is enabled.
 
 Then verify the same public routes students use. Keep the test API key in the
 shell environment rather than a tracked file.
@@ -195,6 +282,46 @@ request and verify its rate-limit headers with:
 python run-test/integration/deployment_smoke.py --include-generation
 ```
 
+After enabling each optional capability, verify it through the same public
+route and advertised model metadata:
+
+```sh
+python run-test/integration/deployment_smoke.py --include-streaming
+python run-test/integration/deployment_smoke.py --include-image
+```
+
+The streaming check validates the SSE media type, contiguous sequence numbers,
+lifecycle order, delta/final-text consistency, terminal completion, request ID,
+and rate-limit headers. The image check sends one embedded 1-by-1 PNG through
+the documented public content-block shape and validates the buffered response.
+If the selected model does not advertise the requested capability, the command
+fails clearly without submitting that generation request.
+
+All three inference checks are independent and opt-in. They may be combined in
+one invocation after a full rollout:
+
+```sh
+python run-test/integration/deployment_smoke.py \
+  --include-generation \
+  --include-streaming \
+  --include-image
+```
+
+For the normal final verification, the equivalent capability-aware shortcut is:
+
+```sh
+python run-test/integration/deployment_smoke.py --include-advertised
+```
+
+It always checks buffered generation and automatically checks streaming and
+image input when the selected model advertises them. Explicit feature flags
+remain useful when a feature is required but unexpectedly absent: they fail
+instead of silently omitting that path.
+
+When both optional capabilities are advertised, either combined form submits
+three short, permanently audited generation requests in addition to model
+discovery. Use it once per deployment rather than as a frequent poll.
+
 Unset the key when finished:
 
 ```sh
@@ -203,11 +330,10 @@ unset ROCKY_API_KEY
 
 ### Rate-limit rollout verification
 
-A successful default smoke run includes `PASS  model rate limit`; the optional
-generation run also includes `PASS  generation rate limit`. These checks verify
-that all three request-limit headers are present, the limit and remaining count
-are internally consistent, and the reset is within Rocky's fixed one-minute
-window.
+A successful default smoke run includes `PASS  model rate limit`; each optional
+inference run includes its own rate-limit result. These checks verify that all
+three request-limit headers are present, the limit and remaining count are
+internally consistent, and the reset is within Rocky's fixed one-minute window.
 
 The deployment smoke test deliberately does not exhaust a key or create an
 intentional `429`. After rollout, use the admin Analytics view to confirm that

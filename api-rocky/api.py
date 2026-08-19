@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import binascii
 import os
 import hashlib
 import hmac
@@ -24,6 +26,25 @@ from rate_limit import (
     ensure_rate_limit_ttl_index,
 )
 from telemetry import TelemetryStore, sanitize_model_metrics
+from image_input import (
+    ImageInputLimits,
+    ImageInputValidationError,
+    validate_image_inputs,
+)
+from granite_stream_client import (
+    GraniteEventStream,
+    GraniteStreamError,
+    open_granite_stream,
+)
+from response_stream_contract import (
+    SSE_CONTENT_TYPE,
+    SSE_RESPONSE_HEADERS,
+    build_stream_error_event,
+    build_text_delta_event,
+    build_text_stream_prefix,
+    build_text_stream_suffix,
+    encode_sse_event,
+)
 
 # Try PyMongo first (default to localhost). If unavailable, fall back to Mongita.
 try:
@@ -164,6 +185,48 @@ GRANITE_AUTH_TOKEN = os.getenv("ROCKY_GRANITE_TOKEN", "").strip()
 INTERNAL_PROXY_SECRET = os.getenv("ROCKY_INTERNAL_PROXY_SECRET", "").strip()
 MAX_OUTPUT_TOKENS = _env_int("ROCKY_MAX_OUTPUT_TOKENS", 2048, minimum=1)
 MAX_CONTEXT_CHARS = _env_int("ROCKY_MAX_CONTEXT_CHARS", 60000, minimum=1)
+ENABLE_STREAMING = _env_bool("ROCKY_ENABLE_STREAMING", False)
+ENABLE_IMAGE_INPUT = _env_bool("ROCKY_ENABLE_IMAGE_INPUT", False)
+MAX_IMAGES_PER_REQUEST = _env_int(
+    "ROCKY_MAX_IMAGES_PER_REQUEST", 4, minimum=1, maximum=16
+)
+MAX_IMAGE_BYTES = _env_int(
+    "ROCKY_MAX_IMAGE_BYTES", 4 * 1024 * 1024, minimum=1
+)
+MAX_IMAGE_TOTAL_BYTES = _env_int(
+    "ROCKY_MAX_IMAGE_TOTAL_BYTES", 6 * 1024 * 1024, minimum=1
+)
+MAX_IMAGE_PIXELS = _env_int(
+    "ROCKY_MAX_IMAGE_PIXELS", 20_000_000, minimum=1
+)
+MAX_IMAGE_TOTAL_PIXELS = _env_int(
+    "ROCKY_MAX_IMAGE_TOTAL_PIXELS", 40_000_000, minimum=1
+)
+if MAX_IMAGE_TOTAL_BYTES < MAX_IMAGE_BYTES:
+    raise RuntimeError(
+        "ROCKY_MAX_IMAGE_TOTAL_BYTES must be at least ROCKY_MAX_IMAGE_BYTES."
+    )
+if MAX_IMAGE_TOTAL_PIXELS < MAX_IMAGE_PIXELS:
+    raise RuntimeError(
+        "ROCKY_MAX_IMAGE_TOTAL_PIXELS must be at least ROCKY_MAX_IMAGE_PIXELS."
+    )
+IMAGE_INPUT_LIMITS = ImageInputLimits(
+    max_images=MAX_IMAGES_PER_REQUEST,
+    max_image_bytes=MAX_IMAGE_BYTES,
+    max_total_bytes=MAX_IMAGE_TOTAL_BYTES,
+    max_pixels=MAX_IMAGE_PIXELS,
+    max_total_pixels=MAX_IMAGE_TOTAL_PIXELS,
+)
+MINIMUM_IMAGE_REQUEST_BYTES = (
+    4 * ((MAX_IMAGE_TOTAL_BYTES + 2) // 3)
+    + MAX_CONTEXT_CHARS
+    + 16 * 1024
+)
+if ENABLE_IMAGE_INPUT and MAX_REQUEST_BYTES < MINIMUM_IMAGE_REQUEST_BYTES:
+    raise RuntimeError(
+        "ROCKY_MAX_REQUEST_BYTES is too small for the configured image-input "
+        f"budget; set it to at least {MINIMUM_IMAGE_REQUEST_BYTES}."
+    )
 RESPONSES_RATE_LIMIT_PER_MINUTE = _env_int(
     "ROCKY_RESPONSES_RATE_LIMIT_PER_MINUTE", 10, minimum=1
 )
@@ -171,7 +234,7 @@ MODELS_RATE_LIMIT_PER_MINUTE = _env_int(
     "ROCKY_MODELS_RATE_LIMIT_PER_MINUTE", 120, minimum=1
 )
 READINESS_TIMEOUT_SECONDS = _env_float(
-    "ROCKY_READINESS_TIMEOUT_SECONDS", 2, minimum=0, allow_minimum=False
+    "ROCKY_READINESS_TIMEOUT_SECONDS", 3, minimum=0, allow_minimum=False
 )
 REQUIRE_REQUEST_LOGGING = _env_bool(
     "ROCKY_REQUIRE_REQUEST_LOGGING",
@@ -503,14 +566,18 @@ def has_effective_user_prompt(payload):
         if not isinstance(item, dict) or item.get("role") != "user":
             continue
         content = item.get("content")
-        if isinstance(content, list) and any(
-            isinstance(block, dict)
-            and block.get("type") == "input_text"
-            and isinstance(block.get("text"), str)
-            and block["text"].strip()
-            for block in content
-        ):
-            return True
+        if isinstance(content, list):
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                if (
+                    block.get("type") == "input_text"
+                    and isinstance(block.get("text"), str)
+                    and block["text"].strip()
+                ):
+                    return True
+                if block.get("type") == "input_image":
+                    return True
     return False
 
 
@@ -588,6 +655,22 @@ def redact_structured_secrets(value):
     return value
 
 
+def telemetry_model_input_record(value):
+    """Keep model input inspectable without duplicating multi-megabyte images."""
+    if isinstance(value, dict):
+        summarized = {}
+        is_image = value.get("type") == "input_image"
+        for key, item in value.items():
+            if is_image and key == "image_base64":
+                summarized[key] = "[OMITTED: stored image payload]"
+            else:
+                summarized[str(key)] = telemetry_model_input_record(item)
+        return redact_structured_secrets(summarized)
+    if isinstance(value, list):
+        return [telemetry_model_input_record(item) for item in value]
+    return redact_structured_secrets(value)
+
+
 def optional_text(value, limit=512):
     if value is None:
         return None
@@ -610,7 +693,16 @@ def telemetry_client_record():
 def telemetry_request_record(payload=None, raw_body=None):
     body = redact_structured_secrets(payload) if isinstance(payload, dict) else None
     malformed_body = None
-    if body is None and isinstance(raw_body, str):
+    if body is None and isinstance(raw_body, (bytes, bytearray)):
+        encoded = bytes(raw_body)
+        malformed_body = {
+            "omitted": True,
+            "byte_length": len(encoded),
+            "sha256": hashlib.sha256(encoded).hexdigest(),
+        }
+    elif body is None and isinstance(raw_body, str):
+        # Retain compatibility for callers outside the route. The request route
+        # passes bytes so malformed UTF-8 is hashed exactly as submitted.
         encoded = raw_body.encode("utf-8")
         malformed_body = {
             "omitted": True,
@@ -788,6 +880,20 @@ def finish_telemetry_interaction(
         return False
 
 
+def record_stream_delivery(interaction, status):
+    """Record whether a completed stream reached its terminal public event."""
+    if telemetry_store is None or not isinstance(interaction, dict):
+        return False
+    try:
+        return telemetry_store.record_delivery(interaction, status)
+    except Exception as error:
+        app.logger.warning(
+            "telemetry.delivery_unexpected_failure error_type=%s",
+            type(error).__name__,
+        )
+        return False
+
+
 def model_error_status(error_type):
     return {"bad_request": 400, "busy": 503, "timeout": 504}.get(error_type, 502)
 
@@ -807,10 +913,27 @@ def model_capabilities():
     return {
         "max_output_tokens": MAX_OUTPUT_TOKENS,
         "max_context_characters": MAX_CONTEXT_CHARS,
-        "supports_streaming": False,
+        "max_images_per_request": MAX_IMAGES_PER_REQUEST,
+        "max_image_bytes": MAX_IMAGE_BYTES,
+        "max_image_total_bytes": MAX_IMAGE_TOTAL_BYTES,
+        "max_image_pixels": MAX_IMAGE_PIXELS,
+        "max_image_total_pixels": MAX_IMAGE_TOTAL_PIXELS,
+        "supports_streaming": ENABLE_STREAMING,
+        "supports_image_input": ENABLE_IMAGE_INPUT,
         "supports_previous_response_id": True,
         "supports_instructions": True,
         "model_dependent_parameters": ["frequency_penalty", "presence_penalty"],
+    }
+
+
+def image_limit_capabilities():
+    """Return the exact image limits that Granite must enforce as well."""
+    return {
+        "max_images": MAX_IMAGES_PER_REQUEST,
+        "max_image_bytes": MAX_IMAGE_BYTES,
+        "max_total_bytes": MAX_IMAGE_TOTAL_BYTES,
+        "max_pixels": MAX_IMAGE_PIXELS,
+        "max_total_pixels": MAX_IMAGE_TOTAL_PIXELS,
     }
 
 
@@ -837,6 +960,8 @@ def terminal_telemetry_json(
     error_type=None,
     additional_fields=None,
     headers=None,
+    required_logging_failure_handler=None,
+    required_logging_failure_fields=None,
 ):
     persisted = finish_telemetry_interaction(
         interaction,
@@ -849,12 +974,25 @@ def terminal_telemetry_json(
         additional_fields=additional_fields,
     )
     if REQUIRE_REQUEST_LOGGING and not persisted:
+        if required_logging_failure_handler is not None:
+            try:
+                required_logging_failure_handler()
+            except Exception as error:
+                app.logger.warning(
+                    "telemetry.required_failure_compensation_failed "
+                    "request_id=%s error_type=%s",
+                    interaction.get("request_id"),
+                    type(error).__name__,
+                )
+        failure_payload = api_error(
+            "Request logging is unavailable.",
+            error_type="server_error",
+            code="request_logging_unavailable",
+        )
+        if isinstance(required_logging_failure_fields, dict):
+            failure_payload.update(required_logging_failure_fields)
         return telemetry_json(
-            api_error(
-                "Request logging is unavailable.",
-                error_type="server_error",
-                code="request_logging_unavailable",
-            ),
+            failure_payload,
             503,
             interaction,
         )
@@ -997,6 +1135,10 @@ def health():
 def ready():
     dependencies = {"database": False, "granite": False}
     granite_model = None
+    granite_supports_streaming = False
+    granite_supports_image_input = False
+    granite_image_limits = None
+    granite_image_limits_match = False
     try:
         if api_keys_col is not None:
             api_keys_col.find_one({"_id": "__rocky_readiness__"})
@@ -1021,9 +1163,37 @@ def ready():
             reported_model = granite_payload.get("model")
             if isinstance(reported_model, str) and reported_model.strip():
                 granite_model = reported_model.strip()
+            granite_capabilities = granite_payload.get("capabilities")
+            granite_supports_streaming = (
+                isinstance(granite_capabilities, dict)
+                and granite_capabilities.get("supports_streaming") is True
+            )
+            granite_supports_image_input = (
+                isinstance(granite_capabilities, dict)
+                and granite_capabilities.get("supports_image_input") is True
+            )
+            if isinstance(granite_capabilities, dict):
+                candidate_limits = granite_capabilities.get("image_limits")
+                if isinstance(candidate_limits, dict):
+                    granite_image_limits = candidate_limits
+                    granite_image_limits_match = (
+                        all(
+                            isinstance(value, int) and not isinstance(value, bool)
+                            for value in candidate_limits.values()
+                        )
+                        and candidate_limits == image_limit_capabilities()
+                    )
         dependencies["granite"] = (
             granite_response.status_code == 200
             and granite_model == INFERENCE_MODEL
+            and (not ENABLE_STREAMING or granite_supports_streaming)
+            and (
+                not ENABLE_IMAGE_INPUT
+                or (
+                    granite_supports_image_input
+                    and granite_image_limits_match
+                )
+            )
         )
     except requests.RequestException:
         pass
@@ -1038,6 +1208,17 @@ def ready():
             "public": PUBLIC_MODEL,
             "inference": INFERENCE_MODEL,
             "granite": granite_model,
+        },
+        "streaming": {
+            "rocky_enabled": ENABLE_STREAMING,
+            "granite_enabled": granite_supports_streaming,
+        },
+        "image_input": {
+            "rocky_enabled": ENABLE_IMAGE_INPUT,
+            "granite_enabled": granite_supports_image_input,
+            "limits_match": granite_image_limits_match,
+            "rocky_limits": image_limit_capabilities(),
+            "granite_limits": granite_image_limits,
         },
     }), 200 if ready_now else 503
 
@@ -1138,6 +1319,68 @@ def request_too_large(_error):
     interaction = getattr(g, "rocky_telemetry_interaction", None)
     if not isinstance(interaction, dict):
         interaction = begin_telemetry_interaction()
+
+    # RequestEntityTooLarge interrupts body access before the normal route can
+    # attribute and rate-limit the request. Recover a valid personal/trusted
+    # credential from the header without ever recording the credential itself.
+    key_doc = (
+        get_key_doc(extract_bearer_api_key())
+        if request.path == "/v1/responses"
+        else None
+    )
+    trusted_key = bool(
+        key_doc
+        and not (
+            is_trusted_web_key_doc(key_doc)
+            and forwarded_identity_headers_present()
+            and not has_valid_internal_proxy_secret()
+        )
+        and not (
+            is_service_key_doc(key_doc)
+            and not is_trusted_web_request(key_doc)
+        )
+    )
+    if trusted_key:
+        key_doc = rate_limit_key_doc(key_doc)
+        if not key_doc:
+            return terminal_telemetry_json(
+                interaction,
+                api_error(
+                    "Rate-limit identity is temporarily unavailable.",
+                    error_type="server_error",
+                    code="rate_limit_identity_unavailable",
+                ),
+                503,
+                "failed",
+                error_stage="rate_limit",
+                error_type="rate_limit_identity_unavailable",
+            )
+        identity_logged = enrich_telemetry_interaction(
+            interaction,
+            telemetry_identity_record(key_doc),
+        )
+        if REQUIRE_REQUEST_LOGGING and not identity_logged:
+            return terminal_telemetry_json(
+                interaction,
+                api_error(
+                    "Request logging is unavailable.",
+                    error_type="server_error",
+                    code="request_logging_unavailable",
+                ),
+                503,
+                "failed",
+                error_stage="telemetry",
+                error_type="identity_persistence_failed",
+            )
+        rate_limit_response = enforce_public_rate_limit(
+            interaction,
+            key_doc,
+            operation="responses.create",
+            limit=RESPONSES_RATE_LIMIT_PER_MINUTE,
+        )
+        if rate_limit_response is not None:
+            return rate_limit_response
+
     payload = api_error(
         "Request body is too large.",
         error_type="invalid_request_error",
@@ -1193,40 +1436,9 @@ def rocky_api():
             interaction,
         )
 
-    raw_body = request.get_data(cache=True, as_text=True)
+    raw_body = request.get_data(cache=True)
     apirequest = parse_api_request()
-    if not apirequest:
-        malformed_logged = enrich_telemetry_interaction(
-            interaction,
-            {"request": telemetry_request_record(raw_body=raw_body)},
-        )
-        if REQUIRE_REQUEST_LOGGING and not malformed_logged:
-            return terminal_telemetry_json(
-                interaction,
-                api_error(
-                    "Request logging is unavailable.",
-                    error_type="server_error",
-                    code="request_logging_unavailable",
-                ),
-                503,
-                "failed",
-                error_stage="telemetry",
-                error_type="request_persistence_failed",
-            )
-        return terminal_telemetry_json(
-            interaction,
-            api_error(
-                "Request body must be valid JSON object.",
-                param=None,
-                code="invalid_json",
-            ),
-            400,
-            "rejected",
-            error_stage="body",
-            error_type="invalid_json",
-        )
-
-    request_body = apirequest.get("requestbody")
+    request_body = apirequest.get("requestbody") if apirequest else None
     request_record = telemetry_request_record(request_body, raw_body=raw_body)
     request_logged = enrich_telemetry_interaction(
         interaction, {"request": request_record}
@@ -1245,7 +1457,7 @@ def rocky_api():
             error_type="request_persistence_failed",
         )
 
-    key_doc = get_key_doc(apirequest.get("apikey"))
+    key_doc = get_key_doc(extract_bearer_api_key())
     if not key_doc:
         return terminal_telemetry_json(
             interaction,
@@ -1334,7 +1546,22 @@ def rocky_api():
     if rate_limit_response is not None:
         return rate_limit_response
 
-    validation_error = validate_public_request(request_body)
+    if not apirequest:
+        return terminal_telemetry_json(
+            interaction,
+            api_error(
+                "Request body must be valid JSON object.",
+                param=None,
+                code="invalid_json",
+            ),
+            400,
+            "rejected",
+            error_stage="body",
+            error_type="invalid_json",
+        )
+
+    validated_images = []
+    validation_error = validate_public_request(request_body, validated_images)
     if validation_error:
         return terminal_telemetry_json(
             interaction,
@@ -1413,6 +1640,8 @@ def rocky_api():
     model_metrics = None
     conversation_id = None
     user_message_id = None
+    assistant_message_id = None
+    response_context_saved = False
     response_payload = None
     try:
         if use_web_history:
@@ -1447,6 +1676,7 @@ def rocky_api():
         ) = build_granite_payload_with_context(
             request_body,
             history_messages=history_messages,
+            validated_images=validated_images,
         )
         if model_request is None or not has_effective_user_prompt(model_request):
             return terminal_telemetry_json(
@@ -1462,7 +1692,11 @@ def rocky_api():
                 error_type="missing_message",
             )
 
-        request_record["model_input"] = redact_structured_secrets(model_request)
+        request_record["model_input"] = telemetry_model_input_record(model_request)
+        request_record["image_inputs"] = [
+            image.telemetry_record()
+            for image in validated_images
+        ]
         request_record["history_truncated_messages"] = omitted_history_count
         model_input_logged = enrich_telemetry_interaction(interaction, {
             "request": request_record,
@@ -1483,18 +1717,33 @@ def rocky_api():
             )
 
         if use_web_history:
+            user_message_arguments = {
+                "conversation_id": conversation_id,
+                "user_id": user_id,
+                "role": "user",
+                "content": user_message,
+                "user_context": chat_user_context,
+                "status": "pending",
+            }
+            current_user_images = latest_user_image_blocks(current_messages)
+            if current_user_images:
+                user_message_arguments["input_images"] = current_user_images
             user_message_id = save_message(
-                conversation_id=conversation_id,
-                user_id=user_id,
-                role="user",
-                content=user_message,
-                user_context=chat_user_context,
-                status="pending",
+                **user_message_arguments,
             )
 
-        response = request_ai(model_request)
-        model_metrics = response.get("_telemetry")
-        if response.get("error"):
+        stream_requested = request_body.get("stream") is True
+        response = (
+            request_ai_stream(model_request, normalized=True)
+            if stream_requested
+            else request_ai(model_request, normalized=True)
+        )
+        model_metrics = (
+            response.get("_telemetry")
+            if isinstance(response, dict)
+            else None
+        )
+        if isinstance(response, dict) and response.get("error"):
             if user_message_id:
                 update_message_status(
                     conversation_id,
@@ -1547,6 +1796,25 @@ def rocky_api():
                 headers={"Retry-After": "2"} if model_error_type == "busy" else None,
             )
 
+        if stream_requested:
+            if not isinstance(response, GraniteEventStream):
+                raise RuntimeError("Streaming model request returned an invalid result.")
+            return public_streaming_response(
+                granite_stream=response,
+                request_body=request_body,
+                interaction=interaction,
+                current_messages=current_messages,
+                retained_history=retained_history,
+                store_response=store_response,
+                owner_scope=owner_scope,
+                use_web_history=use_web_history,
+                conversation_id=conversation_id,
+                user_id=user_id,
+                user_message_id=user_message_id,
+                chat_user_context=chat_user_context,
+                previous_response_id=previous_response_id,
+            )
+
         assistant_reply = response["output_text"]
         if use_web_history:
             update_message_status(
@@ -1555,7 +1823,7 @@ def rocky_api():
                 user_message_id,
                 "sent",
             )
-            save_message(
+            assistant_message_id = save_message(
                 conversation_id=conversation_id,
                 user_id=user_id,
                 role="assistant",
@@ -1585,13 +1853,16 @@ def rocky_api():
                 owner_scope,
                 [*retained_history, *current_messages, assistant_context_message],
             )
+            response_context_saved = True
     except Exception as error:
-        if user_message_id:
+        for message_id in (user_message_id, assistant_message_id):
+            if not message_id:
+                continue
             try:
                 update_message_status(
                     conversation_id,
                     user_id,
-                    user_message_id,
+                    message_id,
                     "failed",
                 )
             except Exception:
@@ -1626,6 +1897,41 @@ def rocky_api():
             ),
         )
 
+    def compensate_required_logging_failure():
+        if response_context_saved:
+            try:
+                delete_response_context(response_payload["id"], owner_scope)
+            except Exception as error:
+                app.logger.warning(
+                    "chat.response_context_compensation_failed "
+                    "request_id=%s error_type=%s",
+                    interaction.get("request_id"),
+                    type(error).__name__,
+                )
+        for message_id in (user_message_id, assistant_message_id):
+            if message_id:
+                try:
+                    update_message_status(
+                        conversation_id,
+                        user_id,
+                        message_id,
+                        "failed",
+                    )
+                except Exception as error:
+                    app.logger.warning(
+                        "chat.message_status_compensation_failed "
+                        "request_id=%s error_type=%s",
+                        interaction.get("request_id"),
+                        type(error).__name__,
+                    )
+
+    required_logging_failure_fields = None
+    if conversation_id is not None:
+        required_logging_failure_fields = {
+            "conversation_id": conversation_id,
+            "message_stored": bool(user_message_id),
+        }
+
     return terminal_telemetry_json(
         interaction,
         response_payload,
@@ -1636,6 +1942,8 @@ def rocky_api():
             request_body,
             model_metrics,
         ),
+        required_logging_failure_handler=compensate_required_logging_failure,
+        required_logging_failure_fields=required_logging_failure_fields,
     )
 
 @app.route("/conversations/<conversation_id>/export", methods=["POST"])
@@ -1796,7 +2104,7 @@ def extract_bearer_api_key():
     return credentials.strip()
 
 
-def validate_public_request(request_body):
+def validate_public_request(request_body, validated_images=None):
     def invalid(message, param, code="invalid_value"):
         return {"message": message, "param": param, "code": code}
 
@@ -1871,6 +2179,14 @@ def validate_public_request(request_body):
                 if not isinstance(block, dict):
                     return invalid("Each content block must be an object.", block_param)
                 block_type = block.get("type")
+                if block_type == "input_image":
+                    if not ENABLE_IMAGE_INPUT:
+                        return invalid(
+                            "Content type 'input_image' is not supported.",
+                            f"{block_param}.type",
+                            "unsupported_content_type",
+                        )
+                    continue
                 if block_type not in {"input_text", "output_text", "text"}:
                     return invalid(
                         f"Content type '{block_type}' is not supported.",
@@ -1890,6 +2206,14 @@ def validate_public_request(request_body):
             "invalid_type",
         )
 
+    if ENABLE_IMAGE_INPUT:
+        try:
+            images = validate_image_inputs(input_value, IMAGE_INPUT_LIMITS)
+        except ImageInputValidationError as error:
+            return invalid(error.message, error.param, error.code)
+        if isinstance(validated_images, list):
+            validated_images.extend(images)
+
     instructions = request_body.get("instructions")
     if instructions is not None and (
         not isinstance(instructions, str) or not instructions.strip()
@@ -1906,7 +2230,7 @@ def validate_public_request(request_body):
     for field in ("store", "stream"):
         if field in request_body and not isinstance(request_body[field], bool):
             return invalid(f"{field} must be a boolean.", field, "invalid_type")
-    if request_body.get("stream") is True:
+    if request_body.get("stream") is True and not ENABLE_STREAMING:
         return invalid(
             "Streaming is not currently supported.",
             "stream",
@@ -2230,29 +2554,122 @@ def save_response_context(response_id, owner_scope, context_messages):
     })
 
 
+def delete_response_context(response_id, owner_scope):
+    """Remove a context that must not remain usable after failed finalization."""
+    if responses_col is None:
+        return False
+    result = responses_col.delete_one({
+        "response_id": response_id,
+        "owner_scope": owner_scope,
+    })
+    return getattr(result, "deleted_count", 0) == 1
+
+
 def message_character_count(message):
     if not isinstance(message, dict):
         return 0
     return len(extract_message_content_text(message.get("content")))
 
 
+def message_image_usage(message):
+    """Return trusted normalized image count, decoded bytes, and pixels."""
+    if not isinstance(message, dict) or not isinstance(message.get("content"), list):
+        return 0, 0, 0
+    count = 0
+    total_bytes = 0
+    total_pixels = 0
+    for block in message["content"]:
+        if not isinstance(block, dict) or block.get("type") != "input_image":
+            continue
+        byte_length = block.get("byte_length")
+        if not isinstance(byte_length, int) or isinstance(byte_length, bool):
+            continue
+        if byte_length < 1:
+            continue
+        width = block.get("width")
+        height = block.get("height")
+        if (
+            not isinstance(width, int)
+            or isinstance(width, bool)
+            or width < 1
+            or not isinstance(height, int)
+            or isinstance(height, bool)
+            or height < 1
+        ):
+            continue
+        count += 1
+        total_bytes += byte_length
+        total_pixels += width * height
+    return count, total_bytes, total_pixels
+
+
+def without_image_blocks(messages):
+    """Return history with image blocks removed for a safe feature rollback."""
+    sanitized = []
+    for message in messages if isinstance(messages, list) else []:
+        if not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        if not isinstance(content, list):
+            sanitized.append(message)
+            continue
+        retained_content = [
+            block
+            for block in content
+            if not isinstance(block, dict) or block.get("type") != "input_image"
+        ]
+        if not retained_content:
+            continue
+        sanitized.append({**message, "content": retained_content})
+    return sanitized
+
+
 def bounded_history_messages(history_messages, current_messages, instructions=None):
     history = history_messages if isinstance(history_messages, list) else []
+    original_history_count = len(history)
+    if not ENABLE_IMAGE_INPUT:
+        history = without_image_blocks(history)
     current_size = sum(message_character_count(message) for message in current_messages)
     if isinstance(instructions, str):
         current_size += len(instructions)
     remaining = max(0, MAX_CONTEXT_CHARS - current_size)
+    current_image_count = 0
+    current_image_bytes = 0
+    current_image_pixels = 0
+    for message in current_messages:
+        count, byte_count, pixel_count = message_image_usage(message)
+        current_image_count += count
+        current_image_bytes += byte_count
+        current_image_pixels += pixel_count
+    remaining_images = max(0, MAX_IMAGES_PER_REQUEST - current_image_count)
+    remaining_image_bytes = max(
+        0,
+        MAX_IMAGE_TOTAL_BYTES - current_image_bytes,
+    )
+    remaining_image_pixels = max(
+        0,
+        MAX_IMAGE_TOTAL_PIXELS - current_image_pixels,
+    )
 
     selected_reversed = []
     for message in reversed(history):
         size = message_character_count(message)
-        if size > remaining:
+        image_count, image_bytes, image_pixels = message_image_usage(message)
+        if (
+            size > remaining
+            or image_count > remaining_images
+            or image_bytes > remaining_image_bytes
+            or image_pixels > remaining_image_pixels
+        ):
             break
         selected_reversed.append(message)
         remaining -= size
+        remaining_images -= image_count
+        remaining_image_bytes -= image_bytes
+        remaining_image_pixels -= image_pixels
 
     selected = list(reversed(selected_reversed))
-    return selected, len(history) - len(selected)
+    return selected, original_history_count - len(selected)
 
 def should_store_response(request_body):
     """Responses are stored by default; institutional telemetry is independent."""
@@ -2337,6 +2754,7 @@ def save_message(
     model=None,
     user_context=None,
     status="sent",
+    input_images=None,
 ):
     """
     Saves one chat message to MongoDB/Mongita.
@@ -2346,7 +2764,7 @@ def save_message(
     context = user_context if isinstance(user_context, dict) else {}
 
     message_id = str(uuid4())
-    messages_col.insert_one({
+    message_document = {
         "message_id": message_id,
         "conversation_id": conversation_id,
         "user_id": user_id,
@@ -2356,7 +2774,10 @@ def save_message(
         "model": model,
         "status": status,
         "created_at": utc_now()
-    })
+    }
+    if isinstance(input_images, list) and input_images:
+        message_document["input_images"] = input_images
+    messages_col.insert_one(message_document)
 
     conversations_col.update_one(
         {
@@ -2431,7 +2852,7 @@ def clean_message_for_export(message):
     """
     Removes Mongo/internal fields so jsonify does not choke on ObjectId.
     """
-    return {
+    exported = {
         "message_id": message.get("message_id"),
         "role": message.get("role"),
         "content": message.get("content"),
@@ -2439,6 +2860,42 @@ def clean_message_for_export(message):
         "status": message.get("status", "sent"),
         "created_at": message.get("created_at")
     }
+    input_images = clean_input_images_for_export(message.get("input_images"))
+    if input_images:
+        exported["input_images"] = input_images
+    return exported
+
+
+def clean_input_images_for_export(value):
+    """Convert private normalized images back to safe public content blocks."""
+    exported = []
+    for block in value if isinstance(value, list) else []:
+        if not isinstance(block, dict) or block.get("type") != "input_image":
+            continue
+        mime_type = block.get("mime_type")
+        encoded = block.get("image_base64")
+        byte_length = block.get("byte_length")
+        if (
+            mime_type not in {"image/jpeg", "image/png", "image/webp"}
+            or not isinstance(encoded, str)
+            or not encoded
+            or not isinstance(byte_length, int)
+            or isinstance(byte_length, bool)
+            or byte_length < 1
+        ):
+            continue
+        try:
+            decoded = base64.b64decode(encoded, validate=True)
+        except (binascii.Error, ValueError):
+            continue
+        if len(decoded) != byte_length:
+            continue
+        exported.append({
+            "type": "input_image",
+            "image_url": f"data:{mime_type};base64,{encoded}",
+            "detail": "auto",
+        })
+    return exported
 
 
 def format_conversation_markdown(conversation, messages):
@@ -2465,6 +2922,7 @@ def format_conversation_markdown(conversation, messages):
         role = str(message.get("role", "unknown")).title()
         created = message.get("created_at", "")
         content = str(message.get("content", "")).strip()
+        input_images = clean_input_images_for_export(message.get("input_images"))
 
         lines.extend([
             f"## {role}",
@@ -2472,6 +2930,11 @@ def format_conversation_markdown(conversation, messages):
             f"*{created}*",
             "",
             content,
+            *(
+                [f"*{len(input_images)} attached image(s)*", ""]
+                if input_images
+                else []
+            ),
             "",
             "---",
             ""
@@ -2491,18 +2954,19 @@ def messages_to_granite_input(messages):
             continue
         role = message.get("role", "user")
         content = str(message.get("content", ""))
+        input_images = message.get("input_images")
+        if not isinstance(input_images, list):
+            input_images = []
 
-        if not content.strip():
+        if not content.strip() and not input_images:
             continue
 
         granite_input.append({
             "role": role,
-            "content": [
-                {
-                    "type": "input_text",
-                    "text": content
-                }
-            ]
+            "content": ([{
+                "type": "input_text",
+                "text": content,
+            }] if content.strip() else []) + input_images,
         })
 
     return granite_input
@@ -2545,7 +3009,23 @@ def extract_message_content_text(content):
     return "\n".join(text_parts)
 
 
-def normalize_input_messages(input_value):
+def latest_user_image_blocks(messages):
+    """Return normalized images attached to the latest current user message."""
+    for message in reversed(messages if isinstance(messages, list) else []):
+        if not isinstance(message, dict) or message.get("role") != "user":
+            continue
+        content = message.get("content")
+        if not isinstance(content, list):
+            return []
+        return [
+            dict(block)
+            for block in content
+            if isinstance(block, dict) and block.get("type") == "input_image"
+        ]
+    return []
+
+
+def normalize_input_messages(input_value, validated_images=None):
     if isinstance(input_value, str):
         if not input_value.strip():
             return []
@@ -2557,26 +3037,60 @@ def normalize_input_messages(input_value):
     if not isinstance(input_value, list):
         return []
 
+    images_by_message = {}
+    for image in validated_images or []:
+        images_by_message.setdefault(image.message_index, {})[image.block_index] = image
+
     normalized_messages = []
-    for message in input_value:
+    for message_index, message in enumerate(input_value):
         if not isinstance(message, dict):
-            continue
-        text = extract_message_content_text(message.get("content"))
-        if not text:
             continue
         role = str(message.get("role") or "user").strip().lower()
         if role not in {"user", "assistant", "system", "developer"}:
             continue
         if role == "developer":
             role = "system"
+        content = []
+        submitted_content = message.get("content")
+        if isinstance(submitted_content, str):
+            if submitted_content.strip():
+                content.append({
+                    "type": "output_text" if role == "assistant" else "input_text",
+                    "text": submitted_content,
+                })
+        elif isinstance(submitted_content, list):
+            message_images = images_by_message.get(message_index, {})
+            for block_index, block in enumerate(submitted_content):
+                if not isinstance(block, dict):
+                    continue
+                block_type = block.get("type")
+                if block_type in {"input_text", "output_text", "text"}:
+                    text = block.get("text")
+                    if isinstance(text, str) and text.strip():
+                        content.append({
+                            "type": (
+                                "output_text" if role == "assistant" else "input_text"
+                            ),
+                            "text": text,
+                        })
+                    continue
+                image = message_images.get(block_index)
+                if block_type == "input_image" and image is not None:
+                    content.append(image.internal_block())
+        if not content:
+            continue
         normalized_messages.append({
             "role": role,
-            "content": [{"type": "input_text", "text": text}],
+            "content": content,
         })
     return normalized_messages
 
 
-def build_granite_payload_with_context(request_body, history_messages=None):
+def build_granite_payload_with_context(
+    request_body,
+    history_messages=None,
+    validated_images=None,
+):
     if request_body is None:
         return None, [], 0, []
 
@@ -2586,7 +3100,10 @@ def build_granite_payload_with_context(request_body, history_messages=None):
     if not isinstance(request_body, dict):
         return None, [], 0, []
 
-    current_messages = normalize_input_messages(request_body.get("input"))
+    current_messages = normalize_input_messages(
+        request_body.get("input"),
+        validated_images=validated_images,
+    )
     if not current_messages:
         return None, [], 0, []
 
@@ -2632,16 +3149,25 @@ def _build_granite_payload(request_body):
     return payload
 
 
-def build_response_payload(output_text, request_body, metadata, model_metrics):
-    response_id = f"resp_{uuid4().hex}"
-    message_id = f"msg_{uuid4().hex}"
+def build_response_payload(
+    output_text,
+    request_body,
+    metadata,
+    model_metrics,
+    *,
+    response_id=None,
+    message_id=None,
+    created_at=None,
+):
+    response_id = response_id or f"resp_{uuid4().hex}"
+    message_id = message_id or f"msg_{uuid4().hex}"
     prompt_tokens = int((model_metrics or {}).get("prompt_eval_count") or 0)
     output_tokens = int((model_metrics or {}).get("eval_count") or 0)
 
     payload = {
         "id": response_id,
         "object": "response",
-        "created_at": int(time.time()),
+        "created_at": int(time.time()) if created_at is None else created_at,
         "status": "completed",
         "model": PUBLIC_MODEL,
         "parallel_tool_calls": False,
@@ -2715,8 +3241,8 @@ def model_failure(error_type, metrics=None, message=None):
     }
 
 
-def request_ai(request_body):
-    payload = _build_granite_payload(request_body)
+def request_ai(request_body, *, normalized=False):
+    payload = request_body if normalized else _build_granite_payload(request_body)
     if payload is None:
         return model_failure("bad_request")
 
@@ -2781,6 +3307,487 @@ def request_ai(request_body):
     result.pop("telemetry", None)
     result["_telemetry"] = model_metrics
     return result
+
+
+def request_ai_stream(request_body, *, normalized=False):
+    payload = request_body if normalized else _build_granite_payload(request_body)
+    if payload is None:
+        return model_failure("bad_request")
+
+    headers = {}
+    if GRANITE_AUTH_TOKEN:
+        headers["X-Rocky-Granite-Token"] = GRANITE_AUTH_TOKEN
+    try:
+        return open_granite_stream(
+            GRANITE_URL,
+            payload,
+            headers,
+            GRANITE_TIMEOUT_SECONDS,
+            INFERENCE_MODEL,
+        )
+    except GraniteStreamError as error:
+        model_metrics = extract_granite_telemetry({
+            "telemetry": error.telemetry,
+        })
+        return model_failure(
+            error.kind,
+            model_metrics,
+            message=error.message if error.kind == "bad_request" else None,
+        )
+
+
+class PublicStreamFinalizationError(Exception):
+    def __init__(self, message, code, error_type="model_error"):
+        super().__init__(message)
+        self.message = message
+        self.code = code
+        self.error_type = error_type
+
+
+def stream_failure_details(error_type):
+    details = {
+        "timeout": (
+            "Model request timed out.",
+            "model_timeout",
+            "ollama",
+            "timed_out",
+        ),
+        "network": (
+            "Model service request failed.",
+            "model_service_unavailable",
+            "granite",
+            "failed",
+        ),
+        "bad_response": (
+            "Granite returned an invalid response.",
+            "invalid_model_response",
+            "granite",
+            "failed",
+        ),
+        "cancelled": (
+            "Model generation was cancelled.",
+            "response_cancelled",
+            "granite",
+            "failed",
+        ),
+    }
+    return details.get(error_type, (
+        "Model service request failed.",
+        "model_error",
+        "granite",
+        "failed",
+    ))
+
+
+class PublicResponseStream:
+    """Translate one Granite stream while owning terminal persistence."""
+
+    def __init__(
+        self,
+        *,
+        granite_stream,
+        request_body,
+        interaction,
+        current_messages,
+        retained_history,
+        store_response,
+        owner_scope,
+        use_web_history,
+        conversation_id,
+        user_id,
+        user_message_id,
+        chat_user_context,
+        previous_response_id,
+    ):
+        self.granite_stream = granite_stream
+        self.request_body = request_body
+        self.interaction = interaction
+        self.current_messages = current_messages
+        self.retained_history = retained_history
+        self.store_response = store_response
+        self.owner_scope = owner_scope
+        self.use_web_history = use_web_history
+        self.conversation_id = conversation_id
+        self.user_id = user_id
+        self.user_message_id = user_message_id
+        self.chat_user_context = chat_user_context
+        self.previous_response_id = previous_response_id
+        self.response_id = f"resp_{uuid4().hex}"
+        self.message_id = f"msg_{uuid4().hex}"
+        self.created_at = int(time.time())
+        self.sequence_number = 0
+        self.output_parts = []
+        self.model_metrics = {}
+        self.assistant_message_id = None
+        self._iterated = False
+        self._closed = False
+        self._terminal_recorded = False
+        self._response_context_saved = False
+        self._completion_frame_emitted = False
+        self._delivery_recorded = False
+
+    @property
+    def output_text(self):
+        return "".join(self.output_parts)
+
+    def _mark_web_message_failed(self):
+        if not self.user_message_id:
+            return
+        try:
+            update_message_status(
+                self.conversation_id,
+                self.user_id,
+                self.user_message_id,
+                "failed",
+            )
+            if self.assistant_message_id:
+                update_message_status(
+                    self.conversation_id,
+                    self.user_id,
+                    self.assistant_message_id,
+                    "failed",
+                )
+            elif self.output_text:
+                self.assistant_message_id = save_message(
+                    conversation_id=self.conversation_id,
+                    user_id=self.user_id,
+                    role="assistant",
+                    content=self.output_text,
+                    model=INFERENCE_MODEL,
+                    user_context=self.chat_user_context,
+                    status="failed",
+                )
+        except Exception as error:
+            app.logger.warning(
+                "chat.stream_failure_persistence_failed request_id=%s error_type=%s",
+                self.interaction.get("request_id"),
+                type(error).__name__,
+            )
+
+    def _record_failure(
+        self,
+        *,
+        message,
+        code,
+        error_type,
+        error_stage,
+        outcome="failed",
+    ):
+        if self._terminal_recorded:
+            return
+        self._mark_web_message_failed()
+        response_payload = api_error(
+            message,
+            error_type="server_error",
+            code=code,
+        )
+        if self.output_text:
+            response_payload["output_text"] = self.output_text
+        if self.conversation_id is not None:
+            response_payload["conversation_id"] = self.conversation_id
+            response_payload["message_stored"] = bool(self.user_message_id)
+        finish_telemetry_interaction(
+            self.interaction,
+            outcome,
+            self.model_metrics,
+            response_payload=response_payload,
+            http_status=200,
+            error_stage=error_stage,
+            error_type=error_type,
+            additional_fields=telemetry_model_fields(
+                self.request_body,
+                self.model_metrics,
+            ),
+        )
+        self._terminal_recorded = True
+
+    def _complete(self, terminal_event):
+        self.model_metrics = extract_granite_telemetry({
+            "telemetry": terminal_event["telemetry"],
+        })
+        assistant_reply = self.output_text
+        if not assistant_reply.strip():
+            raise PublicStreamFinalizationError(
+                "Granite returned an invalid response.",
+                "invalid_model_response",
+                "bad_response",
+            )
+
+        if self.use_web_history:
+            update_message_status(
+                self.conversation_id,
+                self.user_id,
+                self.user_message_id,
+                "sent",
+            )
+            self.assistant_message_id = save_message(
+                conversation_id=self.conversation_id,
+                user_id=self.user_id,
+                role="assistant",
+                content=assistant_reply,
+                model=self.granite_stream.model,
+                user_context=self.chat_user_context,
+            )
+
+        response_payload = build_response_payload(
+            assistant_reply,
+            self.request_body,
+            terminal_event["metadata"],
+            self.model_metrics,
+            response_id=self.response_id,
+            message_id=self.message_id,
+            created_at=self.created_at,
+        )
+        if self.previous_response_id:
+            response_payload["previous_response_id"] = self.previous_response_id
+        if self.conversation_id is not None:
+            response_payload["conversation_id"] = self.conversation_id
+
+        if self.store_response and not self.use_web_history:
+            assistant_context_message = {
+                "role": "assistant",
+                "content": [{
+                    "type": "output_text",
+                    "text": assistant_reply,
+                }],
+            }
+            save_response_context(
+                response_payload["id"],
+                self.owner_scope,
+                [
+                    *self.retained_history,
+                    *self.current_messages,
+                    assistant_context_message,
+                ],
+            )
+            self._response_context_saved = True
+
+        additional_fields = telemetry_model_fields(
+            self.request_body,
+            self.model_metrics,
+        )
+        additional_fields["delivery"] = {"status": "pending"}
+        persisted = finish_telemetry_interaction(
+            self.interaction,
+            "completed",
+            self.model_metrics,
+            response_payload=response_payload,
+            http_status=200,
+            additional_fields=additional_fields,
+        )
+        if REQUIRE_REQUEST_LOGGING and not persisted:
+            if self._response_context_saved:
+                try:
+                    delete_response_context(self.response_id, self.owner_scope)
+                    self._response_context_saved = False
+                except Exception as error:
+                    app.logger.warning(
+                        "chat.stream_context_cleanup_failed request_id=%s error_type=%s",
+                        self.interaction.get("request_id"),
+                        type(error).__name__,
+                    )
+            raise PublicStreamFinalizationError(
+                "Request logging is unavailable.",
+                "request_logging_unavailable",
+                "request_persistence_failed",
+            )
+        self._terminal_recorded = True
+        return response_payload
+
+    def _record_delivery(self):
+        if self._delivery_recorded or not self._terminal_recorded:
+            return
+        status = (
+            "completed"
+            if self._completion_frame_emitted
+            else "client_disconnected"
+        )
+        record_stream_delivery(self.interaction, status)
+        self._delivery_recorded = True
+
+    def _error_frame(self, message, code, error_type, error_stage, outcome="failed"):
+        self._record_failure(
+            message=message,
+            code=code,
+            error_type=error_type,
+            error_stage=error_stage,
+            outcome=outcome,
+        )
+        event = build_stream_error_event(
+            message,
+            code,
+            self.sequence_number,
+        )
+        self.sequence_number += 1
+        return encode_sse_event(event)
+
+    def __iter__(self):
+        if self._iterated:
+            raise RuntimeError("A public response stream can only be consumed once.")
+        self._iterated = True
+        try:
+            for event in build_text_stream_prefix(
+                self.response_id,
+                self.message_id,
+                self.created_at,
+                PUBLIC_MODEL,
+            ):
+                self.sequence_number += 1
+                yield encode_sse_event(event)
+
+            terminal_seen = False
+            for granite_event in self.granite_stream:
+                event_type = granite_event["type"]
+                if event_type == "delta":
+                    text = granite_event["text"]
+                    self.output_parts.append(text)
+                    event = build_text_delta_event(
+                        self.message_id,
+                        text,
+                        self.sequence_number,
+                    )
+                    self.sequence_number += 1
+                    yield encode_sse_event(event)
+                    continue
+
+                terminal_seen = True
+                if event_type == "completed":
+                    try:
+                        response_payload = self._complete(granite_event)
+                    except PublicStreamFinalizationError as error:
+                        yield self._error_frame(
+                            error.message,
+                            error.code,
+                            error.error_type,
+                            "telemetry" if error.code == "request_logging_unavailable" else "internal",
+                        )
+                        return
+                    except Exception as error:
+                        app.logger.error(
+                            "chat.stream_completion_failed request_id=%s error_type=%s",
+                            self.interaction.get("request_id"),
+                            type(error).__name__,
+                        )
+                        yield self._error_frame(
+                            "Internal server error.",
+                            "internal_error",
+                            type(error).__name__,
+                            "internal",
+                        )
+                        return
+
+                    for event in build_text_stream_suffix(
+                        response_payload,
+                        self.message_id,
+                        self.output_text,
+                        self.sequence_number,
+                    ):
+                        if event.get("type") == "response.completed":
+                            self._completion_frame_emitted = True
+                        self.sequence_number += 1
+                        yield encode_sse_event(event)
+                    return
+
+                if event_type == "error":
+                    granite_error_type = granite_event["error"]["type"]
+                    failure_type = (
+                        "timeout"
+                        if granite_error_type == "model_timeout"
+                        else "model_error"
+                    )
+                else:
+                    failure_type = "cancelled"
+                message, code, stage, outcome = stream_failure_details(failure_type)
+                yield self._error_frame(
+                    message,
+                    code,
+                    failure_type,
+                    stage,
+                    outcome,
+                )
+                return
+
+            if not terminal_seen:
+                message, code, stage, outcome = stream_failure_details("bad_response")
+                yield self._error_frame(
+                    message,
+                    code,
+                    "bad_response",
+                    stage,
+                    outcome,
+                )
+        except GraniteStreamError as error:
+            message, code, stage, outcome = stream_failure_details(error.kind)
+            yield self._error_frame(
+                message,
+                code,
+                error.kind,
+                stage,
+                outcome,
+            )
+        except GeneratorExit:
+            self._record_failure(
+                message="Client disconnected.",
+                code="client_disconnected",
+                error_type="client_disconnected",
+                error_stage="client",
+                outcome="failed",
+            )
+            raise
+        except Exception as error:
+            app.logger.error(
+                "chat.stream_failed request_id=%s error_type=%s",
+                self.interaction.get("request_id"),
+                type(error).__name__,
+            )
+            yield self._error_frame(
+                "Internal server error.",
+                "internal_error",
+                type(error).__name__,
+                "internal",
+            )
+        finally:
+            self.close()
+
+    def close(self):
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            if not self._terminal_recorded:
+                self._record_failure(
+                    message="Client disconnected.",
+                    code="client_disconnected",
+                    error_type="client_disconnected",
+                    error_stage="client",
+                    outcome="failed",
+                )
+            else:
+                self._record_delivery()
+        finally:
+            self.granite_stream.close()
+
+
+def public_streaming_response(**stream_arguments):
+    stream_body = PublicResponseStream(**stream_arguments)
+    headers = dict(SSE_RESPONSE_HEADERS)
+    request_id = stream_arguments["interaction"].get("request_id")
+    if request_id:
+        headers["x-request-id"] = request_id
+        headers["X-Rocky-Request-Id"] = request_id
+    if stream_arguments.get("use_web_history"):
+        conversation_id = stream_arguments.get("conversation_id")
+        if isinstance(conversation_id, str) and conversation_id:
+            headers["X-Rocky-Conversation-Id"] = conversation_id
+        headers["X-Rocky-Message-Stored"] = str(
+            bool(stream_arguments.get("user_message_id"))
+        ).lower()
+    return Response(
+        stream_body,
+        status=200,
+        content_type=SSE_CONTENT_TYPE,
+        headers=headers,
+    )
 
 
 if __name__ == "__main__":

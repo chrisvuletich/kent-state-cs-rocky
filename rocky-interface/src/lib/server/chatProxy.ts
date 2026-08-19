@@ -2,7 +2,7 @@ import { env } from '$env/dynamic/private';
 import { error } from '@sveltejs/kit';
 import { deriveHiddenApiKey } from '$lib/server/hiddenApiKey';
 import { APP_ENV } from '$lib/config/env';
-import { requireProductionSecret } from '$lib/server/privateConfig';
+import { privateBoolean, requireProductionSecret } from '$lib/server/privateConfig';
 import { resolveChatApiUrls } from './chatProxyUrl';
 import { internalProxyHeaders } from './backendSecurity';
 
@@ -18,6 +18,11 @@ const HIDDEN_API_KEY_SECRET = requireProductionSecret(
 );
 const configuredChatModel = (env.ROCKY_PUBLIC_MODEL ?? env.OLLAMA_MODEL ?? '').trim();
 export const CHAT_MODEL = configuredChatModel || 'gemma4:latest';
+export const CHAT_STREAMING_ENABLED = privateBoolean(
+	'ROCKY_ENABLE_STREAMING',
+	env.ROCKY_ENABLE_STREAMING,
+	false
+);
 
 export function requireChatUser(locals: App.Locals): NonNullable<App.Locals['currentUser']> {
 	const user = locals.currentUser;

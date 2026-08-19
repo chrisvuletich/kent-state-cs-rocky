@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 CURRENT_DOCUMENT_ID = "rocky:model-runtime"
 SCHEMA_VERSION = 2
 OUTCOMES = {"completed", "rejected", "failed", "timed_out"}
+DELIVERY_STATUSES = {"completed", "client_disconnected"}
 BYTE_FIELDS = ("model_input_bytes", "model_output_bytes")
 INTEGER_FIELDS = (
     "prompt_eval_count",
@@ -284,3 +285,29 @@ class TelemetryStore:
             safe_log(self.logger, "telemetry.terminal_counter_failed", error)
             return True
         return True
+
+    def record_delivery(self, interaction, status, delivered_at=None):
+        """Record post-generation stream delivery without changing counters."""
+        if status not in DELIVERY_STATUSES:
+            raise ValueError(f"Unsupported telemetry delivery status: {status!r}")
+        if not isinstance(interaction, dict) or not interaction.get("persisted"):
+            return False
+        delivered_at = utc(delivered_at or utc_now())
+        try:
+            result = self.interactions.update_one(
+                {
+                    "_id": interaction["request_id"],
+                    "state": "terminal",
+                    "outcome": "completed",
+                },
+                {"$set": {
+                    "delivery": {
+                        "status": status,
+                        "recorded_at": delivered_at,
+                    },
+                }},
+            )
+        except Exception as error:
+            safe_log(self.logger, "telemetry.delivery_write_failed", error)
+            return False
+        return getattr(result, "matched_count", 1) == 1

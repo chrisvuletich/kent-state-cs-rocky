@@ -1,7 +1,5 @@
 <script lang="ts">
 	import '$lib/styles/components/modules/course-card.css';
-	import '$lib/styles/components/modules/view-controls.css';
-	import { createEventDispatcher } from 'svelte';
 
 	export let course: {
 		id: number;
@@ -11,14 +9,9 @@
 		semester: string;
 		color: string;
 	};
+	export let href: string;
 	export let mode: 'card' | 'list' = 'card';
 	export let roleTag = '';
-
-	const dispatch = createEventDispatcher<{ open: { courseId: number } }>();
-
-	function openCourse() {
-		dispatch('open', { courseId: course.id });
-	}
 
 	$: courseHexColor = course.color?.trim() || '#334155';
 	$: courseCodeLabel = course.code?.trim() || '';
@@ -30,12 +23,7 @@
 </script>
 
 {#if mode === 'card'}
-	<button
-		type="button"
-		class="course-card"
-		on:click={openCourse}
-		aria-label={`Open ${course.name}`}
-	>
+	<a {href} class="course-card" aria-label={`Open ${course.name}`}>
 		<div class="card-banner" style={`background-color: ${courseHexColor};`}>
 			{#if roleTag}
 				<p class="course-role-tag course-role-tag-banner">{roleTag}</p>
@@ -50,9 +38,9 @@
 		<div class="card-footer">
 			<span class="go-btn">Go to Course →</span>
 		</div>
-	</button>
+	</a>
 {:else}
-	<button type="button" class="list-row" on:click={openCourse} aria-label={`Open ${course.name}`}>
+	<a {href} class="list-row" aria-label={`Open ${course.name}`}>
 		<div class="list-color-bar" style={`background-color: ${courseHexColor};`}></div>
 		<div class="list-course-icon" style={`background-color: ${courseHexColor};`}>
 			{courseCodeLabel.slice(0, 2)}
@@ -67,5 +55,5 @@
 			{/if}
 		</div>
 		<span class="list-go-btn">Go →</span>
-	</button>
+	</a>
 {/if}

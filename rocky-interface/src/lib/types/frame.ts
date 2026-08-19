@@ -58,10 +58,10 @@ export function toFrameLabel(frame: FrameName): string {
 	return frameLabels[frame];
 }
 
-export function toFrameName(value: string, fallback: FrameName = 'dashboard'): FrameName {
-	if (value in frameLabels) {
-		return value as FrameName;
-	}
+export function isFrameName(value: unknown): value is FrameName {
+	return typeof value === 'string' && value in frameLabels;
+}
 
-	return fallback;
+export function toFrameName(value: string, fallback: FrameName = 'dashboard'): FrameName {
+	return isFrameName(value) ? value : fallback;
 }

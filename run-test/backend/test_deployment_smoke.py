@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import sys
 import unittest
@@ -26,13 +27,24 @@ smoke = load_module()
 
 
 class FakeResponse:
-    def __init__(self, status_code, payload, headers=None):
+    def __init__(self, status_code, payload, headers=None, lines=None):
         self.status_code = status_code
         self._payload = payload
         self.headers = headers or {}
+        self._lines = lines
+        self.closed = False
 
     def json(self):
         return self._payload
+
+    def iter_lines(self, decode_unicode=False):
+        if self._lines is None:
+            raise AssertionError("This fake response was not configured as a stream.")
+        for line in self._lines:
+            yield line if decode_unicode else line.encode("utf-8")
+
+    def close(self):
+        self.closed = True
 
 
 class FakeSession:
@@ -42,7 +54,12 @@ class FakeSession:
 
     def request(self, method, url, **kwargs):
         self.calls.append((method, url, kwargs))
-        return self.routes[(method, url)]
+        response = self.routes[(method, url)]
+        if isinstance(response, list):
+            if not response:
+                raise AssertionError(f"No fake responses remain for {method} {url}.")
+            return response.pop(0)
+        return response
 
 
 def successful_routes(base_url="https://rocky.example"):
@@ -65,7 +82,19 @@ def successful_routes(base_url="https://rocky.example"):
         ),
         ("GET", f"{base_url}/v1/models"): FakeResponse(
             200,
-            {"object": "list", "data": [{"id": "course-model", "object": "model"}]},
+            {
+                "object": "list",
+                "data": [
+                    {
+                        "id": "course-model",
+                        "object": "model",
+                        "metadata": {
+                            "supports_streaming": True,
+                            "supports_image_input": True,
+                        },
+                    }
+                ],
+            },
             {
                 "X-RateLimit-Limit-Requests": "120",
                 "x-ratelimit-remaining-requests": "119",
@@ -90,14 +119,97 @@ def successful_routes(base_url="https://rocky.example"):
     }
 
 
+def sse_lines(events):
+    lines = []
+    for event in events:
+        lines.extend(
+            (
+                f"event: {event['type']}",
+                "data: " + json.dumps(event, separators=(",", ":")),
+                "",
+            )
+        )
+    return lines
+
+
+def successful_stream_response(model="course-model", output_text="Rocky passed."):
+    item = {
+        "id": "msg_smoke",
+        "type": "message",
+        "status": "completed",
+        "role": "assistant",
+        "content": [
+            {"type": "output_text", "text": output_text, "annotations": []}
+        ],
+    }
+    events = [
+        {"type": "response.created", "sequence_number": 0},
+        {"type": "response.in_progress", "sequence_number": 1},
+        {"type": "response.output_item.added", "sequence_number": 2},
+        {"type": "response.content_part.added", "sequence_number": 3},
+        {
+            "type": "response.output_text.delta",
+            "sequence_number": 4,
+            "delta": output_text,
+        },
+        {
+            "type": "response.output_text.done",
+            "sequence_number": 5,
+            "text": output_text,
+        },
+        {
+            "type": "response.content_part.done",
+            "sequence_number": 6,
+            "part": {"type": "output_text", "text": output_text},
+        },
+        {
+            "type": "response.output_item.done",
+            "sequence_number": 7,
+            "item": item,
+        },
+        {
+            "type": "response.completed",
+            "sequence_number": 8,
+            "response": {
+                "status": "completed",
+                "model": model,
+                "output": [item],
+                "usage": {"input_tokens": 2, "output_tokens": 2, "total_tokens": 4},
+            },
+        },
+    ]
+    return FakeResponse(
+        200,
+        {},
+        {
+            "Content-Type": "text/event-stream; charset=utf-8",
+            "x-request-id": "req_stream_smoke",
+            "x-ratelimit-limit-requests": "10",
+            "x-ratelimit-remaining-requests": "9",
+            "x-ratelimit-reset-requests": "42s",
+        },
+        sse_lines(events),
+    )
+
+
 class DeploymentSmokeTests(unittest.TestCase):
-    def config(self, include_generation=False, expected_model="course-model"):
+    def config(
+        self,
+        include_generation=False,
+        include_streaming=False,
+        include_image=False,
+        include_advertised=False,
+        expected_model="course-model",
+    ):
         return smoke.SmokeConfig(
             base_url="https://rocky.example",
             api_key="sk_kent_test_value",
             expected_model=expected_model,
             timeout_seconds=5,
             include_generation=include_generation,
+            include_streaming=include_streaming,
+            include_image=include_image,
+            include_advertised=include_advertised,
         )
 
     def test_non_generating_smoke_checks_public_health_and_models(self):
@@ -153,6 +265,213 @@ class DeploymentSmokeTests(unittest.TestCase):
         self.assertTrue(checks[4].passed)
         self.assertFalse(checks[5].passed)
         self.assertIn("Missing required header", checks[5].detail)
+
+    def test_streaming_generation_is_explicit_and_validates_the_sse_contract(self):
+        routes = successful_routes()
+        stream_response = successful_stream_response()
+        routes[("POST", "https://rocky.example/v1/responses")] = stream_response
+        session = FakeSession(routes)
+
+        checks = smoke.DeploymentSmoke(
+            self.config(include_streaming=True),
+            session=session,
+        ).run()
+
+        self.assertTrue(all(check.passed for check in checks))
+        self.assertEqual(
+            [check.name for check in checks][-2:],
+            ["streaming generation", "streaming generation rate limit"],
+        )
+        stream_call = next(call for call in session.calls if call[0] == "POST")
+        self.assertIs(stream_call[2]["stream"], True)
+        self.assertIs(stream_call[2]["json"]["stream"], True)
+        self.assertIs(stream_call[2]["json"]["store"], False)
+        self.assertEqual(stream_call[2]["headers"]["Accept"], "text/event-stream")
+        self.assertTrue(stream_response.closed)
+
+    def test_stream_validator_accepts_the_public_golden_fixture(self):
+        fixture = ROOT / "run-test" / "fixtures" / "responses_text_stream.sse"
+        events = smoke.parse_stream_events(fixture.read_text(encoding="utf-8").splitlines())
+
+        output_text = smoke.validate_stream_events(events, "rocky-contract-model")
+
+        self.assertEqual(output_text, "Hello Rocky!")
+
+    def test_streaming_generation_rejects_a_sequence_gap(self):
+        routes = successful_routes()
+        stream_response = successful_stream_response()
+        stream_response._lines = [
+            line.replace('"sequence_number":4', '"sequence_number":9')
+            for line in stream_response._lines
+        ]
+        routes[("POST", "https://rocky.example/v1/responses")] = stream_response
+
+        checks = smoke.DeploymentSmoke(
+            self.config(include_streaming=True),
+            session=FakeSession(routes),
+        ).run()
+
+        self.assertFalse(checks[4].passed)
+        self.assertIn("Expected sequence_number 4", checks[4].detail)
+        self.assertTrue(checks[5].passed)
+        self.assertTrue(stream_response.closed)
+
+    def test_streaming_generation_reports_a_terminal_error_event(self):
+        routes = successful_routes()
+        stream_response = FakeResponse(
+            200,
+            {},
+            {
+                "content-type": "text/event-stream",
+                "x-request-id": "req_stream_error",
+                "x-ratelimit-limit-requests": "10",
+                "x-ratelimit-remaining-requests": "9",
+                "x-ratelimit-reset-requests": "42s",
+            },
+            sse_lines(
+                [
+                    {"type": "response.created", "sequence_number": 0},
+                    {
+                        "type": "error",
+                        "sequence_number": 1,
+                        "code": "model_timeout",
+                        "message": "Model request timed out.",
+                    },
+                ]
+            ),
+        )
+        routes[("POST", "https://rocky.example/v1/responses")] = stream_response
+
+        checks = smoke.DeploymentSmoke(
+            self.config(include_streaming=True),
+            session=FakeSession(routes),
+        ).run()
+
+        self.assertFalse(checks[4].passed)
+        self.assertIn("model_timeout", checks[4].detail)
+        self.assertTrue(checks[5].passed)
+
+    def test_streaming_generation_is_not_sent_without_advertised_support(self):
+        routes = successful_routes()
+        model = routes[("GET", "https://rocky.example/v1/models")]._payload["data"][0]
+        model["metadata"]["supports_streaming"] = False
+        session = FakeSession(routes)
+
+        checks = smoke.DeploymentSmoke(
+            self.config(include_streaming=True),
+            session=session,
+        ).run()
+
+        self.assertFalse(checks[4].passed)
+        self.assertIn("supports_streaming=true", checks[4].detail)
+        self.assertFalse(any(method == "POST" for method, _url, _kwargs in session.calls))
+
+    def test_image_generation_uses_the_bounded_public_content_shape(self):
+        session = FakeSession(successful_routes())
+
+        checks = smoke.DeploymentSmoke(
+            self.config(include_image=True),
+            session=session,
+        ).run()
+
+        self.assertTrue(all(check.passed for check in checks))
+        self.assertEqual(
+            [check.name for check in checks][-2:],
+            ["image generation", "image generation rate limit"],
+        )
+        image_call = next(call for call in session.calls if call[0] == "POST")
+        payload = image_call[2]["json"]
+        blocks = payload["input"][0]["content"]
+        self.assertIs(payload["stream"], False)
+        self.assertIs(payload["store"], False)
+        self.assertEqual(blocks[0]["type"], "input_text")
+        self.assertEqual(blocks[1]["type"], "input_image")
+        self.assertEqual(blocks[1]["detail"], "auto")
+        self.assertTrue(blocks[1]["image_url"].startswith("data:image/png;base64,"))
+
+    def test_all_opt_in_generation_checks_can_run_together(self):
+        routes = successful_routes()
+        buffered_response = routes[("POST", "https://rocky.example/v1/responses")]
+        routes[("POST", "https://rocky.example/v1/responses")] = [
+            buffered_response,
+            successful_stream_response(),
+            buffered_response,
+        ]
+        session = FakeSession(routes)
+
+        checks = smoke.DeploymentSmoke(
+            self.config(
+                include_generation=True,
+                include_streaming=True,
+                include_image=True,
+            ),
+            session=session,
+        ).run()
+
+        self.assertTrue(all(check.passed for check in checks))
+        self.assertEqual(len(checks), 10)
+        post_calls = [call for call in session.calls if call[0] == "POST"]
+        self.assertEqual(len(post_calls), 3)
+        self.assertNotIn("stream", post_calls[0][2]["json"])
+        self.assertIs(post_calls[1][2]["json"]["stream"], True)
+        self.assertIs(post_calls[2][2]["json"]["stream"], False)
+
+    def test_advertised_mode_runs_every_supported_inference_path(self):
+        routes = successful_routes()
+        buffered_response = routes[("POST", "https://rocky.example/v1/responses")]
+        routes[("POST", "https://rocky.example/v1/responses")] = [
+            buffered_response,
+            successful_stream_response(),
+            buffered_response,
+        ]
+        session = FakeSession(routes)
+
+        checks = smoke.DeploymentSmoke(
+            self.config(include_advertised=True),
+            session=session,
+        ).run()
+
+        self.assertTrue(all(check.passed for check in checks))
+        self.assertEqual(len([call for call in session.calls if call[0] == "POST"]), 3)
+        self.assertEqual(
+            [check.name for check in checks[4::2]],
+            ["generation", "streaming generation", "image generation"],
+        )
+
+    def test_advertised_mode_does_not_require_an_unadvertised_capability(self):
+        routes = successful_routes()
+        model = routes[("GET", "https://rocky.example/v1/models")]._payload["data"][0]
+        model["metadata"]["supports_image_input"] = False
+        buffered_response = routes[("POST", "https://rocky.example/v1/responses")]
+        routes[("POST", "https://rocky.example/v1/responses")] = [
+            buffered_response,
+            successful_stream_response(),
+        ]
+        session = FakeSession(routes)
+
+        checks = smoke.DeploymentSmoke(
+            self.config(include_advertised=True),
+            session=session,
+        ).run()
+
+        self.assertTrue(all(check.passed for check in checks))
+        self.assertEqual(len([call for call in session.calls if call[0] == "POST"]), 2)
+        self.assertNotIn("image generation", [check.name for check in checks])
+
+    def test_image_generation_is_not_sent_without_advertised_support(self):
+        routes = successful_routes()
+        model = routes[("GET", "https://rocky.example/v1/models")]._payload["data"][0]
+        model["metadata"]["supports_image_input"] = False
+        session = FakeSession(routes)
+
+        checks = smoke.DeploymentSmoke(
+            self.config(include_image=True),
+            session=session,
+        ).run()
+
+        self.assertFalse(checks[4].passed)
+        self.assertIn("supports_image_input=true", checks[4].detail)
+        self.assertFalse(any(method == "POST" for method, _url, _kwargs in session.calls))
 
     def test_generation_is_skipped_when_a_prerequisite_check_fails(self):
         routes = successful_routes()
@@ -269,7 +588,15 @@ class DeploymentSmokeTests(unittest.TestCase):
                 self.assertIn(expected_detail, check.detail)
 
     def test_configuration_uses_environment_without_exposing_key(self):
-        args = smoke.parse_args(["--base-url", "https://rocky.example/v1/responses"])
+        args = smoke.parse_args(
+            [
+                "--base-url",
+                "https://rocky.example/v1/responses",
+                "--include-streaming",
+                "--include-image",
+                "--include-advertised",
+            ]
+        )
         with patch.dict(
             os.environ,
             {"ROCKY_API_KEY": "sk_kent_secret", "ROCKY_EXPECTED_MODEL": "course-model"},
@@ -279,6 +606,9 @@ class DeploymentSmokeTests(unittest.TestCase):
 
         self.assertEqual(config.base_url, "https://rocky.example")
         self.assertEqual(config.api_key, "sk_kent_secret")
+        self.assertTrue(config.include_streaming)
+        self.assertTrue(config.include_image)
+        self.assertTrue(config.include_advertised)
         self.assertNotIn("sk_kent_secret", repr(config))
 
     def test_configuration_rejects_missing_key_and_invalid_url(self):

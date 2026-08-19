@@ -135,7 +135,11 @@
 		</div>
 	</div>
 
-	<div class="hardware-chart" bind:this={container}>
+	<div
+		class="hardware-chart"
+		class:hardware-chart-empty={data.buckets.length === 0 || data.sample_count === 0}
+		bind:this={container}
+	>
 		{#if data.buckets.length === 0 || data.sample_count === 0}
 			<div class="hardware-empty">
 				Hardware history is unavailable for this window. Enable the Granite sampler to begin
@@ -225,11 +229,13 @@
 			</svg>
 		{/if}
 	</div>
-	<div class="hardware-key" aria-label="Chart series">
-		<span class="gpu-key">GPU utilization</span><span class="vram-key">VRAM use</span><span
-			class="speed-key">Generation speed</span
-		><span class="latency-key">P95 latency</span>
-	</div>
+	{#if data.buckets.length > 0 && data.sample_count > 0}
+		<div class="hardware-key" aria-label="Chart series">
+			<span class="gpu-key">GPU utilization</span><span class="vram-key">VRAM use</span><span
+				class="speed-key">Generation speed</span
+			><span class="latency-key">P95 latency</span>
+		</div>
+	{/if}
 	{#if latestBucket}<figcaption>
 			Latest sampled bucket: {latestBucket.workload.requests.toLocaleString()} requests, {latestBucket.workload.input_tokens.toLocaleString()}
 			prompt tokens, {latestBucket.workload.output_tokens.toLocaleString()} output tokens, {metric(
@@ -314,6 +320,9 @@
 		min-height: 360px;
 		margin-top: var(--space-md);
 	}
+	.hardware-chart-empty {
+		min-height: 0;
+	}
 	.hardware-chart svg {
 		display: block;
 		width: 100%;
@@ -321,7 +330,7 @@
 		overflow: visible;
 	}
 	.hardware-empty {
-		min-height: 260px;
+		min-height: 104px;
 		display: grid;
 		place-items: center;
 		padding: var(--space-xl);
@@ -387,16 +396,16 @@
 		background: currentColor;
 	}
 	.gpu-key {
-		color: #b86d00;
+		color: var(--color-text-warning);
 	}
 	.vram-key {
-		color: var(--color-accent);
+		color: var(--color-text-accent);
 	}
 	.speed-key {
-		color: #15803d;
+		color: var(--color-text-success);
 	}
 	.latency-key {
-		color: #7c3aed;
+		color: var(--color-text-purple);
 	}
 	figcaption {
 		margin-top: var(--space-sm);

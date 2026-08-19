@@ -88,7 +88,7 @@
 </script>
 
 <ViewShell title="Audit Logs">
-	<section class="section audit-log-view">
+	<section class="section section-flat audit-log-view">
 		<p class="audit-intro">
 			Review administrative and course activity. Filters can be combined to narrow the results.
 		</p>

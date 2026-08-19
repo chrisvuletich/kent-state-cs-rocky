@@ -1,6 +1,7 @@
 import { error, json, type RequestHandler } from '@sveltejs/kit';
 import { sanitizeUserSettingsPatch } from '$lib/settings/userSettings';
 import { getSettingsForUser, updateSettingsPatchForUser } from '$lib/server/userSettingsStore';
+import { THEME_COOKIE_OPTIONS, themeCookieName } from '$lib/server/themePreferenceCookie';
 
 export const GET: RequestHandler = async ({ locals }) => {
 	if (!locals.currentUser) {
@@ -11,7 +12,7 @@ export const GET: RequestHandler = async ({ locals }) => {
 	return json({ settings });
 };
 
-export const PATCH: RequestHandler = async ({ locals, request }) => {
+export const PATCH: RequestHandler = async ({ cookies, locals, request }) => {
 	if (!locals.currentUser) {
 		throw error(401, 'Not authenticated.');
 	}
@@ -24,5 +25,12 @@ export const PATCH: RequestHandler = async ({ locals, request }) => {
 	}
 
 	const settings = await updateSettingsPatchForUser(locals.currentUser, patch);
+	if (patch.themePreference) {
+		cookies.set(
+			themeCookieName(locals.currentUser.id),
+			settings.themePreference,
+			THEME_COOKIE_OPTIONS
+		);
+	}
 	return json({ ok: true, settings });
 };

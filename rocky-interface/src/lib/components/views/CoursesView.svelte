@@ -21,7 +21,9 @@
 	} from '$lib/api/courses';
 	import { fetchCourseDetails, fetchCourseGroups, fetchCourses } from '$lib/api/content';
 	import { fetchUsersForViews } from '$lib/api/users';
-	import { selectedCourseId } from '$lib/stores/courseStore';
+	import { appHref, parseCourseId } from '$lib/navigation/appRoute';
+	import { focusScope } from '$lib/actions/focusScope';
+	import { handleTabListKeydown } from '$lib/accessibility/tabs';
 	import ViewShell from '$lib/components/ViewShell.svelte';
 	import CourseEditorCard from '$lib/components/cards/CourseEditorCard.svelte';
 	import CourseKeySlotCard from '$lib/components/cards/CourseKeySlotCard.svelte';
@@ -34,6 +36,7 @@
 	import type { Course, CourseApiKeySummary, CourseDetail, CourseGroup } from '$lib/types/course';
 	import type { User } from '$lib/types/user';
 	import type { CourseApiHistoryEntry, CourseApiKeySummaryResponse } from '$lib/api/courses';
+	import '$lib/styles/components/modules/popup.css';
 
 	type CourseTab =
 		| 'home'
@@ -102,11 +105,13 @@
 	let courseApiHistoryLoading = false;
 	let courseApiHistoryError: string | null = null;
 	let loadedCourseApiHistoryForId: number | null = null;
+	let courseApiHistoryRevision = 0;
 	let lastSelectedCourseId: number | null = null;
 	let courseApiKeys: CourseApiKeySummary[] = [];
 	let courseApiKeysLoading = false;
 	let courseApiKeysError: string | null = null;
 	let loadedCourseApiKeysForId: number | null = null;
+	let courseApiKeysRevision = 0;
 	let newPersonalKeyName = '';
 	let newGroupKeyNameByGroupId: Record<string, string> = {};
 	let pendingMemberKeyLimitById: Record<string, number> = {};
@@ -118,7 +123,7 @@
 	let selectedInstructorGroupId = '';
 	let rosterEntries: RosterEntry[] = [];
 	let searchQuery = '';
-	let sortByName = false;
+	let rosterSortDirection: 'ascending' | 'descending' = 'ascending';
 	let showAddEmailPopup = false;
 	let newMemberEmail = '';
 	let addEmailError: string | null = null;
@@ -147,11 +152,10 @@
 			);
 		}) || [];
 
-	$: sortedMembers = sortByName
-		? [...filteredMembers].sort((a, b) =>
-				getMemberDisplayName(a).localeCompare(getMemberDisplayName(b))
-			)
-		: filteredMembers;
+	$: sortedMembers = [...filteredMembers].sort((first, second) => {
+		const comparison = getMemberDisplayName(first).localeCompare(getMemberDisplayName(second));
+		return rosterSortDirection === 'ascending' ? comparison : -comparison;
+	});
 
 	function getMemberIdentifier(member: CourseDetail['members'][number]): string {
 		const emailIdentifier = normalizeIdentifier(member.email);
@@ -420,6 +424,10 @@
 		return group?.name || 'Group';
 	}
 
+	function getCourseTabId(tab: CourseTab): string {
+		return `course-tab-${tab.replace(':', '-')}`;
+	}
+
 	function resolveActiveStudentGroup(tab: CourseTab): CourseGroup | null {
 		if (!isGroupTab(tab)) {
 			return null;
@@ -654,12 +662,7 @@
 		return member.id?.trim() || member.email?.trim() || '';
 	}
 
-	function getCourseInstructorOwnerId(
-		course: Course | null,
-		detail: CourseDetail | null,
-		requesterId: string,
-		requesterEmail: string
-	): string {
+	function getCourseInstructorOwnerId(course: Course | null, detail: CourseDetail | null): string {
 		if (!course) {
 			return '';
 		}
@@ -672,14 +675,7 @@
 		});
 
 		return (
-			[
-				course.instructorId,
-				course.instructorEmail,
-				instructorMember?.id,
-				instructorMember?.email,
-				requesterId,
-				requesterEmail
-			]
+			[course.instructorId, course.instructorEmail, instructorMember?.id, instructorMember?.email]
 				.map((value) => value?.trim() || '')
 				.find((value) => value.length > 0) || ''
 		);
@@ -742,10 +738,6 @@
 				acc[group.courseId] = [...existing, group];
 				return acc;
 			}, {});
-
-			if ($selectedCourseId === null && courses.length > 0) {
-				selectedCourseId.set(courses[0].id);
-			}
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'An error occurred while loading course data.';
 		} finally {
@@ -762,7 +754,12 @@
 	});
 
 	$: visibleCourses = baseVisibleCourses;
-	$: selectedCourse = visibleCourses.find((course) => course.id === $selectedCourseId) ?? null;
+	$: requestedCourseParam = $page.url.searchParams.get('course');
+	$: requestedCourseId = parseCourseId(requestedCourseParam);
+	$: selectedCourse =
+		requestedCourseParam === null
+			? (visibleCourses[0] ?? null)
+			: (visibleCourses.find((course) => course.id === requestedCourseId) ?? null);
 	$: selectedDetail = selectedCourse ? detailsByCourseId[selectedCourse.id] : null;
 	$: selectedGroups = selectedCourse ? groupsByCourseId[selectedCourse.id] || [] : [];
 	$: selectedGroupIds = new Set(selectedGroups.map((group) => group.id));
@@ -917,17 +914,14 @@
 				getGroupOwnedKeys(selectedInstructorGroup.id, groupOwnedKeys)
 			)
 		: [];
-	$: courseInstructorOwnerId = getCourseInstructorOwnerId(
-		selectedCourse,
-		selectedDetail,
-		currentUserId,
-		currentUserEmail
-	);
+	$: courseInstructorOwnerId = getCourseInstructorOwnerId(selectedCourse, selectedDetail);
 	$: courseInstructorKeyLimit = Math.max(0, selectedCourse?.instructorKeyLimit ?? 2);
-	$: courseInstructorKeySlots = buildKeySlots(
-		courseInstructorKeyLimit,
-		getPersonOwnedKeys([courseInstructorOwnerId], courseApiKeys)
-	);
+	$: courseInstructorKeySlots = courseInstructorOwnerId
+		? buildKeySlots(
+				courseInstructorKeyLimit,
+				getPersonOwnedKeys([courseInstructorOwnerId], courseApiKeys)
+			)
+		: [];
 	$: currentUserMember =
 		(selectedDetail?.members || []).find((member) => memberMatchesCurrentUser(member)) || null;
 	$: studentPersonalKeyOwnerId = normalizeIdentifier(currentUserId) || currentUserEmail;
@@ -969,9 +963,6 @@
 		: (['home', ...studentGroupTabs] as CourseTab[]);
 	$: if (!availableTabs.includes(activeTab)) {
 		activeTab = 'home';
-	}
-	$: if (!selectedCourse && visibleCourses.length > 0) {
-		selectedCourseId.set(visibleCourses[0].id);
 	}
 	$: if (selectedCourse) {
 		const matchingUserByName = nonAdminUsers.find(
@@ -1136,33 +1127,44 @@
 	}
 
 	async function loadCourseApiHistory(courseId: number) {
+		const revision = ++courseApiHistoryRevision;
 		courseApiHistoryLoading = true;
 		courseApiHistoryError = null;
 		loadedCourseApiHistoryForId = courseId;
 
 		try {
-			courseApiHistory = await fetchCourseApiHistory(courseId);
+			const history = await fetchCourseApiHistory(courseId);
+			if (revision !== courseApiHistoryRevision || selectedCourse?.id !== courseId) return;
+			courseApiHistory = history;
 		} catch (err) {
+			if (revision !== courseApiHistoryRevision || selectedCourse?.id !== courseId) return;
 			courseApiHistoryError = err instanceof Error ? err.message : 'Unable to load API history.';
 			courseApiHistory = [];
 		} finally {
-			courseApiHistoryLoading = false;
+			if (revision === courseApiHistoryRevision && selectedCourse?.id === courseId) {
+				courseApiHistoryLoading = false;
+			}
 		}
 	}
 
 	async function loadCourseApiKeys(courseId: number) {
+		const revision = ++courseApiKeysRevision;
 		courseApiKeysLoading = true;
 		courseApiKeysError = null;
 		loadedCourseApiKeysForId = courseId;
 
 		try {
 			const rawKeys = await fetchCourseApiKeys(courseId);
+			if (revision !== courseApiKeysRevision || selectedCourse?.id !== courseId) return;
 			courseApiKeys = normalizeApiKeySummaries(rawKeys);
 		} catch (err) {
+			if (revision !== courseApiKeysRevision || selectedCourse?.id !== courseId) return;
 			courseApiKeysError = err instanceof Error ? err.message : 'Unable to load API keys.';
 			courseApiKeys = [];
 		} finally {
-			courseApiKeysLoading = false;
+			if (revision === courseApiKeysRevision && selectedCourse?.id === courseId) {
+				courseApiKeysLoading = false;
+			}
 		}
 	}
 
@@ -1652,16 +1654,22 @@
 	{:else if !selectedCourse}
 		<section class="section">
 			<div class="section-header">
-				<h2>Select a Course</h2>
+				<h2>Course Unavailable</h2>
 			</div>
 			<div class="section-content">
 				<p class="section-text">
-					Choose a course from Dashboard cards or from the Courses tab popout list.
+					The requested course does not exist or is not available to your account.
 				</p>
+				<a class="view-btn" href={appHref($page.url, { frame: 'courses' })}
+					>View available courses</a
+				>
 			</div>
 		</section>
 	{:else}
-		<section class="section course-workspace" class:course-locked={isSelectedCourseClosed}>
+		<section
+			class="section section-flat course-workspace"
+			class:course-locked={isSelectedCourseClosed}
+		>
 			<div class="section-header course-header">
 				<div>
 					<h2>{selectedCourse.name}</h2>
@@ -1674,12 +1682,18 @@
 			</div>
 
 			{#if showCourseTabBar}
-				<div class="course-tab-bar">
+				<div class="course-tab-bar" role="tablist" aria-label="Course workspace">
 					{#each availableTabs as tab}
 						<button
+							id={getCourseTabId(tab)}
 							type="button"
+							role="tab"
+							aria-selected={activeTab === tab}
+							aria-controls="course-tab-panel"
+							tabindex={activeTab === tab ? 0 : -1}
 							class="view-btn"
 							class:course-tab-active={activeTab === tab}
+							onkeydown={handleTabListKeydown}
 							onclick={() => (activeTab = tab)}
 						>
 							{getTabLabel(tab)}
@@ -1688,152 +1702,27 @@
 				</div>
 			{/if}
 
-			{#if activeTab === 'home' && !canEditPeopleAndGroups}
-				<div class="section-content home-panel-stack">
-					{#if courseApiKeysLoading}
-						<p>Loading key slots...</p>
-					{:else if courseApiKeysError}
-						<p><strong>Error:</strong> {courseApiKeysError}</p>
-					{:else if personalKeySlots.length}
-						{#each personalKeySlots as slot (getSlotStateId('person', studentPersonalKeyOwnerId, slot.slotIndex))}
-							{@const slotStateId = getSlotStateId(
-								'person',
-								studentPersonalKeyOwnerId,
-								slot.slotIndex
-							)}
-							<CourseKeySlotCard
-								title={`Personal Key ${slot.slotIndex + 1}`}
-								keyName={getSlotKeyName(slotStateId, slot.baseKeyName)}
-								hasExistingKey={slot.hasExistingKey}
-								maskedPreview={slot.hasExistingKey ? buildMaskedApiKeyPreview(30) : ''}
-								placeholderText="No key exists for this slot yet."
-								slotIdentity={slotStateId}
-								readOnly={isSelectedCourseClosed}
-								generateDisabled={isSelectedCourseClosed}
-								onKeyNameChange={(nextName) => setSlotKeyName(slotStateId, nextName)}
-								onGenerate={() =>
-									generateKeyForSlot(
-										'person',
-										studentPersonalKeyOwnerId,
-										slot.slotIndex,
-										slot.baseKeyName
-									)}
-								removeDisabled={!slot.hasExistingKey || isSelectedCourseClosed}
-								onRemove={() =>
-									removeKeyForSlot(
-										'person',
-										studentPersonalKeyOwnerId,
-										slot.slotIndex,
-										slot.baseKeyName
-									)}
-								showToggleActive={false}
-								isKeyActive={slot.isActive}
-								toggleActiveDisabled={!slot.hasExistingKey || isSelectedCourseClosed}
-								onToggleActive={() =>
-									setSlotActiveState(
-										'person',
-										studentPersonalKeyOwnerId,
-										slot.slotIndex,
-										slot.baseKeyName,
-										!slot.isActive
-									)}
-							/>
-						{/each}
-					{:else}
-						<p class="section-text">No personal keys are configured for this course member.</p>
-					{/if}
-				</div>
-			{:else if activeTab === 'home' && canEditPeopleAndGroups}
-				<div class="section-content home-panel-stack">
-					{#if courseApiKeysLoading}
-						<p>Loading key slots...</p>
-					{:else if courseApiKeysError}
-						<p><strong>Error:</strong> {courseApiKeysError}</p>
-					{:else if courseInstructorKeySlots.length}
-						{#each courseInstructorKeySlots as slot (getSlotStateId('person', courseInstructorOwnerId, slot.slotIndex))}
-							{@const slotStateId = getSlotStateId(
-								'person',
-								courseInstructorOwnerId,
-								slot.slotIndex
-							)}
-							<CourseKeySlotCard
-								title={`Instructor Key ${slot.slotIndex + 1}`}
-								keyName={getSlotKeyName(slotStateId, slot.baseKeyName)}
-								hasExistingKey={slot.hasExistingKey}
-								maskedPreview={slot.hasExistingKey ? buildMaskedApiKeyPreview(30) : ''}
-								placeholderText="No key exists for this slot yet."
-								slotIdentity={slotStateId}
-								readOnly={isSelectedCourseClosed}
-								generateDisabled={isSelectedCourseClosed}
-								onKeyNameChange={(nextName) => setSlotKeyName(slotStateId, nextName)}
-								onGenerate={() =>
-									generateKeyForSlot(
-										'person',
-										courseInstructorOwnerId,
-										slot.slotIndex,
-										slot.baseKeyName
-									)}
-								removeDisabled={!slot.hasExistingKey || isSelectedCourseClosed}
-								onRemove={() =>
-									removeKeyForSlot(
-										'person',
-										courseInstructorOwnerId,
-										slot.slotIndex,
-										slot.baseKeyName
-									)}
-								showToggleActive={true}
-								isKeyActive={slot.isActive}
-								toggleActiveDisabled={!slot.hasExistingKey || isSelectedCourseClosed}
-								onToggleActive={() =>
-									setSlotActiveState(
-										'person',
-										courseInstructorOwnerId,
-										slot.slotIndex,
-										slot.baseKeyName,
-										!slot.isActive
-									)}
-							/>
-						{/each}
-					{:else}
-						<p class="section-text">
-							No instructor key slots are available for this user in this course.
-						</p>
-					{/if}
-				</div>
-			{:else if activeTab === 'students'}
-				<div class="section-content home-panel-stack">
-					{#if instructorVisibleStudents.length === 0}
-						<p class="section-text">No students are enrolled in this course yet.</p>
-					{:else}
-						<div class="course-group-create-row">
-							<select
-								class="text-input"
-								value={selectedInstructorStudentId}
-								onchange={(event) => {
-									const target = event.currentTarget as HTMLSelectElement;
-									selectedInstructorStudentId = target.value;
-								}}
-							>
-								{#each instructorVisibleStudents as member}
-									<option value={getMemberIdentifier(member)}>
-										{getMemberDisplayName(member)}
-									</option>
-								{/each}
-							</select>
-						</div>
+			<div
+				id="course-tab-panel"
+				class="course-tab-panel"
+				role="tabpanel"
+				aria-labelledby={getCourseTabId(activeTab)}
+			>
+				{#if activeTab === 'home' && !canEditPeopleAndGroups}
+					<div class="section-content home-panel-stack">
 						{#if courseApiKeysLoading}
 							<p>Loading key slots...</p>
 						{:else if courseApiKeysError}
 							<p><strong>Error:</strong> {courseApiKeysError}</p>
-						{:else}
-							{#each instructorStudentKeySlots as slot (getSlotStateId('person', selectedInstructorStudentOwnerId, slot.slotIndex))}
+						{:else if personalKeySlots.length}
+							{#each personalKeySlots as slot (getSlotStateId('person', studentPersonalKeyOwnerId, slot.slotIndex))}
 								{@const slotStateId = getSlotStateId(
 									'person',
-									selectedInstructorStudentOwnerId,
+									studentPersonalKeyOwnerId,
 									slot.slotIndex
 								)}
 								<CourseKeySlotCard
-									title={`${selectedInstructorStudent ? getMemberDisplayName(selectedInstructorStudent) : 'Student'} Key ${slot.slotIndex + 1}`}
+									title={`Personal Key ${slot.slotIndex + 1}`}
 									keyName={getSlotKeyName(slotStateId, slot.baseKeyName)}
 									hasExistingKey={slot.hasExistingKey}
 									maskedPreview={slot.hasExistingKey ? buildMaskedApiKeyPreview(30) : ''}
@@ -1845,7 +1734,7 @@
 									onGenerate={() =>
 										generateKeyForSlot(
 											'person',
-											selectedInstructorStudentOwnerId,
+											studentPersonalKeyOwnerId,
 											slot.slotIndex,
 											slot.baseKeyName
 										)}
@@ -1853,7 +1742,62 @@
 									onRemove={() =>
 										removeKeyForSlot(
 											'person',
-											selectedInstructorStudentOwnerId,
+											studentPersonalKeyOwnerId,
+											slot.slotIndex,
+											slot.baseKeyName
+										)}
+									showToggleActive={false}
+									isKeyActive={slot.isActive}
+									toggleActiveDisabled={!slot.hasExistingKey || isSelectedCourseClosed}
+									onToggleActive={() =>
+										setSlotActiveState(
+											'person',
+											studentPersonalKeyOwnerId,
+											slot.slotIndex,
+											slot.baseKeyName,
+											!slot.isActive
+										)}
+								/>
+							{/each}
+						{:else}
+							<p class="section-text">No personal keys are configured for this course member.</p>
+						{/if}
+					</div>
+				{:else if activeTab === 'home' && canEditPeopleAndGroups}
+					<div class="section-content home-panel-stack">
+						{#if courseApiKeysLoading}
+							<p>Loading key slots...</p>
+						{:else if courseApiKeysError}
+							<p><strong>Error:</strong> {courseApiKeysError}</p>
+						{:else if courseInstructorKeySlots.length}
+							{#each courseInstructorKeySlots as slot (getSlotStateId('person', courseInstructorOwnerId, slot.slotIndex))}
+								{@const slotStateId = getSlotStateId(
+									'person',
+									courseInstructorOwnerId,
+									slot.slotIndex
+								)}
+								<CourseKeySlotCard
+									title={`Instructor Key ${slot.slotIndex + 1}`}
+									keyName={getSlotKeyName(slotStateId, slot.baseKeyName)}
+									hasExistingKey={slot.hasExistingKey}
+									maskedPreview={slot.hasExistingKey ? buildMaskedApiKeyPreview(30) : ''}
+									placeholderText="No key exists for this slot yet."
+									slotIdentity={slotStateId}
+									readOnly={isSelectedCourseClosed}
+									generateDisabled={isSelectedCourseClosed}
+									onKeyNameChange={(nextName) => setSlotKeyName(slotStateId, nextName)}
+									onGenerate={() =>
+										generateKeyForSlot(
+											'person',
+											courseInstructorOwnerId,
+											slot.slotIndex,
+											slot.baseKeyName
+										)}
+									removeDisabled={!slot.hasExistingKey || isSelectedCourseClosed}
+									onRemove={() =>
+										removeKeyForSlot(
+											'person',
+											courseInstructorOwnerId,
 											slot.slotIndex,
 											slot.baseKeyName
 										)}
@@ -1863,187 +1807,318 @@
 									onToggleActive={() =>
 										setSlotActiveState(
 											'person',
-											selectedInstructorStudentOwnerId,
+											courseInstructorOwnerId,
 											slot.slotIndex,
 											slot.baseKeyName,
 											!slot.isActive
 										)}
 								/>
 							{/each}
+						{:else}
+							<p class="section-text">
+								No instructor key slots are available for this user in this course.
+							</p>
 						{/if}
-					{/if}
-				</div>
-			{:else if activeTab === 'groups'}
-				<div class="section-content home-panel-stack">
-					{#if selectedGroups.length === 0}
-						<p class="section-text">No groups are available for this course yet.</p>
-					{:else}
-						<div class="course-group-create-row">
-							<select
-								class="text-input"
-								value={selectedInstructorGroupId}
-								onchange={(event) => {
-									const target = event.currentTarget as HTMLSelectElement;
-									selectedInstructorGroupId = target.value;
-								}}
-							>
-								{#each selectedGroups as group}
-									<option value={group.id}>{group.name}</option>
+					</div>
+				{:else if activeTab === 'students'}
+					<div class="section-content home-panel-stack">
+						{#if instructorVisibleStudents.length === 0}
+							<p class="section-text">No students are enrolled in this course yet.</p>
+						{:else}
+							<div class="course-group-create-row">
+								<select
+									class="text-input"
+									value={selectedInstructorStudentId}
+									aria-label="Select student"
+									onchange={(event) => {
+										const target = event.currentTarget as HTMLSelectElement;
+										selectedInstructorStudentId = target.value;
+									}}
+								>
+									{#each instructorVisibleStudents as member}
+										<option value={getMemberIdentifier(member)}>
+											{getMemberDisplayName(member)}
+										</option>
+									{/each}
+								</select>
+							</div>
+							{#if courseApiKeysLoading}
+								<p>Loading key slots...</p>
+							{:else if courseApiKeysError}
+								<p><strong>Error:</strong> {courseApiKeysError}</p>
+							{:else}
+								{#each instructorStudentKeySlots as slot (getSlotStateId('person', selectedInstructorStudentOwnerId, slot.slotIndex))}
+									{@const slotStateId = getSlotStateId(
+										'person',
+										selectedInstructorStudentOwnerId,
+										slot.slotIndex
+									)}
+									<CourseKeySlotCard
+										title={`${selectedInstructorStudent ? getMemberDisplayName(selectedInstructorStudent) : 'Student'} Key ${slot.slotIndex + 1}`}
+										keyName={getSlotKeyName(slotStateId, slot.baseKeyName)}
+										hasExistingKey={slot.hasExistingKey}
+										maskedPreview={slot.hasExistingKey ? buildMaskedApiKeyPreview(30) : ''}
+										placeholderText="No key exists for this slot yet."
+										slotIdentity={slotStateId}
+										readOnly={isSelectedCourseClosed}
+										generateDisabled={isSelectedCourseClosed}
+										onKeyNameChange={(nextName) => setSlotKeyName(slotStateId, nextName)}
+										onGenerate={() =>
+											generateKeyForSlot(
+												'person',
+												selectedInstructorStudentOwnerId,
+												slot.slotIndex,
+												slot.baseKeyName
+											)}
+										removeDisabled={!slot.hasExistingKey || isSelectedCourseClosed}
+										onRemove={() =>
+											removeKeyForSlot(
+												'person',
+												selectedInstructorStudentOwnerId,
+												slot.slotIndex,
+												slot.baseKeyName
+											)}
+										showToggleActive={true}
+										isKeyActive={slot.isActive}
+										toggleActiveDisabled={!slot.hasExistingKey || isSelectedCourseClosed}
+										onToggleActive={() =>
+											setSlotActiveState(
+												'person',
+												selectedInstructorStudentOwnerId,
+												slot.slotIndex,
+												slot.baseKeyName,
+												!slot.isActive
+											)}
+									/>
 								{/each}
-							</select>
-						</div>
+							{/if}
+						{/if}
+					</div>
+				{:else if activeTab === 'groups'}
+					<div class="section-content home-panel-stack">
+						{#if selectedGroups.length === 0}
+							<p class="section-text">No groups are available for this course yet.</p>
+						{:else}
+							<div class="course-group-create-row">
+								<select
+									class="text-input"
+									value={selectedInstructorGroupId}
+									aria-label="Select group"
+									onchange={(event) => {
+										const target = event.currentTarget as HTMLSelectElement;
+										selectedInstructorGroupId = target.value;
+									}}
+								>
+									{#each selectedGroups as group}
+										<option value={group.id}>{group.name}</option>
+									{/each}
+								</select>
+							</div>
+							{#if courseApiKeysLoading}
+								<p>Loading key slots...</p>
+							{:else if courseApiKeysError}
+								<p><strong>Error:</strong> {courseApiKeysError}</p>
+							{:else}
+								{#each instructorGroupKeySlots as slot (getSlotStateId('group', selectedInstructorGroupId, slot.slotIndex))}
+									{@const slotStateId = getSlotStateId(
+										'group',
+										selectedInstructorGroupId,
+										slot.slotIndex
+									)}
+									<CourseKeySlotCard
+										title={`${selectedInstructorGroup ? selectedInstructorGroup.name : 'Group'} Key ${slot.slotIndex + 1}`}
+										keyName={getSlotKeyName(slotStateId, slot.baseKeyName)}
+										hasExistingKey={slot.hasExistingKey}
+										maskedPreview={slot.hasExistingKey ? buildMaskedApiKeyPreview(30) : ''}
+										placeholderText="No key exists for this slot yet."
+										slotIdentity={slotStateId}
+										readOnly={isSelectedCourseClosed}
+										generateDisabled={isSelectedCourseClosed}
+										onKeyNameChange={(nextName) => setSlotKeyName(slotStateId, nextName)}
+										onGenerate={() =>
+											generateKeyForSlot(
+												'group',
+												selectedInstructorGroupId,
+												slot.slotIndex,
+												slot.baseKeyName
+											)}
+										removeDisabled={!slot.hasExistingKey || isSelectedCourseClosed}
+										onRemove={() =>
+											removeKeyForSlot(
+												'group',
+												selectedInstructorGroupId,
+												slot.slotIndex,
+												slot.baseKeyName
+											)}
+										showToggleActive={true}
+										isKeyActive={slot.isActive}
+										toggleActiveDisabled={!slot.hasExistingKey || isSelectedCourseClosed}
+										onToggleActive={() =>
+											setSlotActiveState(
+												'group',
+												selectedInstructorGroupId,
+												slot.slotIndex,
+												slot.baseKeyName,
+												!slot.isActive
+											)}
+									/>
+								{/each}
+							{/if}
+						{/if}
+					</div>
+				{:else if isGroupTab(activeTab) && !canEditPeopleAndGroups && activeStudentGroup}
+					<div class="section-content home-panel-stack">
 						{#if courseApiKeysLoading}
 							<p>Loading key slots...</p>
 						{:else if courseApiKeysError}
 							<p><strong>Error:</strong> {courseApiKeysError}</p>
 						{:else}
-							{#each instructorGroupKeySlots as slot (getSlotStateId('group', selectedInstructorGroupId, slot.slotIndex))}
+							{#each activeStudentGroupKeySlots as slot (getSlotStateId('group', activeStudentGroup.id, slot.slotIndex))}
 								{@const slotStateId = getSlotStateId(
 									'group',
-									selectedInstructorGroupId,
+									activeStudentGroup.id,
 									slot.slotIndex
 								)}
 								<CourseKeySlotCard
-									title={`${selectedInstructorGroup ? selectedInstructorGroup.name : 'Group'} Key ${slot.slotIndex + 1}`}
+									title={`${activeStudentGroup.name} Key ${slot.slotIndex + 1}`}
 									keyName={getSlotKeyName(slotStateId, slot.baseKeyName)}
 									hasExistingKey={slot.hasExistingKey}
 									maskedPreview={slot.hasExistingKey ? buildMaskedApiKeyPreview(30) : ''}
 									placeholderText="No key exists for this slot yet."
 									slotIdentity={slotStateId}
-									readOnly={isSelectedCourseClosed}
-									generateDisabled={isSelectedCourseClosed}
-									onKeyNameChange={(nextName) => setSlotKeyName(slotStateId, nextName)}
-									onGenerate={() =>
-										generateKeyForSlot(
-											'group',
-											selectedInstructorGroupId,
-											slot.slotIndex,
-											slot.baseKeyName
-										)}
-									removeDisabled={!slot.hasExistingKey || isSelectedCourseClosed}
-									onRemove={() =>
-										removeKeyForSlot(
-											'group',
-											selectedInstructorGroupId,
-											slot.slotIndex,
-											slot.baseKeyName
-										)}
-									showToggleActive={true}
+									readOnly={true}
+									readOnlyMessage="Group keys are managed by your course instructor or teaching assistant."
+									showToggleActive={false}
 									isKeyActive={slot.isActive}
-									toggleActiveDisabled={!slot.hasExistingKey || isSelectedCourseClosed}
-									onToggleActive={() =>
-										setSlotActiveState(
-											'group',
-											selectedInstructorGroupId,
-											slot.slotIndex,
-											slot.baseKeyName,
-											!slot.isActive
-										)}
 								/>
 							{/each}
 						{/if}
-					{/if}
-				</div>
-			{:else if isGroupTab(activeTab) && !canEditPeopleAndGroups && activeStudentGroup}
-				<div class="section-content home-panel-stack">
-					{#if courseApiKeysLoading}
-						<p>Loading key slots...</p>
-					{:else if courseApiKeysError}
-						<p><strong>Error:</strong> {courseApiKeysError}</p>
-					{:else}
-						{#each activeStudentGroupKeySlots as slot (getSlotStateId('group', activeStudentGroup.id, slot.slotIndex))}
-							{@const slotStateId = getSlotStateId('group', activeStudentGroup.id, slot.slotIndex)}
-							<CourseKeySlotCard
-								title={`${activeStudentGroup.name} Key ${slot.slotIndex + 1}`}
-								keyName={getSlotKeyName(slotStateId, slot.baseKeyName)}
-								hasExistingKey={slot.hasExistingKey}
-								maskedPreview={slot.hasExistingKey ? buildMaskedApiKeyPreview(30) : ''}
-								placeholderText="No key exists for this slot yet."
-								slotIdentity={slotStateId}
-								readOnly={true}
-								readOnlyMessage="Group keys are managed by your course instructor or teaching assistant."
-								showToggleActive={false}
-								isKeyActive={slot.isActive}
-							/>
-						{/each}
-					{/if}
-				</div>
-			{:else if activeTab === 'edit-roster' && canEditPeopleAndGroups}
-				<div class="section-content">
-					<div class="course-people-actions">
-						<input
-							type="text"
-							placeholder="Search users"
-							bind:value={searchQuery}
-							class="view-btn"
-						/>
-						<button type="button" class="view-btn" onclick={openAddEmailPopup}>Add Email</button>
-						<button type="button" class="view-btn" onclick={triggerCsvImportPicker}
-							>Import Canvas CSV</button
-						>
-						<input
-							class="course-hidden-input"
-							type="file"
-							accept=".csv,text/csv"
-							bind:this={importCsvInput}
-							onchange={importPeopleFromCanvasCsv}
-						/>
 					</div>
+				{:else if activeTab === 'edit-roster' && canEditPeopleAndGroups}
+					<div class="section-content">
+						<div class="course-people-actions">
+							<input
+								type="text"
+								placeholder="Search users"
+								bind:value={searchQuery}
+								class="view-btn"
+								aria-label="Search course roster"
+							/>
+							<button type="button" class="view-btn" onclick={openAddEmailPopup}>Add Email</button>
+							<button type="button" class="view-btn" onclick={triggerCsvImportPicker}
+								>Import Canvas CSV</button
+							>
+							<input
+								class="course-hidden-input"
+								type="file"
+								accept=".csv,text/csv"
+								aria-label="Import course roster from Canvas CSV"
+								bind:this={importCsvInput}
+								onchange={importPeopleFromCanvasCsv}
+							/>
+						</div>
 
-					<div class="table-container">
-						<table class="data-table course-people-table">
-							<colgroup>
-								<col />
-								<col />
-								<col />
-								<col />
-								<col class="course-table-actions-col" />
-							</colgroup>
-							<thead>
-								<tr>
-									<th
-										style="cursor: pointer; user-select: none;"
-										onclick={() => (sortByName = !sortByName)}>Name {sortByName ? '▲' : '▼'}</th
-									>
-									<th>Email</th>
-									<th>Role</th>
-									<th>Keys</th>
-									<th class="table-actions-head">Actions</th>
-								</tr>
-							</thead>
-							<tbody>
-								{#if filteredMembers.length}
-									{#each sortedMembers as member}
-										{@const memberIdentifier = getMemberIdentifier(member)}
-										<tr>
-											<td
-												>{member.isInstructor
-													? selectedCourse.instructor || 'Unknown Instructor'
-													: getMemberDisplayName(member)}</td
+						<div class="table-container">
+							<table class="data-table course-people-table">
+								<colgroup>
+									<col />
+									<col />
+									<col />
+									<col />
+									<col class="course-table-actions-col" />
+								</colgroup>
+								<thead>
+									<tr>
+										<th aria-sort={rosterSortDirection}>
+											<button
+												type="button"
+												class="course-table-sort"
+												onclick={() =>
+													(rosterSortDirection =
+														rosterSortDirection === 'ascending' ? 'descending' : 'ascending')}
 											>
-											<td>{member.email}</td>
-											<td>{getRosterRole(member)}</td>
-											<td>
-												{#if member.isInstructor}
-													{#if isCurrentUserAdmin}
+												Name {rosterSortDirection === 'ascending' ? '▲' : '▼'}
+											</button>
+										</th>
+										<th>Email</th>
+										<th>Role</th>
+										<th>Keys</th>
+										<th class="table-actions-head">Actions</th>
+									</tr>
+								</thead>
+								<tbody>
+									{#if filteredMembers.length}
+										{#each sortedMembers as member}
+											{@const memberIdentifier = getMemberIdentifier(member)}
+											<tr>
+												<td
+													>{member.isInstructor
+														? selectedCourse.instructor || 'Unknown Instructor'
+														: getMemberDisplayName(member)}</td
+												>
+												<td>{member.email}</td>
+												<td>{getRosterRole(member)}</td>
+												<td>
+													{#if member.isInstructor}
+														{#if isCurrentUserAdmin}
+															<div class="course-group-add-row">
+																{#if isSelectedCourseClosed}
+																	<div class="text-input course-locked-field">
+																		{pendingInstructorKeyLimit}
+																	</div>
+																{:else}
+																	<input
+																		class="text-input"
+																		type="number"
+																		min="0"
+																		aria-label="Maximum instructor keys"
+																		value={pendingInstructorKeyLimit}
+																		onchange={(event) => {
+																			const target = event.currentTarget as HTMLInputElement;
+																			pendingInstructorKeyLimit = Number.isFinite(
+																				Number(target.value)
+																			)
+																				? Math.max(0, Number(target.value))
+																				: 0;
+																		}}
+																	/>
+																{/if}
+																{#if !isSelectedCourseClosed}
+																	<button
+																		type="button"
+																		class="list-go-btn"
+																		onclick={saveInstructorKeyLimit}>Save</button
+																	>
+																{/if}
+															</div>
+														{:else}
+															<span class="section-text">{getRosterKeyLimit(member)}</span>
+														{/if}
+													{:else if member.isTeacherAssistant}
+														<span class="section-text">{getRosterKeyLimit(member)}</span>
+													{:else if canEditPeopleAndGroups}
 														<div class="course-group-add-row">
 															{#if isSelectedCourseClosed}
 																<div class="text-input course-locked-field">
-																	{pendingInstructorKeyLimit}
+																	{pendingMemberKeyLimitById[memberIdentifier] ?? member.keyLimit}
 																</div>
 															{:else}
 																<input
 																	class="text-input"
 																	type="number"
 																	min="0"
-																	value={pendingInstructorKeyLimit}
+																	max={courseStudentKeyLimit}
+																	aria-label={`Maximum keys for ${getMemberDisplayName(member)}`}
+																	value={pendingMemberKeyLimitById[memberIdentifier] ??
+																		member.keyLimit}
 																	onchange={(event) => {
 																		const target = event.currentTarget as HTMLInputElement;
-																		pendingInstructorKeyLimit = Number.isFinite(
-																			Number(target.value)
-																		)
-																			? Math.max(0, Number(target.value))
-																			: 0;
+																		pendingMemberKeyLimitById = {
+																			...pendingMemberKeyLimitById,
+																			[memberIdentifier]: Number.isFinite(Number(target.value))
+																				? Math.max(0, Number(target.value))
+																				: 0
+																		};
 																	}}
 																/>
 															{/if}
@@ -2051,20 +2126,114 @@
 																<button
 																	type="button"
 																	class="list-go-btn"
-																	onclick={saveInstructorKeyLimit}>Save</button
+																	onclick={() => saveMemberKeyLimit(memberIdentifier)}>Save</button
 																>
 															{/if}
 														</div>
 													{:else}
-														<span class="section-text">{getRosterKeyLimit(member)}</span>
+														<span class="section-text">{member.keyLimit}</span>
 													{/if}
-												{:else if member.isTeacherAssistant}
-													<span class="section-text">{getRosterKeyLimit(member)}</span>
-												{:else if canEditPeopleAndGroups}
+												</td>
+												<td class="table-actions-cell">
+													{#if member.isInstructor}
+														<span class="section-text">Root instructor</span>
+													{:else if member.isTeacherAssistant}
+														<span class="section-text">Teacher assistant</span>
+													{:else if canEditPeopleAndGroups}
+														{#if isSelectedCourseClosed}
+															<span class="section-text">Read-only</span>
+														{:else}
+															<button
+																type="button"
+																class="list-go-btn"
+																onclick={() => removeMember(memberIdentifier)}>Remove</button
+															>
+														{/if}
+													{:else}
+														<span class="section-text">Member</span>
+													{/if}
+												</td>
+											</tr>
+										{/each}
+									{:else}
+										<tr>
+											<td colspan="5">No members in this course yet.</td>
+										</tr>
+									{/if}
+								</tbody>
+							</table>
+						</div>
+					</div>
+				{:else if activeTab === 'edit-groups' && canEditPeopleAndGroups}
+					<div class="section-content">
+						<div class="course-people-actions">
+							<div class="course-group-create-row">
+								{#if isSelectedCourseClosed}
+									<div class="text-input course-locked-field">
+										{newGroupName || 'New group name'}
+									</div>
+								{:else}
+									<input
+										class="text-input"
+										type="text"
+										bind:value={newGroupName}
+										placeholder="New group name"
+										aria-label="New group name"
+									/>
+								{/if}
+								{#if !isSelectedCourseClosed}
+									<button type="button" class="view-btn" onclick={createGroup}>Create Group</button>
+								{/if}
+							</div>
+						</div>
+						<div class="table-container">
+							<table class="data-table group-table">
+								<colgroup>
+									<col class="group-col-name" />
+									<col class="group-col-members" />
+									<col class="group-col-add" />
+									<col class="group-col-add" />
+								</colgroup>
+								<thead>
+									<tr>
+										<th>Group Name</th>
+										<th>Members</th>
+										<th>Keys</th>
+										<th>Add User</th>
+									</tr>
+								</thead>
+								<tbody>
+									{#if selectedGroups.length}
+										{#each selectedGroups as group}
+											<tr>
+												<td>{group.name}</td>
+												<td>
+													{#if group.memberIds.length}
+														<ul class="course-inline-list">
+															{#each group.memberIds as memberId}
+																{@const member = resolveMemberByIdentifier(memberId)}
+																<li>
+																	{member ? getMemberDisplayName(member) : 'Unknown user'}
+																	{#if !isSelectedCourseClosed}
+																		<button
+																			type="button"
+																			class="list-go-btn"
+																			onclick={() => removeGroupMember(group.id, memberId)}
+																			>Remove</button
+																		>
+																	{/if}
+																</li>
+															{/each}
+														</ul>
+													{:else}
+														No members assigned.
+													{/if}
+												</td>
+												<td>
 													<div class="course-group-add-row">
 														{#if isSelectedCourseClosed}
 															<div class="text-input course-locked-field">
-																{pendingMemberKeyLimitById[memberIdentifier] ?? member.keyLimit}
+																{pendingGroupKeyLimitById[group.id] ?? group.keyLimit}
 															</div>
 														{:else}
 															<input
@@ -2072,13 +2241,13 @@
 																type="number"
 																min="0"
 																max={courseStudentKeyLimit}
-																value={pendingMemberKeyLimitById[memberIdentifier] ??
-																	member.keyLimit}
+																aria-label={`Maximum keys for ${group.name}`}
+																value={pendingGroupKeyLimitById[group.id] ?? group.keyLimit}
 																onchange={(event) => {
 																	const target = event.currentTarget as HTMLInputElement;
-																	pendingMemberKeyLimitById = {
-																		...pendingMemberKeyLimitById,
-																		[memberIdentifier]: Number.isFinite(Number(target.value))
+																	pendingGroupKeyLimitById = {
+																		...pendingGroupKeyLimitById,
+																		[group.id]: Number.isFinite(Number(target.value))
 																			? Math.max(0, Number(target.value))
 																			: 0
 																	};
@@ -2089,261 +2258,159 @@
 															<button
 																type="button"
 																class="list-go-btn"
-																onclick={() => saveMemberKeyLimit(memberIdentifier)}>Save</button
+																onclick={() => saveGroupKeyLimit(group.id)}>Save</button
 															>
 														{/if}
 													</div>
-												{:else}
-													<span class="section-text">{member.keyLimit}</span>
-												{/if}
-											</td>
-											<td class="table-actions-cell">
-												{#if member.isInstructor}
-													<span class="section-text">Root instructor</span>
-												{:else if member.isTeacherAssistant}
-													<span class="section-text">Teacher assistant</span>
-												{:else if canEditPeopleAndGroups}
-													{#if isSelectedCourseClosed}
-														<span class="section-text">Read-only</span>
-													{:else}
-														<button
-															type="button"
-															class="list-go-btn"
-															onclick={() => removeMember(memberIdentifier)}>Remove</button
-														>
-													{/if}
-												{:else}
-													<span class="section-text">Member</span>
-												{/if}
-											</td>
+												</td>
+												<td>
+													<div class="course-group-add-row">
+														{#if isSelectedCourseClosed}
+															<div class="text-input course-locked-field">
+																{pendingGroupMemberIdByGroupId[group.id] || 'Select course member'}
+															</div>
+														{:else}
+															<select
+																class="text-input"
+																value={pendingGroupMemberIdByGroupId[group.id] || ''}
+																aria-label={`Add member to ${group.name}`}
+																onchange={(event) => {
+																	const target = event.currentTarget as HTMLSelectElement;
+																	pendingGroupMemberIdByGroupId = {
+																		...pendingGroupMemberIdByGroupId,
+																		[group.id]: target.value
+																	};
+																}}
+															>
+																<option value="">Select course member</option>
+																{#each getAvailableMembersForGroup(group) as member}
+																	<option value={getMemberIdentifier(member)}
+																		>{getMemberDisplayName(member)}</option
+																	>
+																{/each}
+															</select>
+														{/if}
+														{#if !isSelectedCourseClosed}
+															<button
+																type="button"
+																class="list-go-btn"
+																onclick={() => addGroupMember(group.id)}>Add</button
+															>
+														{/if}
+													</div>
+												</td>
+											</tr>
+										{/each}
+									{:else}
+										<tr>
+											<td colspan="4">No groups found for this course yet.</td>
 										</tr>
-									{/each}
-								{:else}
-									<tr>
-										<td colspan="5">No members in this course yet.</td>
-									</tr>
-								{/if}
-							</tbody>
-						</table>
-					</div>
-				</div>
-			{:else if activeTab === 'edit-groups' && canEditPeopleAndGroups}
-				<div class="section-content">
-					<div class="course-people-actions">
-						<div class="course-group-create-row">
-							{#if isSelectedCourseClosed}
-								<div class="text-input course-locked-field">{newGroupName || 'New group name'}</div>
-							{:else}
-								<input
-									class="text-input"
-									type="text"
-									bind:value={newGroupName}
-									placeholder="New group name"
-								/>
-							{/if}
-							{#if !isSelectedCourseClosed}
-								<button type="button" class="view-btn" onclick={createGroup}>Create Group</button>
-							{/if}
+									{/if}
+								</tbody>
+							</table>
 						</div>
 					</div>
-					<div class="table-container">
-						<table class="data-table group-table">
-							<colgroup>
-								<col class="group-col-name" />
-								<col class="group-col-members" />
-								<col class="group-col-add" />
-								<col class="group-col-add" />
-							</colgroup>
-							<thead>
-								<tr>
-									<th>Group Name</th>
-									<th>Members</th>
-									<th>Keys</th>
-									<th>Add User</th>
-								</tr>
-							</thead>
-							<tbody>
-								{#if selectedGroups.length}
-									{#each selectedGroups as group}
-										<tr>
-											<td>{group.name}</td>
-											<td>
-												{#if group.memberIds.length}
-													<ul class="course-inline-list">
-														{#each group.memberIds as memberId}
-															{@const member = resolveMemberByIdentifier(memberId)}
-															<li>
-																{member ? getMemberDisplayName(member) : 'Unknown user'}
-																{#if !isSelectedCourseClosed}
-																	<button
-																		type="button"
-																		class="list-go-btn"
-																		onclick={() => removeGroupMember(group.id, memberId)}
-																		>Remove</button
-																	>
-																{/if}
-															</li>
-														{/each}
-													</ul>
-												{:else}
-													No members assigned.
-												{/if}
-											</td>
-											<td>
-												<div class="course-group-add-row">
-													{#if isSelectedCourseClosed}
-														<div class="text-input course-locked-field">
-															{pendingGroupKeyLimitById[group.id] ?? group.keyLimit}
-														</div>
-													{:else}
-														<input
-															class="text-input"
-															type="number"
-															min="0"
-															max={courseStudentKeyLimit}
-															value={pendingGroupKeyLimitById[group.id] ?? group.keyLimit}
-															onchange={(event) => {
-																const target = event.currentTarget as HTMLInputElement;
-																pendingGroupKeyLimitById = {
-																	...pendingGroupKeyLimitById,
-																	[group.id]: Number.isFinite(Number(target.value))
-																		? Math.max(0, Number(target.value))
-																		: 0
-																};
-															}}
-														/>
-													{/if}
-													{#if !isSelectedCourseClosed}
-														<button
-															type="button"
-															class="list-go-btn"
-															onclick={() => saveGroupKeyLimit(group.id)}>Save</button
-														>
-													{/if}
-												</div>
-											</td>
-											<td>
-												<div class="course-group-add-row">
-													{#if isSelectedCourseClosed}
-														<div class="text-input course-locked-field">
-															{pendingGroupMemberIdByGroupId[group.id] || 'Select course member'}
-														</div>
-													{:else}
-														<select
-															class="text-input"
-															value={pendingGroupMemberIdByGroupId[group.id] || ''}
-															onchange={(event) => {
-																const target = event.currentTarget as HTMLSelectElement;
-																pendingGroupMemberIdByGroupId = {
-																	...pendingGroupMemberIdByGroupId,
-																	[group.id]: target.value
-																};
-															}}
-														>
-															<option value="">Select course member</option>
-															{#each getAvailableMembersForGroup(group) as member}
-																<option value={getMemberIdentifier(member)}
-																	>{getMemberDisplayName(member)}</option
-																>
-															{/each}
-														</select>
-													{/if}
-													{#if !isSelectedCourseClosed}
-														<button
-															type="button"
-															class="list-go-btn"
-															onclick={() => addGroupMember(group.id)}>Add</button
-														>
-													{/if}
-												</div>
-											</td>
-										</tr>
-									{/each}
-								{:else}
-									<tr>
-										<td colspan="4">No groups found for this course yet.</td>
-									</tr>
-								{/if}
-							</tbody>
-						</table>
-					</div>
-				</div>
-			{:else if activeTab === 'course-settings' && canEditCourse}
-				<div class="section-content">
-					<CourseEditorCard
-						title="Course Settings"
-						submitLabel="Save Course"
-						idPrefix="course-settings"
-						users={accountUsers}
-						form={editCourseForm}
-						readOnly={isSelectedCourseClosed}
-						useSemesterPicker={true}
-						semesterYearMin={COURSE_EDITOR_SEMESTER_YEAR_MIN}
-						semesterYearMax={COURSE_EDITOR_SEMESTER_YEAR_MAX}
-						on:submit={saveCourseEdits}
-					/>
-					<div class="course-panel">
-						<h3>Course Status</h3>
-						<p class="section-text">Closing a course makes it read-only until reopened.</p>
+				{:else if activeTab === 'course-settings' && canEditCourse}
+					<div class="section-content">
+						<CourseEditorCard
+							title="Course Settings"
+							submitLabel="Save Course"
+							idPrefix="course-settings"
+							users={accountUsers}
+							form={editCourseForm}
+							readOnly={isSelectedCourseClosed}
+							useSemesterPicker={true}
+							semesterYearMin={COURSE_EDITOR_SEMESTER_YEAR_MIN}
+							semesterYearMax={COURSE_EDITOR_SEMESTER_YEAR_MAX}
+							on:submit={saveCourseEdits}
+						/>
+						<div class="course-panel">
+							<h3>Course Status</h3>
+							<p class="section-text">Closing a course makes it read-only until reopened.</p>
+							{#if isCurrentUserAdmin}
+								<button
+									type="button"
+									class="view-btn"
+									onclick={toggleSelectedCourseActiveStatus}
+									disabled={courseStatusActionPending}
+								>
+									{getCourseStatusActionLabel()}
+								</button>
+							{/if}
+						</div>
 						{#if isCurrentUserAdmin}
-							<button
-								type="button"
-								class="view-btn"
-								onclick={toggleSelectedCourseActiveStatus}
-								disabled={courseStatusActionPending}
-							>
-								{getCourseStatusActionLabel()}
-							</button>
+							<div class="course-panel">
+								<h3>Max Student Keys</h3>
+								<p class="section-text">
+									Caps the key allowance for each student and group in this course.
+								</p>
+								<div class="course-group-add-row">
+									{#if isSelectedCourseClosed}
+										<div class="text-input course-locked-field">
+											{pendingInstructorHandoutLimit}
+										</div>
+									{:else}
+										<input
+											class="text-input"
+											type="number"
+											min="0"
+											aria-label="Maximum student and group keys"
+											value={pendingInstructorHandoutLimit}
+											onchange={(event) => {
+												const target = event.currentTarget as HTMLInputElement;
+												pendingInstructorHandoutLimit = Number.isFinite(Number(target.value))
+													? Math.max(0, Number(target.value))
+													: 0;
+											}}
+										/>
+										<button type="button" class="list-go-btn" onclick={saveInstructorHandoutLimit}
+											>Save</button
+										>
+									{/if}
+								</div>
+							</div>
 						{/if}
 					</div>
-					{#if isCurrentUserAdmin}
-						<div class="course-panel">
-							<h3>Max Student Keys</h3>
-							<p class="section-text">
-								Caps the key allowance for each student and group in this course.
-							</p>
-							<div class="course-group-add-row">
-								{#if isSelectedCourseClosed}
-									<div class="text-input course-locked-field">{pendingInstructorHandoutLimit}</div>
-								{:else}
-									<input
-										class="text-input"
-										type="number"
-										min="0"
-										value={pendingInstructorHandoutLimit}
-										onchange={(event) => {
-											const target = event.currentTarget as HTMLInputElement;
-											pendingInstructorHandoutLimit = Number.isFinite(Number(target.value))
-												? Math.max(0, Number(target.value))
-												: 0;
-										}}
-									/>
-									<button type="button" class="list-go-btn" onclick={saveInstructorHandoutLimit}
-										>Save</button
-									>
-								{/if}
-							</div>
-						</div>
-					{/if}
-				</div>
-			{/if}
+				{/if}
+			</div>
 		</section>
 	{/if}
 	{#if showAddEmailPopup}
-		<div class="popup-backdrop">
-			<div class="popup-card">
-				<h3>Add User by Email</h3>
+		<div
+			class="popup-backdrop"
+			role="presentation"
+			onclick={(event) => {
+				if (event.target === event.currentTarget) closeAddEmailPopup();
+			}}
+		>
+			<div
+				class="popup-card"
+				role="dialog"
+				aria-modal="true"
+				aria-labelledby="add-course-member-title"
+				tabindex="-1"
+				use:focusScope={{
+					initialFocus: '#add-course-member-email',
+					onEscape: closeAddEmailPopup
+				}}
+			>
+				<h3 id="add-course-member-title">Add User by Email</h3>
 				<p class="section-text">Enter a user email to add them to this course.</p>
 
 				<input
+					id="add-course-member-email"
 					class="text-input"
 					type="email"
 					bind:value={newMemberEmail}
 					placeholder="student@kent.edu"
+					aria-label="User email"
+					aria-invalid={addEmailError ? 'true' : undefined}
+					aria-describedby={addEmailError ? 'add-course-member-error' : undefined}
+					oninput={() => (addEmailError = null)}
 				/>
 
 				{#if addEmailError}
-					<p class="popup-error">{addEmailError}</p>
+					<p id="add-course-member-error" class="popup-error" role="alert">{addEmailError}</p>
 				{/if}
 
 				<div class="popup-actions">

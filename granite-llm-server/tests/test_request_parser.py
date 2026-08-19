@@ -1,8 +1,28 @@
 import unittest
-from app.request_parser import extract_generation_options, extract_reasoning, MAX_OUTPUT_TOKENS
+from app.request_parser import (
+    MAX_OUTPUT_TOKENS,
+    extract_generation_options,
+    extract_reasoning,
+    extract_stream,
+)
 
 # To run tests use below command while in granite-llm-server dir
 # python -m unittest discover -s tests -p "test_*.py" -v
+
+
+class TestStream(unittest.TestCase):
+    def test_stream_defaults_false_and_accepts_booleans(self):
+        self.assertFalse(extract_stream({}))
+        self.assertFalse(extract_stream({"stream": False}))
+        self.assertTrue(extract_stream({"stream": True}))
+
+    def test_stream_rejects_non_booleans(self):
+        for value in (None, 0, 1, "true", [], {}):
+            with self.subTest(value=value), self.assertRaisesRegex(
+                ValueError,
+                "stream",
+            ):
+                extract_stream({"stream": value})
 
 class TestGenerationOptions(unittest.TestCase):
 

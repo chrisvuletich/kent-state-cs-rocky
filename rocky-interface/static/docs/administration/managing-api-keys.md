@@ -1,9 +1,9 @@
 # Managing API Keys
 
-> **For instructors and administrators**  
+> **For administrators**
 > Use this guide to manage course API-key access safely. Estimated reading time: 2–3 minutes.
 
-The API Keys page lets administrators manage keys across Rocky without exposing secret key values.
+The API Keys page lets administrators manage keys across Rocky without exposing secret key values. Instructors manage keys for their own courses from the Courses workspace.
 
 ## 1. Review safe key information
 

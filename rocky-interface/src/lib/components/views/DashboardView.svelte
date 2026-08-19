@@ -1,14 +1,11 @@
 <script lang="ts">
-	import { browser } from '$app/environment';
 	import { page } from '$app/stores';
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import { fetchCourses } from '$lib/api/content';
 	import CourseCard from '$lib/components/cards/CourseCard.svelte';
 	import ViewShell from '$lib/components/ViewShell.svelte';
-	import { currentFrame } from '$lib/stores/frameStore';
-	import { selectedCourseId } from '$lib/stores/courseStore';
 	import { openCourseComposer } from '$lib/stores/courseComposerStore';
-	import { pendingChatConversationId } from '$lib/stores/chatNavigationStore';
+	import { appHref } from '$lib/navigation/appRoute';
 	import type { Course } from '$lib/types/course';
 
 	let viewMode: 'card' | 'list' = 'card';
@@ -19,6 +16,9 @@
 	let recentChats: Array<{ conversation_id: string; title?: string }> = [];
 	let chatsError: string | null = null;
 	let chatsLoading = true;
+	let viewMenuButton: HTMLButtonElement | null = null;
+	let viewMenu: HTMLDivElement | null = null;
+	let viewSwitcher: HTMLDivElement | null = null;
 
 	$: canCreateCourse = Boolean($page.data.currentUser?.isAdmin);
 	$: currentUserDisplayName = $page.data.currentUser?.displayName?.trim() || '';
@@ -49,24 +49,6 @@
 			return 'Teacher Assistant';
 		}
 		return '';
-	}
-
-	function scrollToTopOfApp() {
-		if (!browser) {
-			return;
-		}
-
-		window.scrollTo({ top: 0, behavior: 'auto' });
-
-		const appContent = document.querySelector('.app-content');
-		if (appContent instanceof HTMLElement) {
-			appContent.scrollTo({ top: 0, behavior: 'auto' });
-		}
-
-		const viewContent = document.querySelector('.view-content');
-		if (viewContent instanceof HTMLElement) {
-			viewContent.scrollTo({ top: 0, behavior: 'auto' });
-		}
 	}
 
 	async function loadCourses(): Promise<void> {
@@ -104,19 +86,47 @@
 		void loadRecentChats();
 	});
 
-	function setView(mode: 'card' | 'list') {
-		viewMode = mode;
+	async function closeViewMenu(restoreFocus = true) {
 		showViewMenu = false;
+		await tick();
+		if (restoreFocus) viewMenuButton?.focus();
 	}
 
-	function handleOpenCourse(event: CustomEvent<{ courseId: number }>) {
-		selectedCourseId.set(event.detail.courseId);
-		currentFrame.set('courses');
-		requestAnimationFrame(() => {
-			requestAnimationFrame(() => {
-				scrollToTopOfApp();
-			});
-		});
+	async function toggleViewMenu() {
+		if (showViewMenu) {
+			await closeViewMenu();
+			return;
+		}
+		showViewMenu = true;
+		await tick();
+		viewMenu?.querySelector<HTMLElement>('[aria-pressed="true"]')?.focus();
+	}
+
+	function setView(mode: 'card' | 'list') {
+		viewMode = mode;
+		void closeViewMenu();
+	}
+
+	function handleViewMenuKeydown(event: KeyboardEvent) {
+		if (showViewMenu && event.key === 'Escape') {
+			event.preventDefault();
+			void closeViewMenu();
+		}
+	}
+
+	function handleViewMenuFocusOut(event: FocusEvent) {
+		if (
+			showViewMenu &&
+			(!(event.relatedTarget instanceof Node) || !viewSwitcher?.contains(event.relatedTarget))
+		) {
+			showViewMenu = false;
+		}
+	}
+
+	function handleViewMenuPointerDown(event: PointerEvent) {
+		if (showViewMenu && event.target instanceof Node && !viewSwitcher?.contains(event.target)) {
+			void closeViewMenu(false);
+		}
 	}
 
 	function handleCreateCourse() {
@@ -126,23 +136,27 @@
 		openCourseComposer();
 	}
 
-	function openRecentChat(conversationId: string): void {
-		pendingChatConversationId.set(conversationId);
-		currentFrame.set('chat');
-	}
-
 	function chatLabel(chat: { title?: string }): string {
 		return chat.title?.trim() || 'Untitled chat';
 	}
 </script>
+
+<svelte:window onkeydown={handleViewMenuKeydown} onpointerdown={handleViewMenuPointerDown} />
 
 <ViewShell title="Dashboard">
 	<div slot="actions" class="dashboard-actions">
 		{#if canCreateCourse}
 			<button class="view-btn" onclick={handleCreateCourse}>Create Course</button>
 		{/if}
-		<div class="view-switcher">
-			<button class="view-btn" onclick={() => (showViewMenu = !showViewMenu)}>
+		<div bind:this={viewSwitcher} class="view-switcher" onfocusout={handleViewMenuFocusOut}>
+			<button
+				bind:this={viewMenuButton}
+				class="view-btn"
+				type="button"
+				aria-expanded={showViewMenu}
+				aria-controls="dashboard-view-menu"
+				onclick={toggleViewMenu}
+			>
 				View
 				<svg
 					xmlns="http://www.w3.org/2000/svg"
@@ -164,12 +178,20 @@
 					type="button"
 					class="view-menu-backdrop"
 					aria-label="Close view menu"
-					onclick={() => (showViewMenu = false)}
+					onclick={() => closeViewMenu()}
 				></button>
-				<div class="view-menu">
+				<div
+					bind:this={viewMenu}
+					id="dashboard-view-menu"
+					class="view-menu"
+					role="group"
+					aria-label="Dashboard layout"
+				>
 					<button
 						class="view-option"
 						class:active={viewMode === 'card'}
+						type="button"
+						aria-pressed={viewMode === 'card'}
 						onclick={() => setView('card')}
 					>
 						<svg
@@ -193,6 +215,8 @@
 					<button
 						class="view-option"
 						class:active={viewMode === 'list'}
+						type="button"
+						aria-pressed={viewMode === 'list'}
 						onclick={() => setView('list')}
 					>
 						<svg
@@ -221,7 +245,7 @@
 	</div>
 
 	<div class="dashboard-main-grid">
-		<div class="section dashboard-courses">
+		<div class="section section-flat dashboard-courses">
 			{#if isLoading}
 				<div class="empty-state">
 					<p>Loading courses...</p>
@@ -240,9 +264,9 @@
 					{#each courses as course}
 						<CourseCard
 							{course}
+							href={appHref($page.url, { frame: 'courses', courseId: course.id })}
 							mode="card"
 							roleTag={getCourseRoleTag(course)}
-							on:open={handleOpenCourse}
 						/>
 					{/each}
 				</div>
@@ -251,9 +275,9 @@
 					{#each courses as course}
 						<CourseCard
 							{course}
+							href={appHref($page.url, { frame: 'courses', courseId: course.id })}
 							mode="list"
 							roleTag={getCourseRoleTag(course)}
-							on:open={handleOpenCourse}
 						/>
 					{/each}
 				</div>
@@ -262,19 +286,19 @@
 		<aside class="recent-chats-card" aria-label="Recent chats">
 			<div class="recent-chats-heading">
 				<h2>Recent Chats</h2>
-				<button class="recent-chats-all" type="button" onclick={() => currentFrame.set('chat')}
-					>View all</button
-				>
+				<a class="recent-chats-all" href={appHref($page.url, { frame: 'chat' })}>View all</a>
 			</div>
 			{#if chatsLoading}<p class="recent-chats-note">Loading recent chats…</p>
 			{:else if chatsError}<p class="recent-chats-note">{chatsError}</p>
 				<button class="view-btn" type="button" onclick={loadRecentChats}>Try again</button>
 			{:else if recentChats.length === 0}<p class="recent-chats-note">No recent chats yet.</p>
 			{:else}<div class="recent-chats-list">
-					{#each recentChats as chat (chat.conversation_id)}<button
-							type="button"
+					{#each recentChats as chat (chat.conversation_id)}<a
 							class="recent-chat-button"
-							onclick={() => openRecentChat(chat.conversation_id)}>{chatLabel(chat)}</button
+							href={appHref($page.url, {
+								frame: 'chat',
+								conversationId: chat.conversation_id
+							})}>{chatLabel(chat)}</a
 						>{/each}
 				</div>{/if}
 		</aside>

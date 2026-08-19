@@ -1,9 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
+	import { goto } from '$app/navigation';
 	import { createCourse } from '$lib/api/courses';
-	import { currentFrame } from '$lib/stores/frameStore';
-	import { selectedCourseId } from '$lib/stores/courseStore';
 	import { fetchUsersForViews } from '$lib/api/users';
 	import CourseEditorCard from '$lib/components/cards/CourseEditorCard.svelte';
 	import { showErrorFeedback } from '$lib/stores/feedbackStore';
@@ -13,7 +12,10 @@
 		randomCourseEditorColor
 	} from '$lib/config/courseEditor';
 	import { closeCourseComposer, courseComposerState } from '$lib/stores/courseComposerStore';
+	import { buildAppUrl } from '$lib/navigation/appRoute';
+	import { focusScope } from '$lib/actions/focusScope';
 	import type { User } from '$lib/types/user';
+	import '$lib/styles/components/modules/course-composer.css';
 
 	let users: User[] = [];
 	let form = {
@@ -68,9 +70,8 @@
 			instructorName: accountUsers.find((user) => user.id === normalizedInstructorId)?.displayName
 		});
 
-		selectedCourseId.set(created.id);
-		currentFrame.set('courses');
 		closeCourseComposer();
+		await goto(buildAppUrl($page.url, { frame: 'courses', courseId: created.id }));
 	}
 </script>
 
@@ -78,25 +79,24 @@
 	<div
 		class="course-composer-layer"
 		role="presentation"
-		tabindex="-1"
-		onclick={closeCourseComposer}
-		onkeydown={(event) => {
-			if (event.key === 'Escape' || event.key === 'Enter' || event.key === ' ') {
-				closeCourseComposer();
-			}
+		onclick={(event) => {
+			if (event.target === event.currentTarget) closeCourseComposer();
 		}}
 	>
 		<div
 			class="course-composer-popout"
 			role="dialog"
 			aria-modal="true"
-			aria-label="Create Course"
-			tabindex="0"
-			onclick={(event) => event.stopPropagation()}
-			onkeydown={(event) => event.stopPropagation()}
+			aria-labelledby="course-composer-title"
+			tabindex="-1"
+			use:focusScope={{
+				initialFocus: '#global-create-course-name-input',
+				onEscape: closeCourseComposer,
+				returnFocusTo: $courseComposerState.returnFocusTo
+			}}
 		>
 			<div class="course-composer-title-row">
-				<h3>Create Course</h3>
+				<h3 id="course-composer-title">Create Course</h3>
 				<button type="button" class="list-go-btn" onclick={closeCourseComposer}>Close</button>
 			</div>
 			<CourseEditorCard

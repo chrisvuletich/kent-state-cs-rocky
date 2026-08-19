@@ -251,7 +251,7 @@
 
 	.service-name p {
 		margin: 0.2rem 0 0;
-		font-family: monospace;
+		font-family: var(--font-family-monospace);
 		font-size: 0.75rem;
 		color: #7a8493;
 	}
@@ -287,7 +287,7 @@
 	}
 
 	.latency {
-		font-family: monospace;
+		font-family: var(--font-family-monospace);
 		font-size: 0.85rem;
 		color: #5f6b7a;
 		text-align: right;

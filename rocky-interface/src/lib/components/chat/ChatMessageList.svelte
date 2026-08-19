@@ -40,7 +40,7 @@
 			<ChatMessage {message} />
 		{/each}
 
-		{#if sending}
+		{#if sending && messages.at(-1)?.role !== 'assistant'}
 			<div class="chat-generating" role="status">
 				<div class="chat-avatar" aria-hidden="true"><img src="/rocky.svg" alt="" /></div>
 				<div class="chat-thinking-dots" aria-label="Rocky is generating a response">

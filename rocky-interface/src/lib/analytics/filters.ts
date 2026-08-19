@@ -7,6 +7,7 @@ import {
 	type AnalyticsReviewStatus,
 	type AnalyticsWindow
 } from '$lib/types/analytics';
+import { appFrameQueryKeys, buildAppUrl } from '$lib/navigation/appRoute';
 
 export const analyticsOperations = ['models.list', 'responses.create', 'unknown'] as const;
 export const analyticsOutcomes = [
@@ -49,26 +50,6 @@ export const defaultAnalyticsFilters: AnalyticsFilterState = {
 	requestId: ''
 };
 
-const managedKeys = [
-	'range',
-	'dimension',
-	'user',
-	'course',
-	'key',
-	'model',
-	'operation',
-	'outcome',
-	'source',
-	'error_type',
-	'review',
-	'request',
-	'analytics_window',
-	'analytics_dimension',
-	'analytics_request',
-	'analytics_outcome',
-	'analytics_review'
-] as const;
-
 function bounded(value: string | null, maximum = 256): string {
 	return (value || '').trim().slice(0, maximum);
 }
@@ -100,9 +81,8 @@ export function parseAnalyticsFilters(params: URLSearchParams): AnalyticsFilterS
 }
 
 export function analyticsUrl(current: URL, state: AnalyticsFilterState): URL {
-	const url = new URL(current);
-	for (const key of managedKeys) url.searchParams.delete(key);
-	url.searchParams.set('frame', 'analytics');
+	const url = buildAppUrl(current, { frame: 'analytics' });
+	for (const key of appFrameQueryKeys.analytics) url.searchParams.delete(key);
 	if (state.window !== defaultAnalyticsFilters.window) url.searchParams.set('range', state.window);
 	if (state.dimension !== defaultAnalyticsFilters.dimension)
 		url.searchParams.set('dimension', state.dimension);

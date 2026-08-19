@@ -38,6 +38,21 @@ from the active server configuration. It reports the context and output limits
 plus support for streaming, instructions, and `previous_response_id`. Clients
 that only need the standard model fields can ignore this additional object.
 
+## Streaming and image input
+
+Phase 2 implements opt-in OpenAI-style Responses SSE, and Phase 3 implements
+bounded base64 JPEG/PNG/WebP input for JSON and streaming responses. Phase 4
+connects the built-in web chat to this stream without changing the public event
+contract. Phase 5 connects the same chat to the image-input subset with local
+previews and owned-history rendering. Phase 6 adds capability-aware deployment
+smoke checks and student examples for both public extensions. Phase 7 adds a
+unified local release gate and deployed capability/configuration verification.
+Phase 8 adds combined SDK compatibility coverage and one capability-aware final
+deployment command. See
+[`STREAMING_AND_IMAGE_CONTRACT.md`](STREAMING_AND_IMAGE_CONTRACT.md). Both Rocky
+and Granite must enable the corresponding rollout flag. Both features remain
+disabled by default.
+
 ## Request rate limits
 
 Rocky applies separate per-key, fixed-minute request limits to

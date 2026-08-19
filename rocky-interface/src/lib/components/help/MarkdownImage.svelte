@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { tick } from 'svelte';
+	import { focusScope } from '$lib/actions/focusScope';
 
 	interface Props {
 		href?: string;
@@ -11,18 +11,13 @@
 	let expanded = $state(false);
 	let aspectRatio = $state('16 / 9');
 	let previewButton = $state<HTMLButtonElement>();
-	let closeButton = $state<HTMLButtonElement>();
 
-	async function openImage() {
+	function openImage() {
 		expanded = true;
-		await tick();
-		closeButton?.focus();
 	}
 
-	async function closeImage() {
+	function closeImage() {
 		expanded = false;
-		await tick();
-		previewButton?.focus();
 	}
 
 	function rememberImageDimensions(event: Event) {
@@ -34,18 +29,10 @@
 
 	function closeOnBackdrop(event: MouseEvent) {
 		if (event.target === event.currentTarget) {
-			void closeImage();
-		}
-	}
-
-	function handleKeydown(event: KeyboardEvent) {
-		if (expanded && event.key === 'Escape') {
-			void closeImage();
+			closeImage();
 		}
 	}
 </script>
-
-<svelte:window onkeydown={handleKeydown} />
 
 <figure class="markdown-image-figure">
 	<button
@@ -71,13 +58,15 @@
 		class="markdown-image-dialog"
 		aria-modal="true"
 		aria-label={text || title || 'Full-size documentation image'}
+		tabindex="-1"
 		onclick={closeOnBackdrop}
+		use:focusScope={{ onEscape: closeImage, returnFocusTo: previewButton }}
 	>
 		<div class="markdown-image-dialog-content">
 			<button
-				bind:this={closeButton}
 				type="button"
 				class="markdown-image-close"
+				data-autofocus
 				aria-label="Close full-size image"
 				onclick={closeImage}>×</button
 			>

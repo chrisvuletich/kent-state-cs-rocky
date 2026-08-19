@@ -14,6 +14,15 @@ type ServiceDefinition = {
 	url: string;
 };
 
+type CachedHealth = {
+	expiresAt: number;
+	services: ServiceHealth[];
+};
+
+const HEALTH_CACHE_TTL_MS = 5_000;
+let cachedHealth: CachedHealth | null = null;
+let healthCheckInFlight: Promise<ServiceHealth[]> | null = null;
+
 const SERVICES: ServiceDefinition[] = [
 	{
 		name: 'backend',
@@ -33,8 +42,8 @@ const SERVICES: ServiceDefinition[] = [
 	}
 ];
 
-export const GET: RequestHandler = async ({ fetch }) => {
-	const checkedServices: ServiceHealth[] = await Promise.all(
+async function probeServices(fetch: typeof globalThis.fetch): Promise<ServiceHealth[]> {
+	return Promise.all(
 		SERVICES.map(async (service) => {
 			const startedAt = Date.now();
 
@@ -57,6 +66,36 @@ export const GET: RequestHandler = async ({ fetch }) => {
 			}
 		})
 	);
+}
+
+async function getCheckedServices(
+	fetch: typeof globalThis.fetch,
+	forceRefresh: boolean
+): Promise<ServiceHealth[]> {
+	const now = Date.now();
+	if (!forceRefresh && cachedHealth && cachedHealth.expiresAt > now) {
+		return cachedHealth.services;
+	}
+
+	if (!healthCheckInFlight) {
+		healthCheckInFlight = probeServices(fetch).then((services) => {
+			cachedHealth = {
+				expiresAt: Date.now() + HEALTH_CACHE_TTL_MS,
+				services
+			};
+			return services;
+		});
+	}
+
+	try {
+		return await healthCheckInFlight;
+	} finally {
+		healthCheckInFlight = null;
+	}
+}
+
+export const GET: RequestHandler = async ({ fetch, url }) => {
+	const checkedServices = await getCheckedServices(fetch, url.searchParams.get('refresh') === '1');
 
 	const services: ServiceHealth[] = [
 		{
@@ -75,7 +114,8 @@ export const GET: RequestHandler = async ({ fetch }) => {
 			services
 		},
 		{
-			status: allHealthy ? 200 : 503
+			status: allHealthy ? 200 : 503,
+			headers: { 'Cache-Control': 'no-store' }
 		}
 	);
 };

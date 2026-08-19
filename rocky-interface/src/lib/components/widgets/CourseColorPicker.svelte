@@ -1,5 +1,8 @@
 <script lang="ts">
+	import '$lib/styles/components/modules/course-color-picker.css';
+
 	export let value = '#2b5aa6';
+	export let labelledBy: string | undefined;
 
 	const presetColors = [
 		'#c2410c',
@@ -56,7 +59,7 @@
 </script>
 
 <div class="course-color-picker">
-	<div class="color-grid">
+	<div class="color-grid" role="group" aria-label="Course color presets">
 		{#each presetColors as color}
 			<button
 				type="button"
@@ -80,8 +83,17 @@
 			type="text"
 			bind:value={draftColor}
 			placeholder="#2b5aa6"
+			aria-labelledby={labelledBy}
+			aria-label={labelledBy ? undefined : 'Course color hex value'}
+			aria-invalid={!isValidHex(draftColor) ? 'true' : undefined}
+			aria-describedby={!isValidHex(draftColor) ? `${labelledBy}-error` : undefined}
 		/>
 	</div>
+	{#if !isValidHex(draftColor)}
+		<p id={`${labelledBy}-error`} class="field-error" role="alert">
+			Enter a six-digit hex color such as #2b5aa6.
+		</p>
+	{/if}
 
 	<div class="color-picker-actions">
 		<button

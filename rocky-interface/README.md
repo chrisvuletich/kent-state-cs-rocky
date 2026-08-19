@@ -2,6 +2,10 @@
 
 This README is for developers working in the SvelteKit frontend under `rocky-interface`.
 
+After local setup, read [FRONTEND_MAINTENANCE.md](FRONTEND_MAINTENANCE.md) before
+changing navigation, overlays, responsive layout, theme tokens, or shared CSS.
+It is the concise intern handoff and pre-merge checklist.
+
 ## What this project owns
 
 - UI rendering and user interaction.
@@ -82,6 +86,21 @@ npm run preview
   create or alter a valid session without `ROCKY_SESSION_SECRET`.
 - Do not add direct local JSON data reads for protected data.
 
+## Navigation state
+
+Rocky's workspace uses one root page with small URL parameters rather than a
+separate route for every view. Treat the URL as the active navigation state:
+
+- `frame` selects the view;
+- `course`, `conversation`, and `doc` select a record within that view;
+- the `rocky_current_frame` cookie is only a one-hour fallback when `frame` is
+  absent, not a second source of active state.
+
+Build internal workspace links with `src/lib/navigation/appRoute.ts`. This
+keeps stale parameters from leaking between views and gives links consistent
+reload, copy/paste, and browser-history behavior. Administrator-only frames
+are still checked on the server and unauthorized links resolve to Dashboard.
+
 ## Administrator analytics workspace
 
 Administrators have an `Analytics` frame backed by the Flask Phase 2 telemetry
@@ -107,21 +126,50 @@ reflected in the URL using compact parameters such as `range`, `dimension`,
 analytical view. These values contain identifiers and view choices only;
 request content and review notes are never placed in the URL.
 
-## Built-in chat cancellation
+## Built-in chat streaming and cancellation
+
+Set `ROCKY_ENABLE_STREAMING=true` here only after Granite and the Rocky chat API
+have enabled streaming. The SvelteKit proxy then relays SSE without buffering,
+and the chat renders one assistant response incrementally. With the flag false,
+the established buffered JSON path remains active.
 
 While Rocky is generating, the composer displays a Stop control. Stopping
-aborts the browser request, keeps the student's prompt available for editing,
-and ignores a late browser response. This is intentionally client-side only:
-work that already reached Granite or Ollama may still finish and remains part
-of the required institutional audit record.
+aborts the browser stream and refreshes durable conversation history before a
+new request can be sent. Work completed before cancellation and all partial
+prompt/response data remain part of the required institutional audit record.
+
+## Built-in chat image attachments
+
+When Rocky and Granite both advertise image input with matching limits, the
+chat automatically exposes an attachment control. Students can select, paste,
+or drop local JPEG, PNG, and WebP images, preview and remove them, and send text
+plus images or an image-only turn. The browser performs early count, byte, and
+pixel checks for useful feedback; the Rocky and Granite services still perform
+the authoritative validation before inference.
+
+The SvelteKit proxy reconstructs the supported Responses API content blocks
+and never fetches remote image URLs. Attached images are shown in optimistic
+messages and in reopened owned conversation history. They are covered by the
+same institutional logging notice as prompts and responses.
+
+The Help Center includes capability-driven API reference material plus
+standalone Streaming and Image Input examples. These examples explain terminal
+SSE errors, network chunk boundaries, image limits, and the institutional
+logging policy. A backend documentation contract test prevents the former
+text-only/no-streaming guidance from returning unnoticed.
+
+The repository-level `python run-test/test_all.py` release gate includes the
+frontend unit suite, type checks, formatter, production build, and browser
+journeys alongside the backend and Granite suites.
 
 ## Key folders
 
 - `src/lib/components`: reusable UI components.
 - `src/lib/components/views`: frame-level views (dashboard, courses, users, analytics, etc.).
+- `src/lib/actions`: small, reusable DOM behaviors such as modal focus management.
 - `src/lib/api`: frontend API wrappers.
 - `src/routes`: page routes and API proxy routes.
-- `src/lib/stores`: app state stores.
+- `src/lib/stores`: temporary UI state such as open dialogs and sidebar state.
 
 ## Role behavior to preserve
 
@@ -129,3 +177,11 @@ of the required institutional audit record.
 - Non-admin: limited frames and course access based on backend-authorized data.
 
 When changing UI behavior, keep backend-enforced permissions as the final authority.
+
+## Focus-managed surfaces
+
+Use `focusScope` for true modal dialogs and mobile drawers. It moves focus into
+the surface, keeps Tab inside, makes the background inert, closes through the
+provided Escape callback, and restores the opener. Give the surface an
+accessible label and set `aria-modal="true"`. Non-modal disclosures such as the
+Dashboard view menu should keep their simpler local focus and Escape handling.

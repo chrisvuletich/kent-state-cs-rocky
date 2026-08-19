@@ -2,15 +2,14 @@
 	import '$lib/styles/components/modules/sidebar.css';
 	import { page } from '$app/state';
 	import { browser } from '$app/environment';
-	import { goto } from '$app/navigation';
-	import { onDestroy, onMount } from 'svelte';
+	import { onDestroy, onMount, tick } from 'svelte';
 	import { fetchCourses } from '$lib/api/content';
 	import type { Course } from '$lib/types/course';
-	import { currentFrame, frameMap } from '$lib/stores/frameStore';
-	import { selectedCourseId } from '$lib/stores/courseStore';
 	import { openCourseComposer } from '$lib/stores/courseComposerStore';
 	import { framesForRole, toFrameLabel, type FrameName } from '$lib/types/frame';
 	import { sidebarOpen } from '$lib/stores/sidebarStore';
+	import { appHref, parseCourseId } from '$lib/navigation/appRoute';
+	import { focusScope } from '$lib/actions/focusScope';
 
 	const frameIcons: Record<FrameName, string> = {
 		dashboard: '/dashboard-icon.svg',
@@ -25,7 +24,6 @@
 		help: '/help-icon.svg'
 	};
 
-	const frames = Object.keys(frameMap) as FrameName[];
 	const isAdmin = $derived(Boolean(page.data.currentUser?.isAdmin));
 	const currentUserDisplayName = $derived(page.data.currentUser?.displayName?.trim() || '');
 	const currentUserFirstName = $derived(page.data.currentUser?.firstName?.trim() || '');
@@ -50,41 +48,29 @@
 		coursesFrameIndex >= 0 ? primaryFrames.slice(coursesFrameIndex + 1) : []
 	);
 	const canCreateCourse = $derived(isAdmin);
-	let hasMounted = $state(false);
-	let activeFrame = $derived((hasMounted ? $currentFrame : page.data.initialFrame) as FrameName);
-	const SESSION_VALIDATE_TTL_MS = 10_000;
-	let lastSessionValidationAt = 0;
-	let sessionValidationInFlight: Promise<boolean> | null = null;
+	let activeFrame = $derived(page.data.initialFrame as FrameName);
+	let activeCourseId = $derived(parseCourseId(page.url.searchParams.get('course')));
 	let courseMenuOpen = $state(false);
 	let courseMenuLoading = $state(false);
 	let courseMenuError = $state<string | null>(null);
 	let visibleCourses = $state<Course[]>([]);
 	let courseTabGroupElement: HTMLDivElement | null = null;
+	let courseDisclosureButton = $state<HTMLButtonElement | null>(null);
+	let courseMenuElement = $state<HTMLDivElement | null>(null);
 	let isMobile = $state(false);
 	let mobileMediaQuery: MediaQueryList | null = null;
+
+	function focusFirstCourseMenuItem() {
+		const firstVisibleItem = Array.from(
+			courseMenuElement?.querySelectorAll<HTMLElement>('button, a[href]') ?? []
+		).find((item) => item.getClientRects().length > 0);
+		firstVisibleItem?.focus();
+	}
 
 	function handleViewportChange(event: MediaQueryListEvent | MediaQueryList) {
 		isMobile = event.matches;
 		if (!isMobile) {
 			sidebarOpen.set(false);
-		}
-	}
-
-	function scrollToTopOfApp() {
-		if (!browser) {
-			return;
-		}
-
-		window.scrollTo({ top: 0, behavior: 'auto' });
-
-		const appContent = document.querySelector('.app-content');
-		if (appContent instanceof HTMLElement) {
-			appContent.scrollTo({ top: 0, behavior: 'auto' });
-		}
-
-		const viewContent = document.querySelector('.view-content');
-		if (viewContent instanceof HTMLElement) {
-			viewContent.scrollTo({ top: 0, behavior: 'auto' });
 		}
 	}
 
@@ -105,63 +91,6 @@
 		courseMenuOpen = false;
 	}
 
-	async function validateSession(): Promise<boolean> {
-		if (Date.now() - lastSessionValidationAt < SESSION_VALIDATE_TTL_MS) {
-			return true;
-		}
-
-		if (sessionValidationInFlight) {
-			return sessionValidationInFlight;
-		}
-
-		sessionValidationInFlight = (async () => {
-			const response = await fetch('/api/session/validate', { method: 'GET', cache: 'no-store' });
-			if (!response.ok) {
-				return false;
-			}
-
-			lastSessionValidationAt = Date.now();
-			return true;
-		})();
-
-		try {
-			return await sessionValidationInFlight;
-		} finally {
-			sessionValidationInFlight = null;
-		}
-	}
-
-	async function handleFrameChange(frame: FrameName) {
-		if (!allowedFrames.includes(frame)) {
-			return;
-		}
-
-		if ($currentFrame === frame && !(frame === 'help' && page.url.searchParams.has('doc'))) {
-			return;
-		}
-
-		try {
-			const isValid = await validateSession();
-			if (!isValid) {
-				window.location.href = '/login';
-				return;
-			}
-
-			const nextUrl = new URL(page.url);
-			nextUrl.searchParams.set('frame', frame);
-			if (nextUrl.searchParams.has('doc')) {
-				nextUrl.searchParams.delete('doc');
-			}
-			await goto(nextUrl, { noScroll: true, keepFocus: true });
-
-			currentFrame.set(frame);
-			sidebarOpen.set(false);
-		} catch (error) {
-			console.error('Session validation error:', error);
-			window.location.href = '/login';
-		}
-	}
-
 	async function loadCourseMenuData() {
 		courseMenuLoading = true;
 		courseMenuError = null;
@@ -173,11 +102,14 @@
 				error instanceof Error ? error.message : 'Unable to load your courses right now.';
 		} finally {
 			courseMenuLoading = false;
+			await tick();
+			if (courseMenuOpen && !courseMenuElement?.contains(document.activeElement)) {
+				focusFirstCourseMenuItem();
+			}
 		}
 	}
 
 	onMount(() => {
-		hasMounted = true;
 		void loadCourseMenuData();
 		if (browser) {
 			mobileMediaQuery = window.matchMedia('(max-width: 768px)');
@@ -195,23 +127,66 @@
 	});
 
 	async function toggleCourseMenu() {
-		if (!courseMenuOpen) {
-			await loadCourseMenuData();
+		if (courseMenuOpen) {
+			courseMenuOpen = false;
+			return;
 		}
 
-		courseMenuOpen = !courseMenuOpen;
+		courseMenuOpen = true;
+		if (!courseMenuLoading) void loadCourseMenuData();
+		await tick();
+		focusFirstCourseMenuItem();
 	}
 
-	async function openCourse(courseId: number) {
-		selectedCourseId.set(courseId);
-		await handleFrameChange('courses');
+	async function closeCourseMenu(restoreFocus = false) {
+		courseMenuOpen = false;
+		if (restoreFocus) {
+			await tick();
+			courseDisclosureButton?.focus();
+		}
+	}
+
+	function handleSidebarEscape() {
+		if (courseMenuOpen) {
+			void closeCourseMenu(true);
+			return;
+		}
+		sidebarOpen.set(false);
+	}
+
+	function handleSidebarKeydown(event: KeyboardEvent) {
+		if (!isMobile && courseMenuOpen && event.key === 'Escape') {
+			event.preventDefault();
+			void closeCourseMenu(true);
+		}
+	}
+
+	function handleCourseMenuFocusOut(event: FocusEvent) {
+		if (
+			courseMenuOpen &&
+			(!(event.relatedTarget instanceof Node) ||
+				!courseTabGroupElement?.contains(event.relatedTarget))
+		) {
+			courseMenuOpen = false;
+		}
+	}
+
+	function closeCourseNavigation() {
 		courseMenuOpen = false;
 		sidebarOpen.set(false);
-		requestAnimationFrame(() => {
-			requestAnimationFrame(() => {
-				scrollToTopOfApp();
-			});
-		});
+	}
+
+	function closeSidebar() {
+		courseMenuOpen = false;
+		sidebarOpen.set(false);
+	}
+
+	function hrefForFrame(frame: FrameName): string {
+		return appHref(page.url, { frame });
+	}
+
+	function hrefForCourse(courseId: number): string {
+		return appHref(page.url, { frame: 'courses', courseId });
 	}
 
 	function openCreateCourseComposer() {
@@ -219,7 +194,7 @@
 			return;
 		}
 		courseMenuOpen = false;
-		openCourseComposer();
+		openCourseComposer(courseDisclosureButton);
 	}
 
 	function iconForFrame(frame: FrameName): string {
@@ -248,34 +223,67 @@
 </script>
 
 {#if $sidebarOpen}
-	<div class="sidebar-backdrop" onclick={() => sidebarOpen.set(false)} aria-hidden="true"></div>
+	<div
+		class="sidebar-backdrop"
+		data-focus-scope-allow
+		onclick={closeSidebar}
+		aria-hidden="true"
+	></div>
 {/if}
 
 <nav
+	id="rocky-sidebar-navigation"
 	class="sidebar"
 	class:open={$sidebarOpen}
 	inert={isMobile && !$sidebarOpen}
 	aria-hidden={isMobile && !$sidebarOpen ? 'true' : undefined}
+	onkeydown={handleSidebarKeydown}
+	use:focusScope={{
+		active: isMobile && $sidebarOpen,
+		initialFocus: '[aria-current="page"]',
+		onEscape: handleSidebarEscape
+	}}
 >
 	<div class="sidebar-navigation">
 		{#each framesBeforeCourses as frame}
-			<button
+			<a
+				href={hrefForFrame(frame)}
 				class="nav-link"
 				class:active={activeFrame === frame}
-				onclick={() => handleFrameChange(frame)}
+				aria-current={activeFrame === frame ? 'page' : undefined}
+				onclick={closeSidebar}
 			>
 				<img class="nav-link-icon" src={iconForFrame(frame)} alt="" aria-hidden="true" />
 				<span class="nav-link-label">{toFrameLabel(frame)}</span>
-			</button>
+			</a>
 		{/each}
 
-		<div class="course-tab-group" bind:this={courseTabGroupElement}>
-			<button class="nav-link" class:active={activeFrame === 'courses'} onclick={toggleCourseMenu}>
+		<div
+			class="course-tab-group"
+			bind:this={courseTabGroupElement}
+			onfocusout={handleCourseMenuFocusOut}
+		>
+			<button
+				bind:this={courseDisclosureButton}
+				class="nav-link"
+				class:active={activeFrame === 'courses'}
+				type="button"
+				aria-expanded={courseMenuOpen}
+				aria-controls="rocky-course-menu"
+				aria-current={activeFrame === 'courses' && activeCourseId === null ? 'page' : undefined}
+				onclick={toggleCourseMenu}
+			>
 				<img class="nav-link-icon" src={iconForFrame('courses')} alt="" aria-hidden="true" />
 				<span class="nav-link-label">{toFrameLabel('courses')}</span>
 			</button>
 			{#if courseMenuOpen}
-				<div class="course-popout" role="menu" aria-label="Course list">
+				<div
+					bind:this={courseMenuElement}
+					id="rocky-course-menu"
+					class="course-popout"
+					role="group"
+					aria-label="Course list"
+				>
 					<div class="course-popout-header">
 						<span>Courses</span>
 						{#if canCreateCourse}
@@ -295,11 +303,14 @@
 					{:else}
 						<div class="course-popout-list">
 							{#each visibleCourses as course}
-								<button
-									type="button"
+								<a
+									href={hrefForCourse(course.id)}
 									class="course-popout-item"
-									class:active={$selectedCourseId === course.id}
-									onclick={() => openCourse(course.id)}
+									class:active={activeCourseId === course.id}
+									aria-current={activeFrame === 'courses' && activeCourseId === course.id
+										? 'page'
+										: undefined}
+									onclick={closeCourseNavigation}
 								>
 									<span class="course-dot" style={`background-color: ${course.color};`}></span>
 									<span class="course-item-text">
@@ -313,7 +324,7 @@
 											>
 										{/if}
 									</span>
-								</button>
+								</a>
 							{/each}
 						</div>
 					{/if}
@@ -322,37 +333,43 @@
 		</div>
 
 		{#each framesAfterCourses as frame}
-			<button
+			<a
+				href={hrefForFrame(frame)}
 				class="nav-link"
 				class:active={activeFrame === frame}
-				onclick={() => handleFrameChange(frame)}
+				aria-current={activeFrame === frame ? 'page' : undefined}
+				onclick={closeSidebar}
 			>
 				<img class="nav-link-icon" src={iconForFrame(frame)} alt="" aria-hidden="true" />
 				<span class="nav-link-label">{toFrameLabel(frame)}</span>
-			</button>
+			</a>
 			{#if frame === 'chat' && allowedFrames.includes('help')}
-				<button
+				<a
+					href={hrefForFrame('help')}
 					class="nav-link mobile-help-link"
 					class:active={activeFrame === 'help'}
-					onclick={() => handleFrameChange('help')}
+					aria-current={activeFrame === 'help' ? 'page' : undefined}
+					onclick={closeSidebar}
 				>
 					<img class="nav-link-icon" src={iconForFrame('help')} alt="" aria-hidden="true" />
 					<span class="nav-link-label">{toFrameLabel('help')}</span>
-				</button>
+				</a>
 			{/if}
 		{/each}
 	</div>
 
 	{#if allowedFrames.includes('help')}
 		<div class="sidebar-footer desktop-help-footer">
-			<button
+			<a
+				href={hrefForFrame('help')}
 				class="nav-link"
 				class:active={activeFrame === 'help'}
-				onclick={() => handleFrameChange('help')}
+				aria-current={activeFrame === 'help' ? 'page' : undefined}
+				onclick={closeSidebar}
 			>
 				<img class="nav-link-icon" src={iconForFrame('help')} alt="" aria-hidden="true" />
 				<span class="nav-link-label">{toFrameLabel('help')}</span>
-			</button>
+			</a>
 		</div>
 	{/if}
 </nav>

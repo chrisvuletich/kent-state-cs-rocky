@@ -1,6 +1,5 @@
 <script lang="ts">
 	import '$lib/styles/foundation/global.css';
-	import '$lib/styles/layout/layout.css';
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import Topbar from '$lib/components/Topbar.svelte';
 	import FeedbackPopup from '$lib/components/FeedbackPopup.svelte';

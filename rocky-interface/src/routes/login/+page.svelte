@@ -4,7 +4,6 @@
 	import { onMount } from 'svelte';
 	import { ENABLE_MICROSOFT_OAUTH, ENABLE_PREVIEW_AUTH } from '$lib/config/env';
 	import { getMicrosoftAuthClient } from '$lib/auth/microsoftClient';
-	import '$lib/styles/routes/modules/login-view.css';
 
 	let error: string | null = null;
 	let isSigningInWithMicrosoft = false;

@@ -1,3 +1,5 @@
+import base64
+import hashlib
 import json
 import unittest
 from unittest.mock import Mock, patch
@@ -6,6 +8,8 @@ import requests
 
 import app.main as granite_main
 from app.main import app as flask_app
+from app.ollama_client import OllamaCallError
+from app.stream_contract import validate_stream
 
 
 # Run from the granite-llm-server directory:
@@ -26,6 +30,75 @@ def granite_payload(text="Hello"):
         "role": "user",
         "content": [{"type": "input_text", "text": text}],
     }]}
+
+
+TINY_PNG_BASE64 = (
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8A"
+    "AQUBAScY42YAAAAASUVORK5CYII="
+)
+
+
+def granite_image_payload(*, stream=False):
+    image_bytes = base64.b64decode(TINY_PNG_BASE64)
+    payload = {
+        "model": "gemma4:latest",
+        "input": [{
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": "Describe it."},
+                {
+                    "type": "input_image",
+                    "mime_type": "image/png",
+                    "image_base64": TINY_PNG_BASE64,
+                    "detail": "auto",
+                    "byte_length": len(image_bytes),
+                    "width": 1,
+                    "height": 1,
+                    "sha256": hashlib.sha256(image_bytes).hexdigest(),
+                },
+            ],
+        }],
+    }
+    if stream:
+        payload["stream"] = True
+    return payload
+
+
+def decode_ndjson(response):
+    return [
+        json.loads(line)
+        for line in response.get_data(as_text=True).splitlines()
+        if line
+    ]
+
+
+class FakeOllamaStream:
+    def __init__(
+        self,
+        deltas=(),
+        *,
+        thinking_present=False,
+        telemetry=None,
+        failure=None,
+    ):
+        self.deltas = list(deltas)
+        self.thinking_present = thinking_present
+        self.telemetry = telemetry or {
+            "model_input_bytes": 100,
+            "model_output_bytes": 80,
+            "provider": {"actual_model": "gemma4:latest"},
+        }
+        self.failure = failure
+        self.close_calls = 0
+
+    def __iter__(self):
+        for delta in self.deltas:
+            yield delta
+        if self.failure is not None:
+            raise self.failure
+
+    def close(self):
+        self.close_calls += 1
 
 
 class TestGenerateRoute(unittest.TestCase):
@@ -61,13 +134,333 @@ class TestGenerateRoute(unittest.TestCase):
         self.assertEqual(response.get_json()["error"]["type"], "model_busy")
         self.assertEqual(response.headers["Retry-After"], "2")
 
+    def test_streaming_requires_the_rollout_flag(self):
+        payload = granite_payload()
+        payload["stream"] = True
+        with (
+            patch.object(granite_main, "ENABLE_STREAMING", False),
+            patch.object(granite_main, "call_ollama_chat_stream") as call_stream,
+        ):
+            response = self.client.post("/generate", json=payload)
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.get_json()["error"], {
+            "type": "bad_request",
+            "message": "Streaming is not enabled.",
+        })
+        call_stream.assert_not_called()
+
+    def test_image_input_requires_its_rollout_flag(self):
+        with (
+            patch.object(granite_main, "ENABLE_IMAGE_INPUT", False),
+            patch.object(granite_main, "call_ollama_chat") as call_ollama,
+        ):
+            response = self.client.post("/generate", json=granite_image_payload())
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("not enabled", response.get_json()["error"]["message"])
+        call_ollama.assert_not_called()
+
+    def test_image_input_reaches_ollama_for_json_generation(self):
+        result = {
+            "content": "One pixel.",
+            "thinking_present": False,
+            "telemetry": {},
+        }
+        with (
+            patch.object(granite_main, "ENABLE_IMAGE_INPUT", True),
+            patch.object(
+                granite_main,
+                "call_ollama_chat",
+                return_value=result,
+            ) as call_ollama,
+        ):
+            response = self.client.post("/generate", json=granite_image_payload())
+
+        self.assertEqual(response.status_code, 200)
+        call_ollama.assert_called_once_with(
+            "gemma4:latest",
+            [{
+                "role": "user",
+                "content": "Describe it.",
+                "images": [TINY_PNG_BASE64],
+            }],
+            {},
+            None,
+        )
+
+    def test_image_input_reaches_ollama_for_streaming_generation(self):
+        upstream = FakeOllamaStream(["One pixel."])
+        with (
+            patch.object(granite_main, "ENABLE_IMAGE_INPUT", True),
+            patch.object(granite_main, "ENABLE_STREAMING", True),
+            patch.object(
+                granite_main,
+                "call_ollama_chat_stream",
+                return_value=upstream,
+            ) as call_stream,
+        ):
+            response = self.client.post(
+                "/generate",
+                json=granite_image_payload(stream=True),
+                buffered=True,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(decode_ndjson(response)[-1]["type"], "completed")
+        self.assertEqual(
+            call_stream.call_args.args[1][0]["images"],
+            [TINY_PNG_BASE64],
+        )
+
+    def test_generate_rejects_non_boolean_stream_before_inference(self):
+        payload = granite_payload()
+        payload["stream"] = "true"
+        with patch.object(granite_main, "call_ollama_chat_stream") as call_stream:
+            response = self.client.post("/generate", json=payload)
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("stream", response.get_json()["error"]["message"])
+        call_stream.assert_not_called()
+
+    def test_generate_streams_normalized_ndjson_and_holds_capacity_until_done(self):
+        payload = granite_payload()
+        payload.update({
+            "stream": True,
+            "max_output_tokens": 40,
+        })
+        upstream = FakeOllamaStream(["Hello ", "Rocky!"])
+        gate = Mock()
+        gate.acquire.return_value = True
+
+        with (
+            patch.object(granite_main, "ENABLE_STREAMING", True),
+            patch.object(granite_main, "INFERENCE_GATE", gate),
+            patch.object(
+                granite_main,
+                "call_ollama_chat_stream",
+                return_value=upstream,
+            ) as call_stream,
+            patch.object(granite_main, "begin_inference") as begin,
+            patch.object(granite_main, "end_inference") as end,
+        ):
+            response = self.client.post(
+                "/generate",
+                json=payload,
+                buffered=True,
+            )
+
+        events = decode_ndjson(response)
+        validate_stream(events)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["Content-Type"], "application/x-ndjson")
+        self.assertEqual(response.headers["Cache-Control"], "no-cache")
+        self.assertEqual(response.headers["X-Accel-Buffering"], "no")
+        self.assertEqual([event["type"] for event in events], [
+            "started",
+            "delta",
+            "delta",
+            "completed",
+        ])
+        self.assertEqual(events[1]["text"] + events[2]["text"], "Hello Rocky!")
+        self.assertEqual(events[-1]["telemetry"], upstream.telemetry)
+        self.assertEqual(events[-1]["metadata"], {
+            "source": "ollama",
+            "reasoning_requested": False,
+            "reasoning_applied": False,
+        })
+        call_stream.assert_called_once_with(
+            "gemma4:latest",
+            [{"role": "user", "content": "Hello"}],
+            {"num_predict": 40},
+            None,
+        )
+        gate.acquire.assert_called_once()
+        gate.release.assert_called_once()
+        begin.assert_called_once()
+        end.assert_called_once()
+        self.assertEqual(upstream.close_calls, 1)
+
+    def test_generate_stream_turns_midstream_timeout_into_terminal_error(self):
+        payload = granite_payload()
+        payload["stream"] = True
+        private_telemetry = {
+            "model_input_bytes": 10,
+            "model_output_bytes": 20,
+            "provider": {},
+        }
+        upstream = FakeOllamaStream(
+            ["Partial"],
+            failure=OllamaCallError("timeout", private_telemetry),
+        )
+
+        with (
+            patch.object(granite_main, "ENABLE_STREAMING", True),
+            patch.object(
+                granite_main,
+                "call_ollama_chat_stream",
+                return_value=upstream,
+            ),
+        ):
+            response = self.client.post(
+                "/generate",
+                json=payload,
+                buffered=True,
+            )
+
+        events = decode_ndjson(response)
+        validate_stream(events)
+        self.assertEqual([event["type"] for event in events], [
+            "started",
+            "delta",
+            "error",
+        ])
+        self.assertEqual(events[-1]["error"], {
+            "type": "model_timeout",
+            "message": "Model request timed out.",
+        })
+        self.assertNotIn("telemetry", events[-1])
+        self.assertEqual(upstream.close_calls, 1)
+
+    def test_generate_stream_returns_json_for_pre_stream_timeout(self):
+        payload = granite_payload()
+        payload["stream"] = True
+        telemetry = {
+            "model_input_bytes": 10,
+            "model_output_bytes": 0,
+            "provider": {},
+        }
+        gate = Mock()
+        gate.acquire.return_value = True
+
+        with (
+            patch.object(granite_main, "ENABLE_STREAMING", True),
+            patch.object(granite_main, "INFERENCE_GATE", gate),
+            patch.object(
+                granite_main,
+                "call_ollama_chat_stream",
+                side_effect=OllamaCallError("timeout", telemetry),
+            ),
+            patch.object(granite_main, "begin_inference") as begin,
+            patch.object(granite_main, "end_inference") as end,
+        ):
+            response = self.client.post("/generate", json=payload)
+
+        self.assertEqual(response.status_code, 504)
+        self.assertEqual(response.get_json()["error"]["type"], "model_timeout")
+        self.assertEqual(response.get_json()["telemetry"], telemetry)
+        begin.assert_called_once()
+        end.assert_called_once()
+        gate.release.assert_called_once()
+
+    def test_generate_stream_enforces_requested_reasoning_at_termination(self):
+        payload = granite_payload()
+        payload.update({
+            "stream": True,
+            "reasoning": {"effort": "medium", "summary": "detailed"},
+        })
+        upstream = FakeOllamaStream(["Answer"], thinking_present=False)
+
+        with (
+            patch.object(granite_main, "ENABLE_STREAMING", True),
+            patch.object(
+                granite_main,
+                "call_ollama_chat_stream",
+                return_value=upstream,
+            ),
+        ):
+            response = self.client.post(
+                "/generate",
+                json=payload,
+                buffered=True,
+            )
+
+        events = decode_ndjson(response)
+        validate_stream(events)
+        self.assertEqual(events[-1]["type"], "error")
+        self.assertIn("no reasoning output", events[-1]["error"]["message"])
+
+    def test_closing_stream_early_closes_ollama_and_releases_capacity(self):
+        payload = granite_payload()
+        payload["stream"] = True
+        upstream = FakeOllamaStream(["unused"])
+        gate = Mock()
+        gate.acquire.return_value = True
+
+        with (
+            patch.object(granite_main, "ENABLE_STREAMING", True),
+            patch.object(granite_main, "INFERENCE_GATE", gate),
+            patch.object(
+                granite_main,
+                "call_ollama_chat_stream",
+                return_value=upstream,
+            ),
+            patch.object(granite_main, "begin_inference") as begin,
+            patch.object(granite_main, "end_inference") as end,
+        ):
+            response = self.client.post(
+                "/generate",
+                json=payload,
+                buffered=False,
+            )
+            self.assertEqual(upstream.close_calls, 0)
+            gate.release.assert_not_called()
+            end.assert_not_called()
+            response.close()
+
+        begin.assert_called_once()
+        end.assert_called_once()
+        gate.release.assert_called_once()
+        self.assertEqual(upstream.close_calls, 1)
+
+    def test_stream_cleanup_releases_capacity_even_if_upstream_close_fails(self):
+        upstream = Mock()
+        upstream.close.side_effect = RuntimeError("close failed")
+        gate = Mock()
+        body = granite_main.GraniteStreamBody(
+            "gemma4:latest",
+            upstream,
+            None,
+            gate,
+        )
+
+        with (
+            patch.object(granite_main, "end_inference") as end,
+            self.assertRaisesRegex(RuntimeError, "close failed"),
+        ):
+            body.close()
+
+        end.assert_called_once()
+        gate.release.assert_called_once()
+        body.close()
+        upstream.close.assert_called_once()
+        gate.release.assert_called_once()
+
     def test_ready_checks_ollama_and_configured_model(self):
-        with patch.object(granite_main, "check_ollama_readiness", return_value=True) as check:
+        with (
+            patch.object(granite_main, "ENABLE_STREAMING", True),
+            patch.object(granite_main, "ENABLE_IMAGE_INPUT", True),
+            patch.object(granite_main, "check_ollama_readiness", return_value=True) as check,
+        ):
             response = self.client.get("/ready")
 
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.get_json()["dependencies"]["ollama"])
-        check.assert_called_once()
+        self.assertEqual(response.get_json()["capabilities"], {
+            "supports_streaming": True,
+            "supports_image_input": True,
+            "image_limits": {
+                "max_images": granite_main.MAX_IMAGES_PER_REQUEST,
+                "max_image_bytes": granite_main.MAX_IMAGE_BYTES,
+                "max_total_bytes": granite_main.MAX_IMAGE_TOTAL_BYTES,
+                "max_pixels": granite_main.MAX_IMAGE_PIXELS,
+                "max_total_pixels": granite_main.MAX_IMAGE_TOTAL_PIXELS,
+            },
+        })
+        check.assert_called_once_with(
+            response.get_json()["model"],
+            require_vision=True,
+        )
 
     def test_ready_requires_the_configured_internal_token(self):
         with (

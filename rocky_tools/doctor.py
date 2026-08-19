@@ -15,12 +15,22 @@ VALID_APP_ENVS = {"development", "testing", "production"}
 VALID_DB_BACKENDS = {"mongita", "mongodb"}
 DEFAULT_MODEL = "gemma4:latest"
 PLACEHOLDER_PREFIXES = ("replace-with", "change-me", "changeme")
+DEPLOYED_INGRESS_MAX_REQUEST_BYTES = 10 * 1024 * 1024
+BUILT_IN_CHAT_MAX_IMAGE_CHARACTERS = 10 * 1024 * 1024
+MAX_IMAGE_DATA_URL_PREFIX_CHARACTERS = len("data:image/jpeg;base64,")
 PRODUCTION_SECRETS = (
     "ROCKY_HIDDEN_API_KEY_SECRET",
     "ROCKY_SESSION_SECRET",
     "ROCKY_INTERNAL_PROXY_SECRET",
     "ROCKY_GRANITE_TOKEN",
 )
+IMAGE_LIMIT_SETTINGS = {
+    "max_images_per_request": ("ROCKY_MAX_IMAGES_PER_REQUEST", 4),
+    "max_image_bytes": ("ROCKY_MAX_IMAGE_BYTES", 4 * 1024 * 1024),
+    "max_image_total_bytes": ("ROCKY_MAX_IMAGE_TOTAL_BYTES", 6 * 1024 * 1024),
+    "max_image_pixels": ("ROCKY_MAX_IMAGE_PIXELS", 20_000_000),
+    "max_image_total_pixels": ("ROCKY_MAX_IMAGE_TOTAL_PIXELS", 40_000_000),
+}
 
 
 @dataclass(frozen=True)
@@ -56,6 +66,25 @@ def valid_http_url(value: str) -> bool:
     if parsed.query or parsed.fragment:
         return False
     return True
+
+
+def configured_boolean(name: str) -> bool | None:
+    value = env(name, "false").lower()
+    if value == "true":
+        return True
+    if value == "false":
+        return False
+    return None
+
+
+def configured_image_limits() -> dict[str, int] | None:
+    limits: dict[str, int] = {}
+    try:
+        for public_name, (environment_name, default) in IMAGE_LIMIT_SETTINGS.items():
+            limits[public_name] = int(env(environment_name, str(default)))
+    except ValueError:
+        return None
+    return limits
 
 
 def derive_frontend_api_url() -> str:
@@ -209,6 +238,8 @@ class RockyDoctor:
                 "false" if self.app_env == "production" else "true"
             ),
             "ROCKY_ENABLE_MICROSOFT_OAUTH": "false",
+            "ROCKY_ENABLE_STREAMING": "false",
+            "ROCKY_ENABLE_IMAGE_INPUT": "false",
             "ROCKY_HARDWARE_TELEMETRY_ENABLED": "false",
             "ROCKY_TELEMETRY_ENABLED": "true",
         }
@@ -246,9 +277,15 @@ class RockyDoctor:
             "ROCKY_MAX_REQUEST_BYTES": (256 * 1024, 1, None),
             "ROCKY_MAX_OUTPUT_TOKENS": (2048, 1, None),
             "ROCKY_MAX_CONTEXT_CHARS": (60000, 1, None),
+            "ROCKY_MAX_IMAGES_PER_REQUEST": (4, 1, 16),
+            "ROCKY_MAX_IMAGE_BYTES": (4 * 1024 * 1024, 1, None),
+            "ROCKY_MAX_IMAGE_TOTAL_BYTES": (6 * 1024 * 1024, 1, None),
+            "ROCKY_MAX_IMAGE_PIXELS": (20_000_000, 1, None),
+            "ROCKY_MAX_IMAGE_TOTAL_PIXELS": (40_000_000, 1, None),
             "ROCKY_RESPONSES_RATE_LIMIT_PER_MINUTE": (10, 1, None),
             "ROCKY_MODELS_RATE_LIMIT_PER_MINUTE": (120, 1, None),
             "ROCKY_GRANITE_MAX_CONCURRENT": (1, 1, None),
+            "ROCKY_GRANITE_MAX_REQUEST_BYTES": (10 * 1024 * 1024, 1, None),
             "ROCKY_MONGODB_CONNECT_ATTEMPTS": (10, 1, None),
             "ROCKY_HARDWARE_SAMPLE_INTERVAL_SECONDS": (30, 10, None),
             "ROCKY_HARDWARE_METRICS_TIMEOUT_SECONDS": (5, 1, None),
@@ -269,9 +306,83 @@ class RockyDoctor:
                 )
                 errors.append(f"{name} must be {range_text}")
 
+        try:
+            max_image_bytes = int(env("ROCKY_MAX_IMAGE_BYTES", str(4 * 1024 * 1024)))
+            max_image_total_bytes = int(
+                env("ROCKY_MAX_IMAGE_TOTAL_BYTES", str(6 * 1024 * 1024))
+            )
+            max_image_pixels = int(env("ROCKY_MAX_IMAGE_PIXELS", "20000000"))
+            max_image_total_pixels = int(
+                env("ROCKY_MAX_IMAGE_TOTAL_PIXELS", "40000000")
+            )
+        except ValueError:
+            pass
+        else:
+            if max_image_total_bytes < max_image_bytes:
+                errors.append(
+                    "ROCKY_MAX_IMAGE_TOTAL_BYTES must be at least "
+                    "ROCKY_MAX_IMAGE_BYTES"
+                )
+            if max_image_total_pixels < max_image_pixels:
+                errors.append(
+                    "ROCKY_MAX_IMAGE_TOTAL_PIXELS must be at least "
+                    "ROCKY_MAX_IMAGE_PIXELS"
+                )
+            if env("ROCKY_ENABLE_IMAGE_INPUT", "false").lower() == "true":
+                try:
+                    max_images_per_request = int(
+                        env("ROCKY_MAX_IMAGES_PER_REQUEST", "4")
+                    )
+                    max_request_bytes = int(
+                        env("ROCKY_MAX_REQUEST_BYTES", str(256 * 1024))
+                    )
+                    max_context_chars = int(
+                        env("ROCKY_MAX_CONTEXT_CHARS", "60000")
+                    )
+                    granite_max_request_bytes = int(env(
+                        "ROCKY_GRANITE_MAX_REQUEST_BYTES",
+                        str(10 * 1024 * 1024),
+                    ))
+                except ValueError:
+                    pass
+                else:
+                    maximum_encoded_image_characters = (
+                        4 * ((max_image_total_bytes + 2) // 3)
+                        + max_images_per_request * MAX_IMAGE_DATA_URL_PREFIX_CHARACTERS
+                    )
+                    if maximum_encoded_image_characters > BUILT_IN_CHAT_MAX_IMAGE_CHARACTERS:
+                        errors.append(
+                            "ROCKY_MAX_IMAGE_TOTAL_BYTES exceeds the built-in chat proxy's "
+                            "10 MiB encoded-image ceiling"
+                        )
+                    minimum_public_bytes = (
+                        4 * ((max_image_total_bytes + 2) // 3)
+                        + max_context_chars
+                        + 16 * 1024
+                    )
+                    if max_request_bytes < minimum_public_bytes:
+                        errors.append(
+                            "ROCKY_MAX_REQUEST_BYTES is too small for the "
+                            "configured image-input budget"
+                        )
+                    if max_request_bytes > DEPLOYED_INGRESS_MAX_REQUEST_BYTES:
+                        errors.append(
+                            "ROCKY_MAX_REQUEST_BYTES exceeds the deployed Nginx 10 MiB "
+                            "request ceiling"
+                        )
+                    minimum_granite_bytes = (
+                        4 * ((max_image_total_bytes + 2) // 3)
+                        + 128 * 1024
+                    )
+                    if granite_max_request_bytes < minimum_granite_bytes:
+                        errors.append(
+                            "ROCKY_GRANITE_MAX_REQUEST_BYTES is too small for "
+                            "the configured image-input budget"
+                        )
+
         float_settings = {
             "ROCKY_GRANITE_TIMEOUT_SECONDS": (170.0, 0.0, False),
-            "ROCKY_READINESS_TIMEOUT_SECONDS": (2.0, 0.0, False),
+            "ROCKY_READINESS_TIMEOUT_SECONDS": (3.0, 0.0, False),
             "ROCKY_OLLAMA_TIMEOUT_SECONDS": (150.0, 0.0, False),
             "ROCKY_OLLAMA_READY_TIMEOUT_SECONDS": (2.0, 0.0, False),
             "ROCKY_GRANITE_QUEUE_WAIT_SECONDS": (1.0, 0.0, True),
@@ -578,7 +689,8 @@ class RockyDoctor:
         dependency_values = list(dependencies.values()) if isinstance(dependencies, dict) else []
         reported_inference = models.get("inference") if isinstance(models, dict) else None
         reported_granite = models.get("granite") if isinstance(models, dict) else None
-        passed = (
+        feature_errors = self.chat_feature_errors(payload)
+        base_ready = (
             response.status_code == 200
             and payload.get("ok") is True
             and bool(dependency_values)
@@ -586,11 +698,69 @@ class RockyDoctor:
             and reported_inference == self.inference_model
             and reported_granite == self.inference_model
         )
+        passed = base_ready and not feature_errors
         if passed:
-            detail = f"Ready with inference model '{self.inference_model}'."
+            detail = (
+                f"Ready with inference model '{self.inference_model}'; "
+                "streaming and image capabilities match configuration."
+            )
         else:
-            detail = f"HTTP {response.status_code}; dependencies or model mapping are not ready."
+            reasons = []
+            if not base_ready:
+                reasons.append("dependencies or model mapping are not ready")
+            reasons.extend(feature_errors)
+            detail = f"HTTP {response.status_code}; " + "; ".join(reasons) + "."
         return DoctorCheck("PASS" if passed else "FAIL", "chat API readiness", detail)
+
+    def chat_feature_errors(self, payload: dict) -> list[str]:
+        errors: list[str] = []
+        expected_streaming = configured_boolean("ROCKY_ENABLE_STREAMING")
+        expected_image_input = configured_boolean("ROCKY_ENABLE_IMAGE_INPUT")
+        capabilities = payload.get("capabilities")
+        streaming = payload.get("streaming")
+        image_input = payload.get("image_input")
+
+        if expected_streaming is None:
+            errors.append("ROCKY_ENABLE_STREAMING is invalid")
+        if expected_image_input is None:
+            errors.append("ROCKY_ENABLE_IMAGE_INPUT is invalid")
+
+        if not isinstance(capabilities, dict):
+            errors.append("capabilities were not reported")
+        else:
+            expected_features = {
+                "supports_streaming": expected_streaming,
+                "supports_image_input": expected_image_input,
+            }
+            for name, expected in expected_features.items():
+                if expected is not None and capabilities.get(name) is not expected:
+                    errors.append(f"capabilities.{name} does not match configuration")
+
+            expected_limits = configured_image_limits()
+            if expected_limits is None:
+                errors.append("configured image limits are invalid")
+            else:
+                for name, expected in expected_limits.items():
+                    if capabilities.get(name) != expected:
+                        errors.append(f"capabilities.{name} does not match configuration")
+
+        if not isinstance(streaming, dict):
+            errors.append("streaming readiness was not reported")
+        elif expected_streaming is not None:
+            for name in ("rocky_enabled", "granite_enabled"):
+                if streaming.get(name) is not expected_streaming:
+                    errors.append(f"streaming.{name} does not match configuration")
+
+        if not isinstance(image_input, dict):
+            errors.append("image-input readiness was not reported")
+        elif expected_image_input is not None:
+            for name in ("rocky_enabled", "granite_enabled"):
+                if image_input.get(name) is not expected_image_input:
+                    errors.append(f"image_input.{name} does not match configuration")
+            if expected_image_input and image_input.get("limits_match") is not True:
+                errors.append("image_input.limits_match is not true")
+
+        return errors
 
     def check_granite_readiness(self) -> DoctorCheck:
         url = derive_granite_readiness_url()

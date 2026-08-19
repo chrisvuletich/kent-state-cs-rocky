@@ -13,6 +13,7 @@ class GraniteConfigurationTests(unittest.TestCase):
             "ROCKY_APP_ENV": "production",
             "ROCKY_GRANITE_PORT": "5002",
             "ROCKY_GRANITE_QUEUE_WAIT_SECONDS": "0.5",
+            "ROCKY_ENABLE_STREAMING": "true",
             "OLLAMA_BASE_URL": "http://127.0.0.1:11434/",
         }
         with patch.dict(os.environ, values, clear=True):
@@ -31,6 +32,7 @@ class GraniteConfigurationTests(unittest.TestCase):
                 config.env_http_url("OLLAMA_BASE_URL", "http://localhost:11434"),
                 "http://127.0.0.1:11434",
             )
+            self.assertTrue(config.env_bool("ROCKY_ENABLE_STREAMING", False))
 
     def test_invalid_values_fail_with_the_setting_name(self):
         invalid_cases = (
@@ -48,6 +50,12 @@ class GraniteConfigurationTests(unittest.TestCase):
                 config.env_float,
                 (1,),
                 {"minimum": 0},
+            ),
+            (
+                "ROCKY_ENABLE_STREAMING",
+                "yes",
+                config.env_bool,
+                (False,),
             ),
             (
                 "OLLAMA_BASE_URL",

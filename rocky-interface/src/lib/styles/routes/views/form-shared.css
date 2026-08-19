@@ -25,6 +25,16 @@
 	box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 25%, transparent);
 }
 
+.text-input[aria-invalid='true'] {
+	border-color: #b91c1c;
+}
+
+.field-error {
+	margin: var(--space-xs) 0 0;
+	color: #b91c1c;
+	font-size: var(--font-size-sm);
+}
+
 select.text-input option {
 	background-color: var(--color-bg-primary);
 	color: var(--color-text-primary);

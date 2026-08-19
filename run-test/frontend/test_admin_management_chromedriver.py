@@ -16,7 +16,7 @@ class AdminManagementE2ETests(FrontendBrowserTestCase):
         )
         self._wait_for_post_login_navigation()
 
-        self._click_element(By.XPATH, "//nav[contains(@class,'sidebar')]//button[normalize-space()='Users']")
+        self._click_sidebar_destination("Users")
         self._assert_title("User Management")
         self._click_element(By.XPATH, "//button[normalize-space()='Whitelist accounts']")
 
@@ -34,7 +34,7 @@ class AdminManagementE2ETests(FrontendBrowserTestCase):
         )
         self.assertIn("instructor", created_row.text.lower())
 
-        self._click_element(By.XPATH, "//nav[contains(@class,'sidebar')]//button[normalize-space()='Admin Panel']")
+        self._click_sidebar_destination("Admin Panel")
         self.wait.until(
             EC.text_to_be_present_in_element((By.CSS_SELECTOR, ".admin-panel h1"), "Admin Dashboard"),
             message="Expected Admin Dashboard to render.",

@@ -2,11 +2,13 @@
 	import ViewShell from '$lib/components/ViewShell.svelte';
 	import MarkdownDocumentation from '$lib/components/help/MarkdownDocumentation.svelte';
 	import { goto } from '$app/navigation';
-	import { currentFrame } from '$lib/stores/frameStore';
+	import { appHref, buildAppUrl } from '$lib/navigation/appRoute';
 	import {
+		canViewDocumentation,
 		documentation,
 		documentsForCategory,
-		type DocumentationCategory
+		type DocumentationCategory,
+		type DocumentationDocument
 	} from '$lib/documentation/registry';
 	import { page } from '$app/stores';
 	import type { HelpResource } from '$lib/types/help';
@@ -21,7 +23,10 @@
 		IconUsers,
 		IconLayoutDashboard,
 		IconTerminal2,
-		IconMail
+		IconMail,
+		IconAlertCircle,
+		IconBolt,
+		IconPhoto
 	} from '@tabler/icons-svelte';
 
 	const resources: HelpResource[] = [
@@ -60,32 +65,39 @@
 		apikey: IconKey,
 		'best-practices': IconShieldCheck,
 		reference: IconBook2,
+		errors: IconAlertCircle,
 		python: IconBrandPython,
 		javascript: IconBrandJavascript,
 		curl: IconTerminal2,
+		streaming: IconBolt,
+		'image-input': IconPhoto,
 		'email-scam-detector': IconMail,
 		'course-roster': IconBook2,
 		'user-management': IconUsers,
 		'api-key-management': IconKey,
 		'admin-dashboard': IconLayoutDashboard
 	};
+	const documentationIcon = (documentId: string) => icons[documentId] || IconHelpCircle;
 
 	const developerResources = documentsForCategory('developer');
 	const exampleCode = documentsForCategory('examples');
-	const administrationGuides = documentsForCategory('administration');
+	let administrationGuides: DocumentationDocument[] = [];
 
-	$: canViewAdministrationGuides =
-		$page.data.currentUser?.isAdmin || $page.data.currentUser?.role === 'instructor';
+	$: administrationGuides = documentsForCategory('administration').filter((document) =>
+		canViewDocumentation(document, $page.data.currentUser)
+	);
+	$: canViewAdministrationGuides = administrationGuides.length > 0;
 	$: selectedDocumentation = $page.url.searchParams.get('doc')?.trim() || null;
 	$: requestedDocumentation =
 		documentation.find((document) => document.id === selectedDocumentation) ?? null;
 	$: currentDocumentation =
-		requestedDocumentation &&
-		(requestedDocumentation.audience === 'all' || canViewAdministrationGuides)
+		requestedDocumentation && canViewDocumentation(requestedDocumentation, $page.data.currentUser)
 			? requestedDocumentation
 			: null;
 	$: documentationSequence = currentDocumentation
-		? documentsForCategory(currentDocumentation.category)
+		? documentsForCategory(currentDocumentation.category).filter((document) =>
+				canViewDocumentation(document, $page.data.currentUser)
+			)
 		: [];
 	$: currentIndex = currentDocumentation
 		? documentationSequence.findIndex((document) => document.id === currentDocumentation.id)
@@ -96,27 +108,19 @@
 			? documentationSequence[currentIndex + 1]
 			: null;
 
-	async function handleResourceClick(event: MouseEvent, isInternal: boolean) {
-		if (isInternal) {
-			event.preventDefault();
-			const nextUrl = new URL($page.url);
-			nextUrl.searchParams.delete('doc');
-			await goto(nextUrl, { noScroll: true, keepFocus: true });
-			$currentFrame = 'dashboard';
-		}
-	}
-
 	async function openDocumentation(id: string) {
-		const nextUrl = new URL($page.url);
-		nextUrl.searchParams.set('doc', id);
-		await goto(nextUrl, { noScroll: true, keepFocus: true });
+		await goto(buildAppUrl($page.url, { frame: 'help', documentId: id }), {
+			noScroll: true,
+			keepFocus: true
+		});
 		document.querySelector('.app-content')?.scrollTo({ top: 0, behavior: 'smooth' });
 	}
 
 	async function backToDocumentation() {
-		const nextUrl = new URL($page.url);
-		nextUrl.searchParams.delete('doc');
-		await goto(nextUrl, { noScroll: true, keepFocus: true });
+		await goto(buildAppUrl($page.url, { frame: 'help' }), {
+			noScroll: true,
+			keepFocus: true
+		});
 		document.querySelector('.app-content')?.scrollTo({ top: 0, behavior: 'smooth' });
 	}
 
@@ -137,7 +141,7 @@
 
 <ViewShell title={currentDocumentation?.title ?? 'Help Center'}>
 	{#if !currentDocumentation}
-		<section class="section">
+		<section class="section section-flat help-section-first">
 			<div class="section-header"><h2>Other Resources</h2></div>
 			<div class="section-content">
 				<p class="section-text">
@@ -146,8 +150,9 @@
 				<div class="help-resource-grid">
 					{#each resources as resource}
 						<a
-							href={resource.href}
-							on:click={(event) => handleResourceClick(event, resource.isInternalRoute)}
+							href={resource.isInternalRoute
+								? appHref($page.url, { frame: 'dashboard' })
+								: resource.href}
 							class="help-resource-card"
 						>
 							<p class="help-resource-label">{resource.label}</p>
@@ -159,7 +164,7 @@
 			</div>
 		</section>
 
-		<section class="section help-section">
+		<section class="section section-flat help-section">
 			<div class="api-docs">
 				<h2>Developer Resources</h2>
 				<p>Learn how to integrate Rocky into your applications and use the API.</p>
@@ -167,7 +172,7 @@
 					{#each developerResources as document}
 						<button type="button" class="api-card" on:click={() => openDocumentation(document.id)}>
 							<div class="api-card-icon">
-								<svelte:component this={icons[document.id]} size={40} stroke={1.75} />
+								<svelte:component this={documentationIcon(document.id)} size={40} stroke={1.75} />
 							</div>
 							<h3>{document.title}</h3>
 							<p>{document.description}</p>
@@ -200,14 +205,14 @@
 			</div>
 		</section>
 
-		<section class="section help-section">
+		<section class="section section-flat help-section">
 			<div class="section-header"><h2>Example Code</h2></div>
 			<div class="section-content">
 				<div class="api-card-grid">
 					{#each exampleCode as document}
 						<button type="button" class="api-card" on:click={() => openDocumentation(document.id)}>
 							<div class="api-card-icon">
-								<svelte:component this={icons[document.id]} size={40} stroke={1.75} />
+								<svelte:component this={documentationIcon(document.id)} size={40} stroke={1.75} />
 							</div>
 							<h3>{document.title}</h3>
 							<p>{document.description}</p>
@@ -219,7 +224,7 @@
 		</section>
 
 		{#if canViewAdministrationGuides}
-			<section class="section help-section">
+			<section class="section section-flat help-section">
 				<div class="section-header"><h2>Administration Guides</h2></div>
 				<div class="section-content">
 					<div class="api-card-grid">
@@ -230,7 +235,7 @@
 								on:click={() => openDocumentation(document.id)}
 							>
 								<div class="api-card-icon">
-									<svelte:component this={icons[document.id]} size={40} stroke={1.75} />
+									<svelte:component this={documentationIcon(document.id)} size={40} stroke={1.75} />
 								</div>
 								<h3>{document.title}</h3>
 								<p>{document.description}</p>
@@ -242,13 +247,15 @@
 			</section>
 		{/if}
 
-		<section class="section help-section" id="release-notes">
+		<section class="section section-flat help-section" id="release-notes">
 			<div class="section-header"><h2>Release Notes</h2></div>
 			<div class="section-content">
 				<article class="release-note-card">
 					<h3>Current release</h3>
 					<ul>
 						<li>Responses and model-list endpoints for student projects.</li>
+						<li>Incremental streaming for the API and built-in chat.</li>
+						<li>Bounded JPEG, PNG, and WebP input for supported vision models.</li>
 						<li>Course-scoped API key creation and management.</li>
 						<li>Built-in chat, administrative analytics, and audit history.</li>
 					</ul>
@@ -256,7 +263,7 @@
 			</div>
 		</section>
 	{:else}
-		<section class="section">
+		<section class="section section-flat">
 			<div class="documentation-header">
 				<button class="support-btn support-btn-secondary" on:click={backToDocumentation}
 					>← Back to {backLabel(currentDocumentation.category)}</button

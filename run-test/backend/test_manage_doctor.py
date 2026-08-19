@@ -72,6 +72,24 @@ def healthy_routes():
                     "inference": "course-model",
                     "granite": "course-model",
                 },
+                "capabilities": {
+                    "supports_streaming": False,
+                    "supports_image_input": False,
+                    "max_images_per_request": 4,
+                    "max_image_bytes": 4 * 1024 * 1024,
+                    "max_image_total_bytes": 6 * 1024 * 1024,
+                    "max_image_pixels": 20_000_000,
+                    "max_image_total_pixels": 40_000_000,
+                },
+                "streaming": {
+                    "rocky_enabled": False,
+                    "granite_enabled": False,
+                },
+                "image_input": {
+                    "rocky_enabled": False,
+                    "granite_enabled": False,
+                    "limits_match": True,
+                },
             },
         ),
         "http://granite.example:5002/ready": FakeResponse(
@@ -86,6 +104,46 @@ def healthy_routes():
 
 
 class RockyDoctorTests(unittest.TestCase):
+    def test_image_input_rollout_body_budgets_are_accepted(self):
+        values = production_env()
+        values.update({
+            "ROCKY_ENABLE_IMAGE_INPUT": "true",
+            "ROCKY_MAX_REQUEST_BYTES": str(9 * 1024 * 1024),
+            "ROCKY_GRANITE_MAX_REQUEST_BYTES": str(10 * 1024 * 1024),
+        })
+        with patch.dict("os.environ", values, clear=True):
+            checks = RockyDoctor(
+                include_network=False,
+                mongo_pinger=lambda _uri, _database: None,
+            ).run()
+
+        runtime_check = next(
+            check for check in checks if check.name == "runtime settings"
+        )
+        self.assertEqual(runtime_check.status, "PASS")
+
+    def test_image_input_budgets_must_fit_the_deployed_ingress_and_chat_proxy(self):
+        values = production_env()
+        values.update({
+            "ROCKY_ENABLE_IMAGE_INPUT": "true",
+            "ROCKY_MAX_IMAGE_BYTES": str(8 * 1024 * 1024),
+            "ROCKY_MAX_IMAGE_TOTAL_BYTES": str(8 * 1024 * 1024),
+            "ROCKY_MAX_REQUEST_BYTES": str(12 * 1024 * 1024),
+            "ROCKY_GRANITE_MAX_REQUEST_BYTES": str(12 * 1024 * 1024),
+        })
+        with patch.dict("os.environ", values, clear=True):
+            checks = RockyDoctor(
+                include_network=False,
+                mongo_pinger=lambda _uri, _database: None,
+            ).run()
+
+        runtime_check = next(
+            check for check in checks if check.name == "runtime settings"
+        )
+        self.assertEqual(runtime_check.status, "FAIL")
+        self.assertIn("built-in chat proxy's 10 MiB", runtime_check.detail)
+        self.assertIn("deployed Nginx 10 MiB", runtime_check.detail)
+
     def test_healthy_production_configuration_and_services_pass(self):
         pinged = []
 
@@ -111,6 +169,69 @@ class RockyDoctorTests(unittest.TestCase):
         rendered = " ".join(check.detail for check in checks)
         self.assertNotIn("mongodb://database.example", rendered)
         self.assertNotIn("g" * 40, rendered)
+
+    def test_readiness_rejects_a_frontend_and_service_streaming_mismatch(self):
+        values = production_env()
+        values["ROCKY_ENABLE_STREAMING"] = "true"
+
+        with patch.dict("os.environ", values, clear=True):
+            checks = RockyDoctor(
+                session=FakeSession(healthy_routes()),
+                mongo_pinger=lambda _uri, _database: None,
+            ).run()
+
+        readiness = next(check for check in checks if check.name == "chat API readiness")
+        self.assertEqual(readiness.status, "FAIL")
+        self.assertIn("supports_streaming", readiness.detail)
+        self.assertIn("streaming.rocky_enabled", readiness.detail)
+
+    def test_fully_enabled_streaming_and_image_readiness_passes(self):
+        values = production_env()
+        values.update(
+            {
+                "ROCKY_ENABLE_STREAMING": "true",
+                "ROCKY_ENABLE_IMAGE_INPUT": "true",
+                "ROCKY_MAX_REQUEST_BYTES": str(9 * 1024 * 1024),
+                "ROCKY_GRANITE_MAX_REQUEST_BYTES": str(10 * 1024 * 1024),
+            }
+        )
+        routes = healthy_routes()
+        ready_payload = routes["http://127.0.0.1:5003/ready"]._payload
+        ready_payload["capabilities"]["supports_streaming"] = True
+        ready_payload["capabilities"]["supports_image_input"] = True
+        ready_payload["streaming"] = {
+            "rocky_enabled": True,
+            "granite_enabled": True,
+        }
+        ready_payload["image_input"] = {
+            "rocky_enabled": True,
+            "granite_enabled": True,
+            "limits_match": True,
+        }
+
+        with patch.dict("os.environ", values, clear=True):
+            checks = RockyDoctor(
+                session=FakeSession(routes),
+                mongo_pinger=lambda _uri, _database: None,
+            ).run()
+
+        self.assertFalse(any(check.failed for check in checks))
+        readiness = next(check for check in checks if check.name == "chat API readiness")
+        self.assertIn("capabilities match configuration", readiness.detail)
+
+    def test_readiness_rejects_image_limits_that_do_not_match_configuration(self):
+        values = production_env()
+        values["ROCKY_MAX_IMAGES_PER_REQUEST"] = "3"
+
+        with patch.dict("os.environ", values, clear=True):
+            checks = RockyDoctor(
+                session=FakeSession(healthy_routes()),
+                mongo_pinger=lambda _uri, _database: None,
+            ).run()
+
+        readiness = next(check for check in checks if check.name == "chat API readiness")
+        self.assertEqual(readiness.status, "FAIL")
+        self.assertIn("max_images_per_request", readiness.detail)
 
     def test_production_rejects_mongita_placeholders_and_missing_oauth(self):
         values = production_env()
@@ -301,11 +422,20 @@ class RockyDoctorTests(unittest.TestCase):
             {
                 "ROCKY_DEBUG": "true",
                 "ROCKY_ENABLE_DB_INSPECTOR": "sometimes",
+                "ROCKY_ENABLE_STREAMING": "sometimes",
+                "ROCKY_ENABLE_IMAGE_INPUT": "true",
                 "ROCKY_CHAT_API_PORT": "not-a-port",
                 "ROCKY_GRANITE_TIMEOUT_SECONDS": "nan",
                 "ROCKY_GRANITE_MAX_CONCURRENT": "0",
                 "ROCKY_RESPONSES_RATE_LIMIT_PER_MINUTE": "0",
                 "ROCKY_MODELS_RATE_LIMIT_PER_MINUTE": "not-an-integer",
+                "ROCKY_MAX_IMAGES_PER_REQUEST": "17",
+                "ROCKY_MAX_IMAGE_BYTES": "200",
+                "ROCKY_MAX_IMAGE_TOTAL_BYTES": "100",
+                "ROCKY_MAX_IMAGE_PIXELS": "200",
+                "ROCKY_MAX_IMAGE_TOTAL_PIXELS": "100",
+                "ROCKY_MAX_REQUEST_BYTES": "1000",
+                "ROCKY_GRANITE_MAX_REQUEST_BYTES": "1000",
             }
         )
         with patch.dict("os.environ", values, clear=True):
@@ -318,6 +448,7 @@ class RockyDoctorTests(unittest.TestCase):
         self.assertEqual(runtime_check.status, "FAIL")
         self.assertIn("ROCKY_DEBUG must be false in production", runtime_check.detail)
         self.assertIn("ROCKY_ENABLE_DB_INSPECTOR must be exactly true or false", runtime_check.detail)
+        self.assertIn("ROCKY_ENABLE_STREAMING must be exactly true or false", runtime_check.detail)
         self.assertIn("ROCKY_CHAT_API_PORT must be an integer", runtime_check.detail)
         self.assertIn("ROCKY_GRANITE_TIMEOUT_SECONDS must be a finite number", runtime_check.detail)
         self.assertIn("ROCKY_GRANITE_MAX_CONCURRENT must be at least 1", runtime_check.detail)
@@ -327,6 +458,27 @@ class RockyDoctorTests(unittest.TestCase):
         )
         self.assertIn(
             "ROCKY_MODELS_RATE_LIMIT_PER_MINUTE must be an integer",
+            runtime_check.detail,
+        )
+        self.assertIn(
+            "ROCKY_MAX_IMAGES_PER_REQUEST must be between 1 and 16",
+            runtime_check.detail,
+        )
+        self.assertIn(
+            "ROCKY_MAX_IMAGE_TOTAL_BYTES must be at least ROCKY_MAX_IMAGE_BYTES",
+            runtime_check.detail,
+        )
+        self.assertIn(
+            "ROCKY_MAX_IMAGE_TOTAL_PIXELS must be at least ROCKY_MAX_IMAGE_PIXELS",
+            runtime_check.detail,
+        )
+        self.assertIn(
+            "ROCKY_MAX_REQUEST_BYTES is too small for the configured image-input budget",
+            runtime_check.detail,
+        )
+        self.assertIn(
+            "ROCKY_GRANITE_MAX_REQUEST_BYTES is too small for the configured "
+            "image-input budget",
             runtime_check.detail,
         )
 

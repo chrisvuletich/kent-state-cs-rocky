@@ -8,7 +8,7 @@
 	export let exporting = false;
 	export let onOpenHistory: () => void;
 	export let onExport: () => void;
-	let historyButton: HTMLButtonElement;
+	export let historyOpen = false;
 
 	$: statusLabel =
 		availability === 'available'
@@ -16,20 +16,17 @@
 			: availability === 'unavailable'
 				? 'Temporarily unavailable'
 				: 'Checking availability';
-
-	export function focusHistoryButton() {
-		historyButton?.focus();
-	}
 </script>
 
 <header class="chat-workspace-header">
 	<div class="chat-header-identity">
 		<button
-			bind:this={historyButton}
 			class="chat-icon-button chat-mobile-history-button"
 			type="button"
 			onclick={onOpenHistory}
-			aria-label="Open chat history"
+			aria-label={historyOpen ? 'Close chat history' : 'Open chat history'}
+			aria-expanded={historyOpen}
+			aria-controls="rocky-chat-history"
 		>
 			<IconHistory size={20} />
 		</button>

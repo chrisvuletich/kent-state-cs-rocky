@@ -1,7 +1,9 @@
 # API Reference
 
-Rocky exposes a text-generation endpoint and a model-list endpoint. It uses
-ordinary HTTP and JSON, so no provider-specific client library is required.
+Rocky exposes a response-generation endpoint and a model-list endpoint. It
+supports text prompts, optional local image input, buffered JSON responses, and
+optional Server-Sent Event (SSE) streaming. It uses ordinary HTTP, JSON, and
+SSE, so no provider-specific client library is required.
 
 ## Endpoint and authentication
 
@@ -31,7 +33,13 @@ object describing the currently configured capabilities:
       "metadata": {
         "max_output_tokens": 2048,
         "max_context_characters": 60000,
-        "supports_streaming": false,
+        "supports_streaming": true,
+        "supports_image_input": true,
+        "max_images_per_request": 4,
+        "max_image_bytes": 4194304,
+        "max_image_total_bytes": 6291456,
+        "max_image_pixels": 20000000,
+        "max_image_total_pixels": 40000000,
         "supports_previous_response_id": true,
         "supports_instructions": true,
         "model_dependent_parameters": [
@@ -44,17 +52,18 @@ object describing the currently configured capabilities:
 }
 ```
 
-The limit values come from the server's active configuration and may differ
-from this example. Clients may use this metadata to configure their interface
-or ignore it. The additional object does not change the required model-list
-fields.
+The feature flags and limit values come from the server's active configuration
+and may differ from this example. Check them at runtime instead of assuming that
+streaming or image input is enabled. Clients may use this metadata to configure
+their interface or ignore it when they only use buffered text. The additional
+object does not change the required model-list fields.
 
 ## Request fields
 
 | Field | Type | Required | Description | Default |
 | --- | --- | --- | --- | --- |
 | `model` | string | Yes | Model identifier returned by `GET /v1/models`. | None |
-| `input` | string or array | Yes | A prompt string or an array of text message objects. | None |
+| `input` | string or array | Yes | A prompt string or an array of message objects containing text and, when advertised, image blocks. | None |
 | `instructions` | string | No | System-level instructions applied before the input. | None |
 | `temperature` | number | No | Sampling temperature from 0 through 2. | Model default |
 | `top_p` | number | No | Nucleus sampling value from 0 through 1. | Model default |
@@ -64,7 +73,7 @@ fields.
 | `metadata` | object | No | Application metadata returned with the response. | `{}` |
 | `store` | boolean | No | Allow the response to be used for later continuation. Institutional audit logging is independent of this field. | `true` |
 | `previous_response_id` | string | No | Continue from a previously stored response created by the same credential. | None |
-| `stream` | boolean | No | Streaming is not currently supported; `true` returns a clear 400 error. | `false` |
+| `stream` | boolean | No | Return SSE lifecycle and text-delta events when streaming is advertised. | `false` |
 
 Rocky validates and forwards both penalty fields for OpenAI-compatible clients,
 but some Ollama models may ignore one or both. Clients should not depend on a
@@ -99,8 +108,8 @@ For multiple messages, `content` can be a string or a list of text blocks:
 }
 ```
 
-Rocky currently accepts text only. Tools, files, images, structured output, and
-streaming are not part of this contract. Unsupported parameters and content
+Tools, uploaded file IDs, remote image URLs, structured output, audio, and video
+are not part of Rocky's current contract. Unsupported parameters and content
 types return a 400 error instead of being silently ignored.
 
 To continue a stored response, send its response ID:
@@ -112,6 +121,64 @@ To continue a stored response, send its response ID:
   "previous_response_id": "resp_123..."
 }
 ```
+
+## Image input
+
+When the selected model advertises `supports_image_input: true`, a user message
+may contain `input_text` and `input_image` blocks:
+
+```json
+{
+  "model": "model-id-from-v1-models",
+  "input": [
+    {
+      "role": "user",
+      "content": [
+        { "type": "input_text", "text": "What is shown in this image?" },
+        {
+          "type": "input_image",
+          "image_url": "data:image/png;base64,iVBORw0KGgo...",
+          "detail": "auto"
+        }
+      ]
+    }
+  ],
+  "store": false
+}
+```
+
+Rocky accepts Base64 data URLs for JPEG, PNG, and static WebP files. It rejects
+remote URLs, `file_id`, GIF, SVG, animation, images in non-user messages, and
+`detail` values other than `auto`. The model metadata reports the current
+image-count, decoded-byte, and pixel limits. Rocky verifies the real container,
+dimensions, and decoded size; a data URL's declared media type is not trusted by
+itself.
+
+See **Image Input Example** for complete Python and JavaScript examples.
+
+## Streaming response
+
+When the selected model advertises `supports_streaming: true`, add
+`"stream": true`. A successful request returns `text/event-stream` instead of
+one JSON document. Every frame contains matching `event` and `data.type` values:
+
+```text
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":4,"delta":"Hello",...}
+
+```
+
+Rocky's text stream starts with `response.created`, sends one or more
+`response.output_text.delta` events, and ends successfully with
+`response.completed`. Sequence numbers start at zero and increase by one. There
+is no `[DONE]` sentinel. Concatenate delta strings for live display, but treat
+the request as successful only after validating `response.completed`.
+
+Validation failures that occur before streaming begins remain ordinary JSON
+errors with their normal non-200 HTTP status. If generation fails after the SSE
+response begins, Rocky sends a terminal `error` event; the already-sent HTTP
+status remains 200. See **Streaming Example** for parsers that handle chunk
+boundaries and terminal errors.
 
 ## Successful response
 
@@ -177,7 +244,7 @@ when a retry is appropriate, and includes a Python `requests` example.
 
 | Status | Meaning |
 | --- | --- |
-| 200 | Generation completed. |
+| 200 | A buffered generation completed, or an SSE response began. Check the terminal SSE event for streamed success. |
 | 400 | The JSON, model, input, or generation settings are invalid. |
 | 401 | The Bearer key is missing, invalid, inactive, revoked, or expired. |
 | 404 | The requested previous response does not exist or is not owned by this credential. |

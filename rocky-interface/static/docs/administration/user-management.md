@@ -1,9 +1,9 @@
 # User Management
 
-> **For instructors and administrators**  
+> **For administrators**
 > Use this guide to manage Rocky accounts. Estimated reading time: 2–3 minutes.
 
-User Management helps administrators find accounts, review identity and status, update roles, and safely manage account access in bulk.
+User Management helps administrators find accounts, review identity and status, update roles, and safely manage account access in bulk. Instructors manage students enrolled in their courses from the course roster instead.
 
 ## 1. Choose an account source
 

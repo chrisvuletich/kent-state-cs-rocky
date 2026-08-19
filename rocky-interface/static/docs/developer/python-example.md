@@ -106,3 +106,5 @@ print(response.output_text)
 - Read the API Reference.
 - Learn authentication best practices.
 - Try the JavaScript example.
+- Stream text incrementally with the Streaming Example.
+- Analyze a local image with the Image Input Example.

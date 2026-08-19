@@ -44,6 +44,12 @@
 	}
 }
 
+@media (prefers-reduced-motion: reduce) {
+	.feedback-popup {
+		animation: none;
+	}
+}
+
 @media (max-width: 640px) {
 	.feedback-popup {
 		font-size: 0.9rem;

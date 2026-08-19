@@ -1,8 +1,9 @@
 import { error, json, type RequestHandler } from '@sveltejs/kit';
 import { isUserSettingKey, settingsDefinitions } from '$lib/settings/userSettings';
 import { updateSettingForUser } from '$lib/server/userSettingsStore';
+import { THEME_COOKIE_OPTIONS, themeCookieName } from '$lib/server/themePreferenceCookie';
 
-export const PATCH: RequestHandler = async ({ locals, params, request }) => {
+export const PATCH: RequestHandler = async ({ cookies, locals, params, request }) => {
 	if (!locals.currentUser) {
 		throw error(401, 'Not authenticated.');
 	}
@@ -20,5 +21,12 @@ export const PATCH: RequestHandler = async ({ locals, params, request }) => {
 	}
 
 	const settings = await updateSettingForUser(locals.currentUser, settingKey, value);
+	if (settingKey === 'themePreference') {
+		cookies.set(
+			themeCookieName(locals.currentUser.id),
+			settings.themePreference,
+			THEME_COOKIE_OPTIONS
+		);
+	}
 	return json({ ok: true, settings });
 };

@@ -49,7 +49,7 @@
 		type AnalyticsTimeseries,
 		type AnalyticsWindow
 	} from '$lib/types/analytics';
-	import '$lib/styles/routes/modules/analytics-view.css';
+	import { handleTabListKeydown } from '$lib/accessibility/tabs';
 
 	const windowLabels: Record<AnalyticsWindow, string> = {
 		'15m': '15 minutes',
@@ -118,6 +118,7 @@
 	let reviewError: string | null = null;
 	let reviewBaseline = '';
 	let detailRevision = 0;
+	let breakdownRevision = 0;
 	let appliedFilterSignature = '';
 	let currentUrlFilterState: AnalyticsFilterState = defaultAnalyticsFilters;
 	let currentAnalyticsDataSignature = '';
@@ -154,14 +155,7 @@
 			void goto(canonicalUrl, { replaceState: true, noScroll: true, keepFocus: true });
 		}
 		void loadAnalytics();
-		const handlePopState = () => {
-			const previousSignature = analyticsFilterSignature(filterState());
-			const nextState = parseAnalyticsFilters(new URLSearchParams(window.location.search));
-			applyUrlState(nextState);
-			appliedFilterSignature = analyticsDataSignature(nextState);
-			detailDismissed = !nextState.requestId;
-			if (analyticsFilterSignature(nextState) !== previousSignature) void loadAnalytics();
-		};
+		const handlePopState = () => void restoreAnalyticsLocation();
 		window.addEventListener('popstate', handlePopState);
 		const interval = window.setInterval(() => {
 			if (document.visibilityState === 'visible') void loadAnalytics(true);
@@ -171,6 +165,31 @@
 			window.removeEventListener('popstate', handlePopState);
 		};
 	});
+
+	async function restoreAnalyticsLocation(): Promise<void> {
+		const previousState = filterState();
+		if (!canDiscardReview()) {
+			await goto(analyticsUrl(new URL(window.location.href), previousState), {
+				replaceState: true,
+				noScroll: true,
+				keepFocus: true
+			});
+			return;
+		}
+
+		const previousSignature = analyticsFilterSignature(previousState);
+		const nextState = parseAnalyticsFilters(new URLSearchParams(window.location.search));
+		detailRevision += 1;
+		breakdownRevision += 1;
+		applyUrlState(nextState);
+		appliedFilterSignature = analyticsDataSignature(nextState);
+		detailDismissed = !nextState.requestId;
+		if (analyticsFilterSignature(nextState) !== previousSignature) {
+			await loadAnalytics();
+		} else if (nextState.requestId) {
+			await selectRequest(nextState.requestId, false);
+		}
+	}
 
 	function filterState(): AnalyticsFilterState {
 		return {
@@ -220,6 +239,7 @@
 
 	async function loadAnalytics(background = false): Promise<void> {
 		const revision = ++loadRevision;
+		breakdownRevision += 1;
 		if (background || summary) isRefreshing = true;
 		else isLoading = true;
 		error = null;
@@ -251,7 +271,9 @@
 				void selectRequest(nextRecent.requests[0].request_id, false);
 			}
 		} catch (caught) {
-			error = caught instanceof Error ? caught.message : 'Unable to load analytics right now.';
+			if (revision === loadRevision) {
+				error = caught instanceof Error ? caught.message : 'Unable to load analytics right now.';
+			}
 		} finally {
 			if (revision === loadRevision) {
 				isLoading = false;
@@ -274,17 +296,24 @@
 
 	async function changeDimension(dimension: AnalyticsDimension): Promise<void> {
 		if (dimension === selectedDimension) return;
+		const revision = ++breakdownRevision;
 		selectedDimension = dimension;
 		search = '';
+		error = null;
 		await syncUrlState();
 		try {
-			breakdown = await fetchAnalyticsBreakdown(
+			const nextBreakdown = await fetchAnalyticsBreakdown(
 				selectedWindow,
 				selectedDimension,
 				requestFilters()
 			);
+			if (revision === breakdownRevision && selectedDimension === dimension) {
+				breakdown = nextBreakdown;
+			}
 		} catch (caught) {
-			error = caught instanceof Error ? caught.message : 'Unable to load this breakdown.';
+			if (revision === breakdownRevision && selectedDimension === dimension) {
+				error = caught instanceof Error ? caught.message : 'Unable to load this breakdown.';
+			}
 		}
 	}
 
@@ -305,7 +334,9 @@
 				hydrateReview(detail);
 			}
 		} catch (caught) {
-			error = caught instanceof Error ? caught.message : 'Unable to load request details.';
+			if (selectedRequestId === requestId && revision === detailRevision) {
+				error = caught instanceof Error ? caught.message : 'Unable to load request details.';
+			}
 		} finally {
 			if (selectedRequestId === requestId && revision === detailRevision) detailLoading = false;
 		}
@@ -789,17 +820,25 @@
 
 			<div class="analytics-mobile-tabs" role="tablist" aria-label="Analytics detail view">
 				<button
+					id="analytics-breakdown-tab"
 					type="button"
 					role="tab"
 					aria-selected={mobilePanel === 'breakdown'}
+					aria-controls="analytics-breakdown-panel"
+					tabindex={mobilePanel === 'breakdown' ? 0 : -1}
 					class:active={mobilePanel === 'breakdown'}
+					onkeydown={handleTabListKeydown}
 					onclick={() => (mobilePanel = 'breakdown')}>Breakdown</button
 				>
 				<button
+					id="analytics-requests-tab"
 					type="button"
 					role="tab"
 					aria-selected={mobilePanel === 'requests'}
+					aria-controls="analytics-requests-panel"
+					tabindex={mobilePanel === 'requests' ? 0 : -1}
 					class:active={mobilePanel === 'requests'}
+					onkeydown={handleTabListKeydown}
 					onclick={() => (mobilePanel = 'requests')}>Review queue</button
 				>
 			</div>
@@ -809,7 +848,12 @@
 				class:show-breakdown={mobilePanel === 'breakdown'}
 				class:show-requests={mobilePanel === 'requests'}
 			>
-				<div class="analytics-breakdown-panel">
+				<div
+					id="analytics-breakdown-panel"
+					class="analytics-breakdown-panel"
+					role="tabpanel"
+					aria-labelledby="analytics-breakdown-tab"
+				>
 					<div class="panel-heading">
 						<h2>Breakdown</h2>
 						<span>{number(breakdown.rows.length)} groups</span>
@@ -859,7 +903,12 @@
 					</div>
 				</div>
 
-				<div class="analytics-requests-panel">
+				<div
+					id="analytics-requests-panel"
+					class="analytics-requests-panel"
+					role="tabpanel"
+					aria-labelledby="analytics-requests-tab"
+				>
 					<div class="panel-heading">
 						<h2>Review queue</h2>
 						<span>{requestListLoading ? 'Refreshing…' : `${number(recent.matched)} in window`}</span

@@ -1,6 +1,5 @@
-/* ============================================================================
-   GLOBAL STYLES - Import all design system files
-   ============================================================================ */
+/* Global styles load once from the root layout. Component-specific styles are
+   imported by their owning Svelte component instead of duplicated here. */
 
 /* Design tokens and variables */
 @import './tokens.css';
@@ -8,8 +7,9 @@
 /* Base element styles */
 @import './base.css';
 
-/* Component-specific styles */
-@import '../components/components.css';
+/* Shared interaction and motion behavior */
+@import '../components/modules/view-controls.css';
+@import './motion.css';
 
 /* Layout and grid system */
 @import '../layout/layout.css';

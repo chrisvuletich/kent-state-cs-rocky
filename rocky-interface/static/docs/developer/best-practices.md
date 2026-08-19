@@ -37,6 +37,17 @@ Network issues and server errors can happen. Make sure your application handles 
 - Display helpful error messages.
 - Retry requests only when appropriate.
 
+For streams, an HTTP 200 means only that SSE started. Treat
+`response.completed` as success, handle a terminal `error` event, and treat a
+connection that closes without either event as incomplete.
+
+## Discover Optional Capabilities
+
+Read the selected model's `metadata` from `GET /v1/models` before enabling
+streaming or image input. These features can be disabled during rollout or when
+the installed course model does not support them. Read image count, byte, and
+pixel limits from the same metadata instead of copying example values.
+
 ## Protect Sensitive Information
 
 Only request the information your application needs, and avoid storing sensitive data unless absolutely necessary.
@@ -45,10 +56,17 @@ Only request the information your application needs, and avoid storing sensitive
 - Use HTTPS for all API requests.
 - Rotate API keys if they become compromised.
 
+Rocky records prompts, submitted images, outputs, and request metadata for
+university safety and academic-resource oversight. Use the service only for
+course-appropriate work and do not submit personal, confidential, regulated,
+or otherwise sensitive material. Avoid writing Base64 image data or complete
+responses to additional application logs unless the assignment requires it.
+
 ## Next Steps
 
 You're now ready to explore the Rocky API in more detail.
 
 - Browse the API Reference.
 - Experiment with the Python and JavaScript examples.
+- Try the Streaming and Image Input examples.
 - Start building your own Rocky integrations.

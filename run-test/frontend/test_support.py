@@ -38,6 +38,17 @@ NPM_BIN = "npm.cmd" if os.name == "nt" else "npm"
 PYTHON_BIN = sys.executable
 logger = logging.getLogger("rocky.tests.frontend")
 
+# Shared UI review sizes. Keep this list intentionally small: it covers the
+# layouts where regressions have historically appeared without multiplying the
+# browser-suite runtime for every test class.
+UI_VIEWPORTS: dict[str, tuple[int, int]] = {
+    "desktop": (1440, 1000),
+    "short_laptop": (1024, 600),
+    "phone_landscape": (844, 390),
+    "phone": (390, 844),
+    "narrow_phone": (320, 568),
+}
+
 
 class FrontendBrowserTestCase(unittest.TestCase):
     STARTUP_TIMEOUT_SECONDS = 90
@@ -69,21 +80,27 @@ class FrontendBrowserTestCase(unittest.TestCase):
     @classmethod
     def _set_up_resources(cls):
         cls._log("Seeding and starting backend API for browser tests.")
-        subprocess.run([PYTHON_BIN, "seed_from_backend.py"], cwd=BACKEND_DIR, check=True)
-        cls._process_log_dir = Path(tempfile.mkdtemp(prefix="rocky-e2e-process-logs-"))
-        cls._backend_log_path = cls._process_log_dir / "backend.log"
-        cls._frontend_log_path = cls._process_log_dir / "frontend.log"
-        cls._backend_log_handle = cls._backend_log_path.open("w", encoding="utf-8", errors="replace")
-        cls._frontend_log_handle = cls._frontend_log_path.open("w", encoding="utf-8", errors="replace")
-
+        cls._mongita_dir = tempfile.mkdtemp(prefix="rocky-e2e-mongita-")
         backend_env = os.environ.copy()
         backend_env.update(
             {
                 "ROCKY_APP_ENV": "testing",
                 "ROCKY_DB_BACKEND": "mongita",
                 "ROCKY_ENABLE_DB_INSPECTOR": "false",
+                "ROCKY_MONGITA_PATH": cls._mongita_dir,
             }
         )
+        subprocess.run(
+            [PYTHON_BIN, "seed_from_backend.py"],
+            cwd=BACKEND_DIR,
+            env=backend_env,
+            check=True,
+        )
+        cls._process_log_dir = Path(tempfile.mkdtemp(prefix="rocky-e2e-process-logs-"))
+        cls._backend_log_path = cls._process_log_dir / "backend.log"
+        cls._frontend_log_path = cls._process_log_dir / "frontend.log"
+        cls._backend_log_handle = cls._backend_log_path.open("w", encoding="utf-8", errors="replace")
+        cls._frontend_log_handle = cls._frontend_log_path.open("w", encoding="utf-8", errors="replace")
 
         cls.backend = subprocess.Popen(
             [PYTHON_BIN, "main.py"],
@@ -103,9 +120,16 @@ class FrontendBrowserTestCase(unittest.TestCase):
                 "PUBLIC_API_BASE_URL": "http://127.0.0.1:5001",
                 "PUBLIC_ENABLE_DBTEST": "false",
                 "PUBLIC_ENABLE_MICROSOFT_OAUTH": "false",
+                "ROCKY_ENABLE_STREAMING": "false",
                 "ROCKY_WEB_HOST": WEB_HOST,
                 "ROCKY_WEB_PORT": WEB_PORT,
                 "ROCKY_ALLOWED_HOSTS": f"{WEB_HOST},127.0.0.1,localhost",
+                # Browser tests start one seeded backend, not the separate model
+                # services. Point each health probe at that healthy local process;
+                # tests that exercise outages override /api/server-health in-page.
+                "ROCKY_GRANITE_HEALTH_URL": "http://127.0.0.1:5001/health",
+                "ROCKY_CHAT_API_HEALTH_URL": "http://127.0.0.1:5001/health",
+                "ROCKY_OLLAMA_HEALTH_URL": "http://127.0.0.1:5001/health",
             }
         )
 
@@ -196,6 +220,7 @@ class FrontendBrowserTestCase(unittest.TestCase):
         options.add_argument("--disable-renderer-backgrounding")
         options.add_argument("--disable-sync")
         options.add_argument("--remote-debugging-port=0")
+        options.set_capability("goog:loggingPrefs", {"browser": "ALL"})
 
         if headless_mode == "new":
             options.add_argument("--headless=new")
@@ -290,6 +315,7 @@ class FrontendBrowserTestCase(unittest.TestCase):
         options.add_argument("--disable-renderer-backgrounding")
         options.add_argument("--disable-sync")
         options.add_argument("--remote-debugging-port=0")
+        options.set_capability("goog:loggingPrefs", {"browser": "ALL"})
 
         if headless_mode == "new":
             options.add_argument("--headless=new")
@@ -362,16 +388,12 @@ class FrontendBrowserTestCase(unittest.TestCase):
 
         if hasattr(cls, "_chrome_profile_dir"):
             try:
-                profile_path = Path(cls._chrome_profile_dir)
-                if profile_path.exists():
-                    for child in sorted(profile_path.rglob("*"), reverse=True):
-                        if child.is_file() or child.is_symlink():
-                            child.unlink(missing_ok=True)
-                        elif child.is_dir():
-                            child.rmdir()
-                    profile_path.rmdir()
+                shutil.rmtree(cls._chrome_profile_dir, ignore_errors=True)
             except Exception:
                 pass
+
+        if hasattr(cls, "_mongita_dir"):
+            shutil.rmtree(cls._mongita_dir, ignore_errors=True)
 
         for handle_name in ("_frontend_log_handle", "_backend_log_handle"):
             if hasattr(cls, handle_name):
@@ -425,11 +447,145 @@ class FrontendBrowserTestCase(unittest.TestCase):
                 return False
 
         self.wait.until(heading_matches, message=f"Expected view title: {expected}")
+        self.wait.until(
+            EC.presence_of_element_located(
+                (By.CSS_SELECTOR, "[data-rocky-app-ready='true']")
+            ),
+            message="Expected the Rocky workspace to finish hydrating.",
+        )
+
+    def _login_as_preview_role(self, role: str):
+        """Start a fresh preview session for a named fixture role."""
+        expected_role = role.strip().lower()
+        if not expected_role:
+            raise ValueError("Preview role must not be empty.")
+
+        self.driver.get(f"{BASE_URL}/logout")
+        self.wait.until(EC.url_contains("/login"))
+        self.driver.get(f"{BASE_URL}/login/preview")
+
+        def matching_role_button(driver):
+            cards = driver.find_elements(By.CSS_SELECTOR, "article.preview-user-card")
+            for card in cards:
+                try:
+                    role_text = (
+                        card.find_element(By.CSS_SELECTOR, ".preview-role")
+                        .text.strip()
+                        .lower()
+                    )
+                    if role_text == expected_role:
+                        return card.find_element(By.TAG_NAME, "button")
+                except (NoSuchElementException, StaleElementReferenceException):
+                    continue
+            return False
+
+        button = self.wait.until(
+            matching_role_button,
+            message=f"Expected a preview-login card for role: {role}",
+        )
+        button.click()
+        self._wait_for_post_login_navigation()
+
+    def _set_viewport(self, name: str):
+        try:
+            width, height = UI_VIEWPORTS[name]
+        except KeyError as exc:
+            choices = ", ".join(sorted(UI_VIEWPORTS))
+            raise ValueError(f"Unknown UI viewport '{name}'. Expected one of: {choices}.") from exc
+
+        try:
+            self.driver.execute_cdp_cmd(
+                "Emulation.setDeviceMetricsOverride",
+                {
+                    "width": width,
+                    "height": height,
+                    "deviceScaleFactor": 1,
+                    "mobile": False,
+                },
+            )
+        except (AttributeError, WebDriverException):
+            self.driver.set_window_size(width, height)
+        self.wait.until(
+            lambda driver: driver.execute_script(
+                "return window.innerWidth === arguments[0] && window.innerHeight === arguments[1];",
+                width,
+                height,
+            ),
+            message=f"Expected browser viewport to settle for: {name}",
+        )
+
+    def _assert_no_document_horizontal_overflow(self):
+        dimensions = self.driver.execute_script(
+            """
+            return {
+              viewportWidth: window.innerWidth,
+              documentWidth: document.documentElement.scrollWidth
+            };
+            """
+        )
+        self.assertLessEqual(
+            dimensions["documentWidth"],
+            dimensions["viewportWidth"] + 1,
+            msg=(
+                "Expected horizontal scrolling to stay inside its component; "
+                f"document width was {dimensions['documentWidth']}px for a "
+                f"{dimensions['viewportWidth']}px viewport."
+            ),
+        )
+
+    def _assert_no_framework_error_overlay(self):
+        overlay_selectors = (
+            "vite-error-overlay",
+            "nextjs-portal",
+            "#webpack-dev-server-client-overlay",
+        )
+        visible_overlays = []
+        for selector in overlay_selectors:
+            for element in self.driver.find_elements(By.CSS_SELECTOR, selector):
+                if element.is_displayed():
+                    visible_overlays.append(selector)
+        self.assertFalse(
+            visible_overlays,
+            msg=f"Unexpected framework error overlay(s): {', '.join(visible_overlays)}",
+        )
+
+    def _assert_no_browser_console_errors(
+        self,
+        *,
+        allowed_message_fragments: tuple[str, ...] = (),
+    ):
+        entries = self._read_browser_console()
+        errors = [
+            entry.get("message", "")
+            for entry in entries
+            if entry.get("level") == "SEVERE"
+            and not any(
+                fragment in entry.get("message", "")
+                for fragment in allowed_message_fragments
+            )
+        ]
+        self.assertFalse(
+            errors,
+            msg="Unexpected browser console error(s):\n" + "\n".join(errors),
+        )
+
+    def _read_browser_console(self):
+        try:
+            return self.driver.get_log("browser")
+        except WebDriverException:
+            # Some locally managed WebDriver builds do not expose browser logs.
+            # The framework-overlay assertion still guards against a broken render.
+            return []
 
     def _wait_for_post_login_navigation(self):
         try:
-            self.wait.until(EC.url_contains("/"))
+            self.wait.until(EC.url_matches(rf"^{BASE_URL}/(?:\?.*)?$"))
             self.wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, ".view-title h1")))
+            self.wait.until(
+                EC.presence_of_element_located(
+                    (By.CSS_SELECTOR, "[data-rocky-app-ready='true']")
+                )
+            )
         except TimeoutException as exc:
             self._log(f"Login navigation timeout. Current URL: {self.driver.current_url}")
             raise exc
@@ -446,3 +602,24 @@ class FrontendBrowserTestCase(unittest.TestCase):
             except StaleElementReferenceException:
                 if attempt == retries - 1:
                     raise
+
+    def _click_sidebar_destination(self, label: str):
+        """Click the visible sidebar link or disclosure with the given label."""
+
+        def visible_destination(driver):
+            elements = driver.find_elements(
+                By.XPATH,
+                "//nav[contains(@class,'sidebar')]"
+                "//*[self::a or self::button]"
+                f"[normalize-space()='{label}']",
+            )
+            return next(
+                (element for element in elements if element.is_displayed() and element.is_enabled()),
+                False,
+            )
+
+        destination = self.wait.until(
+            visible_destination,
+            message=f"Expected visible sidebar destination: {label}",
+        )
+        destination.click()

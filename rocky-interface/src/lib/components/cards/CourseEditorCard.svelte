@@ -31,11 +31,17 @@
 	let selectedSemesterTerm = 'none';
 	let selectedSemesterYear = COURSE_EDITOR_SEMESTER_YEAR_MIN;
 	let lastParsedSemester = '';
+	let lastValidatedForm: CourseEditorForm | undefined;
+	let nameError = '';
 
 	$: availableTeacherAssistants = users.filter((user) => user.id !== form.instructorId);
 	$: normalizedTaIds = [...new Set(form.taIds.filter((id) => id && id !== form.instructorId))];
 	$: if (normalizedTaIds.length !== form.taIds.length) {
 		form.taIds = normalizedTaIds;
+	}
+	$: if (form !== lastValidatedForm) {
+		lastValidatedForm = form;
+		nameError = '';
 	}
 
 	const dispatch = createEventDispatcher<{ submit: void }>();
@@ -113,6 +119,10 @@
 	}
 
 	function submitForm() {
+		if (!form.name.trim()) {
+			nameError = 'Course name is required.';
+			return;
+		}
 		if (useSemesterPicker) {
 			updateSemesterFromControls();
 		}
@@ -146,7 +156,15 @@
 					type="text"
 					bind:value={form.name}
 					required
+					aria-invalid={nameError ? 'true' : undefined}
+					aria-describedby={nameError ? `${idPrefix}-name-error` : undefined}
+					oninput={() => {
+						if (form.name.trim()) nameError = '';
+					}}
 				/>
+				{#if nameError}
+					<p id={`${idPrefix}-name-error`} class="field-error" role="alert">{nameError}</p>
+				{/if}
 			{/if}
 		</div>
 		<div class="form-group">
@@ -184,6 +202,7 @@
 							id={`${idPrefix}-semester-year-input`}
 							class="text-input"
 							type="number"
+							aria-label="Semester year"
 							min={semesterYearMin}
 							max={semesterYearMax}
 							bind:value={selectedSemesterYear}
@@ -229,15 +248,15 @@
 			{/if}
 		</div>
 		<div class="form-group">
-			<span class="form-label">Course Color</span>
+			<span id={`${idPrefix}-color-label`} class="form-label">Course Color</span>
 			{#if readOnly}
 				<div class="text-input course-locked-field">{form.color || 'N/A'}</div>
 			{:else}
-				<CourseColorPicker bind:value={form.color} />
+				<CourseColorPicker bind:value={form.color} labelledBy={`${idPrefix}-color-label`} />
 			{/if}
 		</div>
 		<div class="form-group">
-			<label class="form-label" for={`${idPrefix}-ta-dropdown`}>Teacher Assistant</label>
+			<span id={`${idPrefix}-ta-label`} class="form-label">Teacher Assistant</span>
 			{#if readOnly}
 				<div class="text-input course-locked-field">
 					{#if normalizedTaIds.length === 0}
@@ -249,7 +268,11 @@
 					{/if}
 				</div>
 			{:else}
-				<details id={`${idPrefix}-ta-dropdown`} class="course-ta-dropdown">
+				<details
+					id={`${idPrefix}-ta-dropdown`}
+					class="course-ta-dropdown"
+					aria-labelledby={`${idPrefix}-ta-label`}
+				>
 					<summary class="course-ta-summary">{form.taIds.length} selected</summary>
 					<div class="course-ta-list" role="listbox" aria-multiselectable="true">
 						{#if availableTeacherAssistants.length === 0}

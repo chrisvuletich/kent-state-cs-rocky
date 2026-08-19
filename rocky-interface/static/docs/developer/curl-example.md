@@ -24,6 +24,22 @@ curl --request POST https://rocky.cs.kent.edu/v1/responses \
 `https://rocky.cs.kent.edu/v1/responses` is Rocky’s public Chat API endpoint.
 Set `ROCKY_MODEL` to the identifier returned by the model-list request.
 
+## Stream a response
+
+If the selected model's metadata reports `supports_streaming: true`, use
+curl's `--no-buffer` option and add `"stream":true`:
+
+```bash
+curl --no-buffer --request POST https://rocky.cs.kent.edu/v1/responses \
+  --header "Authorization: Bearer $ROCKY_API_KEY" \
+  --header 'Content-Type: application/json' \
+  --header 'Accept: text/event-stream' \
+  --data "{\"model\":\"$ROCKY_MODEL\",\"input\":\"Explain recursion in one paragraph.\",\"stream\":true,\"store\":false}"
+```
+
+The final success event is `response.completed`; Rocky does not send `[DONE]`.
+See the Streaming Example before writing an application parser.
+
 ## Example response
 
 ```json

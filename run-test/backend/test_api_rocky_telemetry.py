@@ -1,4 +1,6 @@
 import copy
+import hashlib
+import json
 import os
 import sys
 import unittest
@@ -13,6 +15,7 @@ from mongita import MongitaClientMemory
 
 
 ROOT = Path(__file__).resolve().parents[2]
+IMAGE_INPUT_FIXTURE = ROOT / "run-test" / "fixtures" / "responses_image_input.json"
 sys.path.insert(0, str(ROOT / "api-rocky"))
 sys.path.insert(0, str(ROOT / "run-test" / "integration"))
 with (
@@ -98,6 +101,20 @@ def success(output="Private model reply"):
             },
         },
     })
+
+
+def granite_stream(events):
+    response = Mock()
+    lines = iter(
+        json.dumps(event, separators=(",", ":")).encode("utf-8") + b"\n"
+        for event in events
+    )
+    return rocky.GraniteEventStream(
+        response,
+        lines,
+        [0],
+        rocky.INFERENCE_MODEL,
+    )
 
 
 class ApiTelemetryTests(unittest.TestCase):
@@ -238,6 +255,178 @@ class ApiTelemetryTests(unittest.TestCase):
         self.assertEqual(row["request"]["body"]["input"], prompt)
         self.assertEqual(row["response"]["output_text"], output)
 
+    def test_streaming_success_is_audited_with_full_output_and_usage(self):
+        stream = granite_stream([
+            {"type": "delta", "text": "Audited "},
+            {"type": "delta", "text": "stream"},
+            {
+                "type": "completed",
+                "telemetry": {
+                    "model_input_bytes": 111,
+                    "model_output_bytes": 222,
+                    "provider": {
+                        "actual_model": "actual-model",
+                        "prompt_eval_count": 5,
+                        "eval_count": 2,
+                        "done_reason": "must not survive",
+                    },
+                },
+                "metadata": {},
+            },
+        ])
+        with (
+            patch.object(rocky, "ENABLE_STREAMING", True),
+            patch.object(rocky, "request_ai_stream", return_value=stream),
+        ):
+            response = self.post(stream=True)
+            response.get_data()
+
+        self.assertEqual(response.status_code, 200)
+        row = self.rows()[0]
+        self.assertEqual(row["outcome"], "completed")
+        self.assertEqual(row["response"]["output_text"], "Audited stream")
+        self.assertEqual(row["usage"]["input_tokens"], 5)
+        self.assertEqual(row["usage"]["output_tokens"], 2)
+        self.assertEqual(row["request"]["body"]["stream"], True)
+        self.assertEqual(row["delivery"]["status"], "completed")
+        self.assertIsInstance(row["delivery"]["recorded_at"], datetime)
+        self.assertEqual(
+            rocky.telemetry_current_col.find_one({})["active_requests"],
+            0,
+        )
+
+    def test_streaming_failure_audits_partial_output_and_timeout(self):
+        stream = granite_stream([
+            {"type": "delta", "text": "Partial private output"},
+            {
+                "type": "error",
+                "error": {
+                    "type": "model_timeout",
+                    "message": "Model request timed out.",
+                },
+            },
+        ])
+        with (
+            patch.object(rocky, "ENABLE_STREAMING", True),
+            patch.object(rocky, "request_ai_stream", return_value=stream),
+        ):
+            response = self.post(stream=True)
+            response.get_data()
+
+        self.assertEqual(response.status_code, 200)
+        row = self.rows()[0]
+        self.assertEqual(row["outcome"], "timed_out")
+        self.assertEqual(row["response"]["output_text"], "Partial private output")
+        self.assertEqual(row["error_type"], "timeout")
+        self.assertEqual(
+            rocky.telemetry_current_col.find_one({})["active_requests"],
+            0,
+        )
+
+    @patch.object(rocky.requests, "post")
+    def test_image_payload_is_permanent_but_not_duplicated_in_model_input(self, post):
+        request_body = json.loads(IMAGE_INPUT_FIXTURE.read_text(encoding="utf-8"))
+        image_url = request_body["input"][0]["content"][1]["image_url"]
+        post.return_value = success(output="Verified image response")
+        with patch.object(rocky, "ENABLE_IMAGE_INPUT", True):
+            response = self.post(
+                input=request_body["input"],
+                store=True,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        row = self.rows()[0]
+        self.assertEqual(
+            row["request"]["body"]["input"][0]["content"][1]["image_url"],
+            image_url,
+        )
+        model_image = row["request"]["model_input"]["input"][0]["content"][1]
+        self.assertEqual(
+            model_image["image_base64"],
+            "[OMITTED: stored image payload]",
+        )
+        self.assertEqual(row["request"]["image_inputs"][0]["mime_type"],
+                         "image/png")
+        self.assertEqual(row["request"]["image_inputs"][0]["pixel_count"], 1)
+
+        stored_context = rocky.responses_col.find_one({})["context_messages"]
+        stored_image = stored_context[0]["content"][1]
+        self.assertEqual(stored_image["image_base64"], image_url.split(",", 1)[1])
+        self.assertNotIn("image_url", stored_image)
+
+        with patch.object(rocky, "ENABLE_IMAGE_INPUT", True):
+            continued = self.post(
+                input="What about it?",
+                previous_response_id=response.get_json()["id"],
+            )
+        self.assertEqual(continued.status_code, 200)
+        continued_input = post.call_args_list[-1].kwargs["json"]["input"]
+        self.assertEqual(
+            [message["role"] for message in continued_input],
+            ["user", "assistant", "user"],
+        )
+        self.assertEqual(
+            continued_input[0]["content"][1]["image_base64"],
+            image_url.split(",", 1)[1],
+        )
+
+    @patch.object(rocky.requests, "post")
+    def test_web_image_is_preserved_in_owned_conversation_history(self, post):
+        rocky.api_keys_col.update_one(
+            {"hash": rocky.hash_api_key(self.key)},
+            {"$set": {"key_scope": "user-default"}},
+        )
+        request_body = json.loads(IMAGE_INPUT_FIXTURE.read_text(encoding="utf-8"))
+        image_url = request_body["input"][0]["content"][1]["image_url"]
+        headers = {
+            "Authorization": f"Bearer {self.key}",
+            "X-Rocky-Internal-Secret": rocky.INTERNAL_PROXY_SECRET,
+            "X-Rocky-User-Id": "private-user-id",
+            "X-Rocky-User-Email": "private.user@kent.edu",
+        }
+        post.return_value = success(output="First image answer")
+        with patch.object(rocky, "ENABLE_IMAGE_INPUT", True):
+            first = self.client.post(
+                "/v1/responses",
+                json={
+                    "model": rocky.PUBLIC_MODEL,
+                    "input": request_body["input"],
+                    "store": True,
+                },
+                headers=headers,
+            )
+
+        self.assertEqual(first.status_code, 200)
+        conversation_id = first.get_json()["conversation_id"]
+        stored_user = rocky.messages_col.find_one({
+            "conversation_id": conversation_id,
+            "role": "user",
+        })
+        self.assertEqual(
+            stored_user["input_images"][0]["image_base64"],
+            image_url.split(",", 1)[1],
+        )
+
+        post.return_value = success(output="Second answer")
+        with patch.object(rocky, "ENABLE_IMAGE_INPUT", True):
+            second = self.client.post(
+                "/v1/responses",
+                json={
+                    "model": rocky.PUBLIC_MODEL,
+                    "input": "Look at it again.",
+                    "conversation_id": conversation_id,
+                    "store": True,
+                },
+                headers=headers,
+            )
+
+        self.assertEqual(second.status_code, 200)
+        second_model_input = post.call_args.kwargs["json"]["input"]
+        self.assertEqual(
+            second_model_input[0]["content"][1]["image_base64"],
+            image_url.split(",", 1)[1],
+        )
+
     @patch.object(rocky.requests, "post")
     def test_failure_timeout_validation_and_latency(self, post):
         post.return_value = granite({
@@ -319,10 +508,15 @@ class ApiTelemetryTests(unittest.TestCase):
         )
 
     def test_invalid_json_and_invalid_key_are_permanent_rejections(self):
+        malformed_body = (
+            f'{{"model":"{rocky.PUBLIC_MODEL}","input":"'.encode("utf-8")
+            + b"\xff"
+        )
         malformed = self.client.post(
             "/v1/responses",
-            data=f'{{"model":"{rocky.PUBLIC_MODEL}","input":',
+            data=malformed_body,
             content_type="application/json",
+            headers={"Authorization": f"Bearer {self.key}"},
         )
         invalid_key = self.client.post(
             "/v1/responses",
@@ -347,6 +541,12 @@ class ApiTelemetryTests(unittest.TestCase):
             rows[1]["client"]["remote_address"],
             "198.51.100.7",
         )
+        self.assertEqual(rows[0]["credential"]["key_id"], "akid_test_person")
+        self.assertEqual(rows[0]["request"]["malformed_body"], {
+            "omitted": True,
+            "byte_length": len(malformed_body),
+            "sha256": hashlib.sha256(malformed_body).hexdigest(),
+        })
         self.assertNotIn("should-never-be-stored", repr(rows))
 
     def test_oversized_request_records_metadata_without_reading_full_body(self):

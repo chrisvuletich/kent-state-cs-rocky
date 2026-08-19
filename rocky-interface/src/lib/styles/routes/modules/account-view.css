@@ -6,12 +6,10 @@
 	color: var(--color-text-secondary);
 }
 
-.account-card {
+.section.section-flat.account-card {
 	margin-bottom: var(--space-xl);
-	padding: var(--space-xl);
-	border: 1px solid color-mix(in srgb, var(--color-accent) 24%, var(--color-gray-300));
-	background: linear-gradient(135deg, var(--color-bg-primary), var(--color-accent-light));
-	box-shadow: var(--shadow-md);
+	padding: 0 0 var(--space-xl);
+	border-bottom: 1px solid var(--color-gray-300);
 }
 
 .account-profile-header {
@@ -175,6 +173,20 @@
 	gap: var(--space-xl);
 }
 
+.account-theme-control {
+	display: flex;
+	align-items: center;
+	gap: var(--space-md);
+	flex: 0 0 auto;
+}
+
+.account-theme-control > span {
+	color: var(--color-text-secondary);
+	font-size: var(--font-size-sm);
+	font-weight: var(--font-weight-semibold);
+	white-space: nowrap;
+}
+
 .account-theme-title {
 	margin: 0;
 	font-size: clamp(1.5rem, 2.1vw, 1.95rem);
@@ -211,9 +223,19 @@
 	width: 24px;
 	height: 24px;
 	border-radius: 50%;
-	background: var(--color-bg-primary);
+	background: var(--color-white);
 	box-shadow: var(--shadow-sm);
 	transition: transform var(--transition-base);
+}
+
+.account-toggle:focus-visible {
+	outline: 3px solid color-mix(in srgb, var(--color-accent) 32%, transparent);
+	outline-offset: 2px;
+}
+
+.account-toggle:disabled {
+	opacity: 0.65;
+	cursor: wait;
 }
 
 .account-toggle-active {
@@ -228,12 +250,14 @@
 .account-overview-section h2 {
 	margin: 0 0 var(--space-lg);
 	font-size: var(--font-size-xl);
-	color: var(--color-primary-dark);
+	color: var(--color-text-primary);
 }
 
-.account-overview-section {
+.section.section-flat.account-overview-section,
+.section.section-flat.account-overview-state {
 	margin-bottom: var(--space-xl);
-	padding: var(--space-xl);
+	padding: 0 0 var(--space-xl);
+	border-bottom: 1px solid var(--color-gray-300);
 }
 
 .account-overview-state {
@@ -242,7 +266,7 @@
 
 .account-course-list {
 	display: grid;
-	gap: var(--space-sm);
+	gap: 0;
 }
 
 .account-course-row {
@@ -251,12 +275,14 @@
 	justify-content: space-between;
 	gap: var(--space-lg);
 	width: 100%;
-	padding: var(--space-md) var(--space-lg);
-	border: 1px solid var(--color-gray-300);
-	border-radius: var(--radius-md);
-	background: var(--color-bg-primary);
+	padding: var(--space-md) 0;
+	border: 0;
+	border-bottom: 1px solid var(--color-gray-200);
+	border-radius: 0;
+	background: transparent;
 	color: var(--color-text-primary);
 	text-align: left;
+	text-decoration: none;
 	cursor: pointer;
 	transition:
 		border-color var(--transition-base),
@@ -267,10 +293,9 @@
 
 .account-course-row:hover,
 .account-course-row:focus-visible {
-	border-color: var(--color-accent);
-	background: var(--color-accent-light);
-	box-shadow: var(--shadow-sm);
-	transform: translateY(-1px);
+	background: color-mix(in srgb, var(--color-accent-light) 52%, transparent);
+	box-shadow: inset 3px 0 var(--color-accent);
+	transform: none;
 	outline: none;
 }
 
@@ -292,18 +317,27 @@
 .account-usage-grid {
 	display: grid;
 	grid-template-columns: repeat(4, minmax(0, 1fr));
-	gap: var(--space-md);
+	gap: 0;
+	overflow: hidden;
+	border: 1px solid var(--color-gray-300);
+	border-radius: var(--radius-sm);
+	background: var(--color-bg-primary);
 }
 
 .account-usage-grid div {
 	display: grid;
 	gap: var(--space-xs);
 	padding: var(--space-lg);
-	border: 1px solid var(--color-gray-300);
-	border-radius: var(--radius-md);
-	background: var(--color-bg-primary);
-	box-shadow: var(--shadow-sm);
+	border: 0;
+	border-right: 1px solid var(--color-gray-200);
+	border-radius: 0;
+	background: transparent;
+	box-shadow: none;
 	border-top: 3px solid var(--color-accent);
+}
+
+.account-usage-grid div:last-child {
+	border-right: 0;
 }
 
 .account-usage-grid div:nth-child(2) {
@@ -328,14 +362,6 @@
 @media (max-width: 900px) {
 	.account-lead {
 		font-size: var(--font-size-base);
-	}
-
-	.account-card {
-		padding: var(--space-lg);
-	}
-
-	.account-overview-section {
-		padding: var(--space-lg);
 	}
 
 	.account-profile-header {
@@ -390,8 +416,22 @@
 		align-items: flex-start;
 	}
 
+	.account-theme-control {
+		flex-direction: column;
+		align-items: flex-end;
+		gap: var(--space-xs);
+	}
+
 	.account-usage-grid {
 		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+
+	.account-usage-grid div:nth-child(2) {
+		border-right: 0;
+	}
+
+	.account-usage-grid div:nth-child(-n + 2) {
+		border-bottom: 1px solid var(--color-gray-200);
 	}
 }
 
@@ -413,5 +453,15 @@
 
 	.account-usage-grid {
 		grid-template-columns: 1fr;
+	}
+
+	.account-usage-grid div,
+	.account-usage-grid div:nth-child(2) {
+		border-right: 0;
+		border-bottom: 1px solid var(--color-gray-200);
+	}
+
+	.account-usage-grid div:last-child {
+		border-bottom: 0;
 	}
 }

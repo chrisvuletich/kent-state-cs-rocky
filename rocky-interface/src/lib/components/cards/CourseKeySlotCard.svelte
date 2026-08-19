@@ -117,6 +117,7 @@
 				type="text"
 				value={keyName}
 				placeholder="Key name"
+				aria-label={`${title} key name`}
 				oninput={(event) => onKeyNameChange((event.currentTarget as HTMLInputElement).value)}
 			/>
 		</div>

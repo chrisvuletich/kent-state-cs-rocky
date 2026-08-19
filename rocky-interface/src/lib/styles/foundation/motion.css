@@ -1,0 +1,25 @@
+/* Keep interface state visible while removing nonessential movement for users
+   who request reduced motion. Component-specific rules may additionally reset
+   transforms when an animation would otherwise move content off screen. */
+@media (prefers-reduced-motion: reduce) {
+	:root {
+		--transition-fast: 0ms;
+		--transition-base: 0ms;
+		--transition-slow: 0ms;
+	}
+
+	html:focus-within {
+		scroll-behavior: auto;
+	}
+
+	*,
+	*::before,
+	*::after {
+		scroll-behavior: auto !important;
+		transition-delay: 0ms !important;
+		transition-duration: 0ms !important;
+		animation-delay: 0ms !important;
+		animation-duration: 1ms !important;
+		animation-iteration-count: 1 !important;
+	}
+}

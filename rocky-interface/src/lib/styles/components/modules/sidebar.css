@@ -24,6 +24,7 @@
 	cursor: pointer;
 	font-size: var(--font-size-lg);
 	font-weight: var(--font-weight-semibold);
+	text-decoration: none;
 	transition: background-color var(--transition-base);
 	border-left: 4px solid transparent;
 }
@@ -59,6 +60,9 @@
 .sidebar-navigation {
 	flex: 1;
 	min-height: 0;
+	overflow-y: auto;
+	overscroll-behavior: contain;
+	scrollbar-width: thin;
 }
 
 .sidebar-footer {
@@ -83,8 +87,7 @@
 	}
 
 	.sidebar-navigation {
-		overflow-y: auto;
-		overscroll-behavior: contain;
+		scrollbar-width: auto;
 	}
 
 	.sidebar-footer {
@@ -186,6 +189,7 @@
 	cursor: pointer;
 	text-align: left;
 	transition: background var(--transition-fast);
+	text-decoration: none;
 }
 
 .course-popout-item:hover {

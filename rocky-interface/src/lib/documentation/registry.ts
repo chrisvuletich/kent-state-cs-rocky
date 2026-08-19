@@ -1,14 +1,29 @@
 export type DocumentationCategory = 'developer' | 'examples' | 'administration';
+export type DocumentationAudience = 'all' | 'instructor' | 'admin';
 
 export type DocumentationDocument = {
 	id: string;
 	title: string;
 	description: string;
 	category: DocumentationCategory;
-	audience: 'all' | 'administration';
+	audience: DocumentationAudience;
 	order: number;
 	path: string;
 };
+
+export type DocumentationViewer = {
+	isAdmin?: boolean;
+	role?: string;
+} | null;
+
+export function canViewDocumentation(
+	document: DocumentationDocument,
+	viewer: DocumentationViewer | undefined
+): boolean {
+	if (document.audience === 'all') return true;
+	if (viewer?.isAdmin) return true;
+	return document.audience === 'instructor' && viewer?.role === 'instructor';
+}
 
 export const documentation: DocumentationDocument[] = [
 	{
@@ -84,12 +99,30 @@ export const documentation: DocumentationDocument[] = [
 		path: '/docs/developer/curl-example.md'
 	},
 	{
+		id: 'streaming',
+		title: 'Streaming Example',
+		description: 'Consume Rocky text incrementally with Server-Sent Events.',
+		category: 'examples',
+		audience: 'all',
+		order: 4,
+		path: '/docs/developer/streaming-example.md'
+	},
+	{
+		id: 'image-input',
+		title: 'Image Input Example',
+		description: 'Analyze bounded local JPEG, PNG, and WebP images.',
+		category: 'examples',
+		audience: 'all',
+		order: 5,
+		path: '/docs/developer/image-input-example.md'
+	},
+	{
 		id: 'email-scam-detector',
 		title: 'Email Scam Detector',
 		description: 'Detect potential phishing emails using the Rocky API.',
 		category: 'examples',
 		audience: 'all',
-		order: 4,
+		order: 6,
 		path: '/docs/developer/email-scam-detector.md'
 	},
 	{
@@ -98,7 +131,7 @@ export const documentation: DocumentationDocument[] = [
 		description:
 			'Learn how to edit a course roster, add students manually, import a Canvas CSV, and confirm enrollment.',
 		category: 'administration',
-		audience: 'administration',
+		audience: 'instructor',
 		order: 1,
 		path: '/docs/administration/course-roster-workflow.md'
 	},
@@ -108,7 +141,7 @@ export const documentation: DocumentationDocument[] = [
 		description:
 			'Manage users, search accounts, update roles, activate or deactivate accounts, and perform bulk user management.',
 		category: 'administration',
-		audience: 'administration',
+		audience: 'admin',
 		order: 2,
 		path: '/docs/administration/user-management.md'
 	},
@@ -118,7 +151,7 @@ export const documentation: DocumentationDocument[] = [
 		description:
 			'View, search, filter, activate, deactivate, and manage API keys for users and courses.',
 		category: 'administration',
-		audience: 'administration',
+		audience: 'admin',
 		order: 3,
 		path: '/docs/administration/managing-api-keys.md'
 	},
@@ -128,7 +161,7 @@ export const documentation: DocumentationDocument[] = [
 		description:
 			'Learn how to use the dashboard, analytics, audit logs, system metrics, and other administrative tools.',
 		category: 'administration',
-		audience: 'administration',
+		audience: 'admin',
 		order: 4,
 		path: '/docs/administration/admin-dashboard.md'
 	}

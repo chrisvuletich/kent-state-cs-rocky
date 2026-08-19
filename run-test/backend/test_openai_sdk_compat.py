@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import httpx
 from openai import AuthenticationError, OpenAI
@@ -14,6 +15,7 @@ from openai import AuthenticationError, OpenAI
 ROOT = Path(__file__).resolve().parents[2]
 API_ROCKY_DIR = ROOT / "api-rocky"
 MODULE_PATH = API_ROCKY_DIR / "api.py"
+IMAGE_INPUT_FIXTURE = ROOT / "run-test" / "fixtures" / "responses_image_input.json"
 
 
 def load_test_api():
@@ -66,6 +68,34 @@ class OpenAiSdkCompatibilityTests(unittest.TestCase):
             max_retries=0,
         )
 
+    def granite_stream(self, *deltas: str):
+        upstream_response = Mock()
+        events = [
+            {"type": "delta", "text": delta}
+            for delta in deltas
+        ]
+        events.append(
+            {
+                "type": "completed",
+                "telemetry": {
+                    "provider": {
+                        "prompt_eval_count": 2,
+                        "eval_count": 2,
+                    },
+                },
+                "metadata": {},
+            }
+        )
+        return self.api.GraniteEventStream(
+            upstream_response,
+            iter(
+                json.dumps(event, separators=(",", ":")).encode("utf-8") + b"\n"
+                for event in events
+            ),
+            [0],
+            self.api.INFERENCE_MODEL,
+        )
+
     def test_models_list_parses_with_official_sdk(self):
         with patch.object(self.api, "get_key_doc", return_value={"key_id": "key-one"}):
             with self.sdk_client() as client:
@@ -102,6 +132,101 @@ class OpenAiSdkCompatibilityTests(unittest.TestCase):
 
         self.assertEqual(response.status, "completed")
         self.assertEqual(response.output_text, "Compatible response")
+
+    def test_response_stream_iterates_with_official_sdk(self):
+        granite_stream = self.granite_stream("Compatible ", "stream")
+        with (
+            patch.object(self.api, "ENABLE_STREAMING", True),
+            patch.object(
+                self.api,
+                "get_key_doc",
+                return_value={"key_id": "key-one", "owner_id": "student-one"},
+            ),
+            patch.object(
+                self.api,
+                "request_ai_stream",
+                return_value=granite_stream,
+            ),
+        ):
+            with self.sdk_client() as client:
+                stream = client.responses.create(
+                    model=self.api.PUBLIC_MODEL,
+                    input="Compatibility check",
+                    store=False,
+                    stream=True,
+                )
+                received = list(stream)
+
+        self.assertEqual(received[0].type, "response.created")
+        self.assertEqual(received[-1].type, "response.completed")
+        self.assertEqual(received[-1].response.output_text, "Compatible stream")
+
+    def test_response_image_input_can_stream_through_official_sdk(self):
+        payload = json.loads(IMAGE_INPUT_FIXTURE.read_text(encoding="utf-8"))
+        content = payload["input"][0]["content"]
+        granite_stream = self.granite_stream("Compatible image ", "stream")
+        with (
+            patch.object(self.api, "ENABLE_STREAMING", True),
+            patch.object(self.api, "ENABLE_IMAGE_INPUT", True),
+            patch.object(
+                self.api,
+                "get_key_doc",
+                return_value={"key_id": "key-one", "owner_id": "student-one"},
+            ),
+            patch.object(
+                self.api,
+                "request_ai_stream",
+                return_value=granite_stream,
+            ) as request_ai_stream,
+        ):
+            with self.sdk_client() as client:
+                stream = client.responses.create(
+                    model=self.api.PUBLIC_MODEL,
+                    input=[{"role": "user", "content": content}],
+                    store=False,
+                    stream=True,
+                )
+                received = list(stream)
+
+        self.assertEqual(received[-1].type, "response.completed")
+        self.assertEqual(received[-1].response.output_text, "Compatible image stream")
+        internal_image = request_ai_stream.call_args.args[0]["input"][0]["content"][1]
+        self.assertEqual(internal_image["type"], "input_image")
+        self.assertEqual(internal_image["mime_type"], "image/png")
+        self.assertNotIn("image_url", internal_image)
+
+    def test_response_image_input_is_accepted_from_official_sdk(self):
+        payload = json.loads(IMAGE_INPUT_FIXTURE.read_text(encoding="utf-8"))
+        content = payload["input"][0]["content"]
+        with (
+            patch.object(self.api, "ENABLE_IMAGE_INPUT", True),
+            patch.object(
+                self.api,
+                "get_key_doc",
+                return_value={"key_id": "key-one", "owner_id": "student-one"},
+            ),
+            patch.object(
+                self.api,
+                "request_ai",
+                return_value={
+                    "output_text": "Compatible image response",
+                    "model": self.api.INFERENCE_MODEL,
+                    "metadata": {},
+                },
+            ) as request_ai,
+        ):
+            with self.sdk_client() as client:
+                response = client.responses.create(
+                    model=self.api.PUBLIC_MODEL,
+                    input=[{"role": "user", "content": content}],
+                    store=False,
+                )
+
+        self.assertEqual(response.output_text, "Compatible image response")
+        internal_image = request_ai.call_args.args[0]["input"][0]["content"][1]
+        self.assertEqual(internal_image["type"], "input_image")
+        self.assertEqual(internal_image["mime_type"], "image/png")
+        self.assertNotIn("image_url", internal_image)
 
     def test_authentication_error_parses_with_official_sdk(self):
         with patch.object(self.api, "get_key_doc", return_value=None):

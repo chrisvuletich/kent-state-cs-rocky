@@ -1,13 +1,14 @@
 <script lang="ts">
 	import '$lib/styles/components/modules/admin-panel.css';
+	import { page } from '$app/stores';
 	import { onMount } from 'svelte';
 	import { fetchUsersForViews } from '$lib/api/users';
 	import { fetchCourses } from '$lib/api/content';
 	import { fetchCourseApiKeys } from '$lib/api/courses';
 	import { fetchAnalyticsBreakdown } from '$lib/api/analytics';
 	import { fetchAuditLogs } from '$lib/api/audit';
-	import { currentFrame } from '$lib/stores/frameStore';
 	import { analyticsCourseLabel } from '$lib/analytics/courseLabels';
+	import { appHref } from '$lib/navigation/appRoute';
 
 	import {
 		IconUsers,
@@ -179,7 +180,7 @@
 			<div class="card-header">
 				<IconListDetails size={20} />
 				<h2>Recent Audit Logs</h2>
-				<button type="button" onclick={() => currentFrame.set('audit')}>View All Logs</button>
+				<a href={appHref($page.url, { frame: 'audit' })}>View All Logs</a>
 			</div>
 
 			<div class="admin-audit-table-wrap">

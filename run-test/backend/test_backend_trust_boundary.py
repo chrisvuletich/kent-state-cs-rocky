@@ -217,9 +217,24 @@ class NginxTrustBoundaryTests(unittest.TestCase):
         self.assertIn("add_header Retry-After \"1\" always;", gateway_block)
         self.assertIn('"code":"ingress_rate_limit_exceeded"', gateway_block)
 
-    def test_public_generation_body_limit_matches_the_application(self):
+    def test_public_generation_has_a_bounded_multimodal_ingress_ceiling(self):
         block = self._location_block("/v1/responses")
-        self.assertIn("client_max_body_size 256k;", block)
+        self.assertIn("client_max_body_size 10m;", block)
+        self.assertIn(
+            "error_page 413 = @rocky_ingress_request_too_large;",
+            self.nginx_config,
+        )
+        gateway_block = self.nginx_config[
+            self.nginx_config.index(
+                "    location @rocky_ingress_request_too_large {"
+            ) :
+        ]
+        self.assertIn("default_type application/json;", gateway_block)
+        self.assertIn('"code":"request_too_large"', gateway_block)
+
+    def test_public_generation_disables_proxy_buffering_for_sse(self):
+        block = self._location_block("/v1/responses")
+        self.assertIn("proxy_buffering off;", block)
 
 
 if __name__ == "__main__":

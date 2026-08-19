@@ -32,13 +32,9 @@ class RoleJourneyE2ETests(FrontendBrowserTestCase):
         self._wait_for_post_login_navigation()
 
     def _open_course_menu(self) -> None:
-        self._click_element(
-            By.XPATH,
-            "//nav[contains(@class,'sidebar')]//button"
-            "[.//span[contains(@class,'nav-link-label') and normalize-space()='Courses']]",
-        )
+        self._click_sidebar_destination("Courses")
         self.wait.until(
-            EC.visibility_of_element_located((By.CSS_SELECTOR, ".course-popout[role='menu']")),
+            EC.visibility_of_element_located((By.CSS_SELECTOR, ".course-popout[role='group']")),
             message="Expected the course list popout.",
         )
 
@@ -47,7 +43,8 @@ class RoleJourneyE2ETests(FrontendBrowserTestCase):
         self._click_element(
             By.XPATH,
             "//div[contains(@class,'course-popout-list')]"
-            f"//button[.//span[contains(@class,'course-item-name') and normalize-space()='{course_name}']]",
+            "//*[self::a or self::button]"
+            f"[.//span[contains(@class,'course-item-name') and normalize-space()='{course_name}']]",
         )
         self._assert_title("Courses")
         self.wait.until(
@@ -94,10 +91,8 @@ class RoleJourneyE2ETests(FrontendBrowserTestCase):
             message="Expected dismissing the key to remove its plaintext value.",
         )
 
-        self._click_element(
-            By.XPATH,
-            "//nav[contains(@class,'sidebar')]//button[normalize-space()='Dashboard']",
-        )
+        self._click_sidebar_destination("Dashboard")
+        self._assert_title("Dashboard")
         self._open_course_from_sidebar("Database Systems")
         self.assertEqual(len(self.driver.find_elements(By.CSS_SELECTOR, ".course-key-reveal")), 0)
         self.assertNotIn(raw_key, self.driver.page_source)
@@ -149,7 +144,8 @@ class RoleJourneyE2ETests(FrontendBrowserTestCase):
         self._click_element(
             By.XPATH,
             "//div[contains(@class,'course-popout-list')]"
-            "//button[.//span[contains(@class,'course-item-name') and normalize-space()='Software Engineering I']]",
+            "//*[self::a or self::button]"
+            "[.//span[contains(@class,'course-item-name') and normalize-space()='Software Engineering I']]",
         )
         self._assert_title("Courses")
         self.wait.until(
@@ -215,10 +211,7 @@ class RoleJourneyE2ETests(FrontendBrowserTestCase):
             localStorage.setItem('rocky_selected_course', 'phase-four-course');
             """
         )
-        self._click_element(
-            By.XPATH,
-            "//nav[contains(@class,'sidebar')]//button[normalize-space()='Account']",
-        )
+        self._click_sidebar_destination("Account")
         self._click_element(By.XPATH, "//button[normalize-space()='Log Out']")
         self.wait.until(EC.url_contains("/login"))
         self.wait.until(EC.title_is("Sign in | Rocky"))

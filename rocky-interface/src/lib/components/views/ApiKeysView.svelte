@@ -23,6 +23,8 @@
 		course: Course;
 		isActive: boolean;
 	};
+	type SortColumn = 'semester' | 'course' | 'owner' | 'status' | 'created';
+	type SortState = { column: SortColumn; direction: 'asc' | 'desc' };
 
 	let keys: ApiKeyRecord[] = [];
 	let users: User[] = [];
@@ -35,8 +37,7 @@
 	let course = '';
 	let savingKeyId = '';
 	let selectedKeyIds: string[] = [];
-	let sortColumn: 'semester' | 'course' | 'owner' | 'status' | 'created' = 'semester';
-	let sortDirection: 'asc' | 'desc' = 'desc';
+	let sortState: SortState = { column: 'semester', direction: 'desc' };
 
 	$: semesters = [...new Set(keys.map((key) => key.course.semester))].sort(
 		(first, second) => semesterValue(second) - semesterValue(first)
@@ -68,7 +69,7 @@
 				(!course || String(key.course.id) === course)
 			);
 		})
-		.sort(compareKeys);
+		.sort((first, second) => compareKeys(first, second, sortState));
 	$: {
 		const visibleSelectedKeyIds = selectedKeyIds.filter((keyId) =>
 			visibleKeys.some((key) => key.keyId === keyId)
@@ -144,34 +145,34 @@
 		return Number(match[2]) * 10 + ({ spring: 1, summer: 2, fall: 3 }[match[1].toLowerCase()] || 0);
 	}
 
-	function compareKeys(first: ApiKeyRecord, second: ApiKeyRecord): number {
+	function compareKeys(first: ApiKeyRecord, second: ApiKeyRecord, sort: SortState): number {
 		const firstOwner = findOwner(first).name;
 		const secondOwner = findOwner(second).name;
 		const firstValue =
-			sortColumn === 'semester'
+			sort.column === 'semester'
 				? semesterValue(first.course.semester)
-				: sortColumn === 'course'
+				: sort.column === 'course'
 					? `${first.course.name} ${first.course.code}`
-					: sortColumn === 'owner'
+					: sort.column === 'owner'
 						? firstOwner
-						: sortColumn === 'status'
+						: sort.column === 'status'
 							? String(first.isActive)
 							: new Date(first.created).getTime() || 0;
 		const secondValue =
-			sortColumn === 'semester'
+			sort.column === 'semester'
 				? semesterValue(second.course.semester)
-				: sortColumn === 'course'
+				: sort.column === 'course'
 					? `${second.course.name} ${second.course.code}`
-					: sortColumn === 'owner'
+					: sort.column === 'owner'
 						? secondOwner
-						: sortColumn === 'status'
+						: sort.column === 'status'
 							? String(second.isActive)
 							: new Date(second.created).getTime() || 0;
 		const comparison =
 			typeof firstValue === 'number' && typeof secondValue === 'number'
 				? firstValue - secondValue
 				: String(firstValue).localeCompare(String(secondValue));
-		if (comparison) return sortDirection === 'asc' ? comparison : -comparison;
+		if (comparison) return sort.direction === 'asc' ? comparison : -comparison;
 		return (
 			`${first.course.name} ${first.course.code}`.localeCompare(
 				`${second.course.name} ${second.course.code}`
@@ -179,16 +180,27 @@
 		);
 	}
 
-	function toggleSort(column: typeof sortColumn): void {
-		if (sortColumn === column) sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
-		else {
-			sortColumn = column;
-			sortDirection = column === 'semester' || column === 'created' ? 'desc' : 'asc';
-		}
+	function toggleSort(column: SortColumn): void {
+		sortState = {
+			column,
+			direction:
+				sortState.column === column
+					? sortState.direction === 'asc'
+						? 'desc'
+						: 'asc'
+					: column === 'semester' || column === 'created'
+						? 'desc'
+						: 'asc'
+		};
 	}
 
-	function sortIndicator(column: typeof sortColumn): string {
-		return sortColumn === column ? (sortDirection === 'asc' ? ' ↑' : ' ↓') : '';
+	function sortIndicator(column: SortColumn, sort: SortState): string {
+		return sort.column === column ? (sort.direction === 'asc' ? ' ↑' : ' ↓') : '';
+	}
+
+	function sortAria(column: SortColumn, sort: SortState): 'ascending' | 'descending' | undefined {
+		if (sort.column !== column) return undefined;
+		return sort.direction === 'asc' ? 'ascending' : 'descending';
 	}
 
 	function toggleSelected(keyId: string): void {
@@ -263,7 +275,7 @@
 </script>
 
 <ViewShell title="API Keys">
-	<section class="section audit-log-view">
+	<section class="section section-flat audit-log-view">
 		<p class="audit-intro">View course API keys across Rocky. Key values are never displayed.</p>
 		<div class="audit-filters">
 			<input
@@ -292,7 +304,10 @@
 			>
 		</div>
 		{#if loading}<div class="empty-state"><p>Loading API keys...</p></div>
-		{:else if error}<div class="empty-state"><p>{error}</p></div>
+		{:else if error}<div class="empty-state" role="alert">
+				<p>{error}</p>
+				<button class="view-btn" type="button" onclick={loadKeys}>Try again</button>
+			</div>
 		{:else}<p class="audit-count">
 				{visibleKeys.length} API {visibleKeys.length === 1 ? 'key' : 'keys'}
 			</p>
@@ -324,25 +339,25 @@
 									onchange={toggleAllVisible}
 									aria-label="Select all visible API keys"
 								/></th
-							><th
+							><th aria-sort={sortAria('semester', sortState)}
 								><button class="api-key-sort" type="button" onclick={() => toggleSort('semester')}
-									>Semester{sortIndicator('semester')}</button
+									>Semester{sortIndicator('semester', sortState)}</button
 								></th
-							><th
+							><th aria-sort={sortAria('owner', sortState)}
 								><button class="api-key-sort" type="button" onclick={() => toggleSort('owner')}
-									>Owner{sortIndicator('owner')}</button
+									>Owner{sortIndicator('owner', sortState)}</button
 								></th
-							><th>Role</th><th
+							><th>Role</th><th aria-sort={sortAria('course', sortState)}
 								><button class="api-key-sort" type="button" onclick={() => toggleSort('course')}
-									>Course{sortIndicator('course')}</button
+									>Course{sortIndicator('course', sortState)}</button
 								></th
-							><th>Key</th><th
+							><th>Key</th><th aria-sort={sortAria('status', sortState)}
 								><button class="api-key-sort" type="button" onclick={() => toggleSort('status')}
-									>Status{sortIndicator('status')}</button
+									>Status{sortIndicator('status', sortState)}</button
 								></th
-							><th
+							><th aria-sort={sortAria('created', sortState)}
 								><button class="api-key-sort" type="button" onclick={() => toggleSort('created')}
-									>Created{sortIndicator('created')}</button
+									>Created{sortIndicator('created', sortState)}</button
 								></th
 							><th>Actions</th></tr
 						></thead

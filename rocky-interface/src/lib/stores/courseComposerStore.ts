@@ -2,17 +2,24 @@ import { writable } from 'svelte/store';
 
 export type CourseComposerState = {
 	isOpen: boolean;
+	returnFocusTo: HTMLElement | null;
 };
 
 const DEFAULT_STATE: CourseComposerState = {
-	isOpen: false
+	isOpen: false,
+	returnFocusTo: null
 };
 
 export const courseComposerState = writable<CourseComposerState>(DEFAULT_STATE);
 
-export function openCourseComposer(): void {
+export function openCourseComposer(returnFocusTo?: HTMLElement | null): void {
 	courseComposerState.set({
-		isOpen: true
+		isOpen: true,
+		returnFocusTo:
+			returnFocusTo ??
+			(typeof document !== 'undefined' && document.activeElement instanceof HTMLElement
+				? document.activeElement
+				: null)
 	});
 }
 

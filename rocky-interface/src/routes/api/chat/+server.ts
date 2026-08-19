@@ -2,11 +2,16 @@ import { json, type RequestHandler } from '@sveltejs/kit';
 import {
 	CHAT_API_URL,
 	CHAT_MODEL,
+	CHAT_STREAMING_ENABLED,
 	chatApiPayload,
 	chatRequestHeaders,
 	requireChatUser
 } from '$lib/server/chatProxy';
-import { forwardedChatResponseHeaders } from '$lib/server/chatResponseHeaders';
+import {
+	forwardedChatResponseHeaders,
+	streamingChatResponseHeaders
+} from '$lib/server/chatResponseHeaders';
+import { ChatImageInputError, publicImageContentBlocks } from '$lib/server/chatImageInput';
 
 export const POST: RequestHandler = async ({ request, fetch, locals }) => {
 	const user = requireChatUser(locals);
@@ -14,10 +19,36 @@ export const POST: RequestHandler = async ({ request, fetch, locals }) => {
 	const message = typeof body?.message === 'string' && body.message.trim() ? body.message : '';
 	const conversation_id =
 		typeof body?.conversation_id === 'string' ? body.conversation_id.trim() : '';
-
-	if (!message) {
-		return json({ error: 'Missing message.' }, { status: 400 });
+	let imageBlocks;
+	try {
+		imageBlocks = publicImageContentBlocks(body?.images);
+	} catch (error) {
+		if (!(error instanceof ChatImageInputError)) throw error;
+		return json(
+			{
+				error: {
+					message: error.message,
+					type: 'invalid_request_error',
+					param: 'images',
+					code: 'invalid_image'
+				}
+			},
+			{ status: 400 }
+		);
 	}
+
+	if (!message && imageBlocks.length === 0) {
+		return json({ error: 'Missing message or image.' }, { status: 400 });
+	}
+	const input =
+		imageBlocks.length > 0
+			? [
+					{
+						role: 'user',
+						content: [...(message ? [{ type: 'input_text', text: message }] : []), ...imageBlocks]
+					}
+				]
+			: message;
 
 	try {
 		const response = await fetch(CHAT_API_URL, {
@@ -25,18 +56,41 @@ export const POST: RequestHandler = async ({ request, fetch, locals }) => {
 			signal: request.signal,
 			headers: {
 				'Content-Type': 'application/json',
-				Accept: 'application/json',
+				Accept: CHAT_STREAMING_ENABLED ? 'text/event-stream' : 'application/json',
 				...chatRequestHeaders(user)
 			},
 			body: JSON.stringify(
 				chatApiPayload({
 					model: CHAT_MODEL,
-					input: message,
+					input,
+					...(CHAT_STREAMING_ENABLED ? { stream: true } : {}),
 					store: true,
 					...(conversation_id ? { conversation_id } : {})
 				})
 			)
 		});
+
+		const contentType = response.headers.get('content-type')?.toLowerCase() || '';
+		if (CHAT_STREAMING_ENABLED && response.ok) {
+			if (!response.body || !contentType.startsWith('text/event-stream')) {
+				await response.body?.cancel().catch(() => undefined);
+				return json(
+					{
+						error: {
+							message: 'Rocky chat API returned an invalid streaming response.',
+							type: 'server_error',
+							param: null,
+							code: 'invalid_model_response'
+						}
+					},
+					{ status: 502, headers: forwardedChatResponseHeaders(response.headers) }
+				);
+			}
+			return new Response(response.body, {
+				status: response.status,
+				headers: streamingChatResponseHeaders(response.headers)
+			});
+		}
 
 		const text = await response.text();
 		let payload: unknown = null;

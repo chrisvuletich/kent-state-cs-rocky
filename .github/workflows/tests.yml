@@ -31,8 +31,9 @@ jobs:
         env:
           PYTHONPATH: rocky-backend
         run: |
+          set -o pipefail
           mkdir -p run-test/logs
-          python -m unittest discover -s run-test/backend -p "test_*.py" -v | tee run-test/logs/backend-tests.log
+          python -m unittest discover -s run-test/backend -p "test_*.py" -v 2>&1 | tee run-test/logs/backend-tests.log
 
       - name: Upload backend test log
         if: always()
@@ -43,6 +44,8 @@ jobs:
 
   frontend-tests:
     runs-on: ubuntu-latest
+    env:
+      ROCKY_ENABLE_STREAMING: "false"
 
     steps:
       - name: Checkout
@@ -107,8 +110,9 @@ jobs:
           ROCKY_WEB_PORT: "4173"
           ROCKY_ALLOWED_HOSTS: 127.0.0.1,localhost
         run: |
+          set -o pipefail
           mkdir -p run-test/logs
-          python -m unittest discover -s run-test/frontend -p "test_*.py" -v | tee run-test/logs/frontend-tests.log
+          python -m unittest discover -s run-test/frontend -p "test_*.py" -v 2>&1 | tee run-test/logs/frontend-tests.log
 
       - name: Upload frontend test log
         if: always()

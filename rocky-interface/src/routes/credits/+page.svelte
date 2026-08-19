@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { tick } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import '$lib/styles/routes/modules/credits-view.css';
 
 	type Credit = {
@@ -49,6 +49,11 @@
 	];
 
 	let isRolling = false;
+	let hydrated = false;
+
+	onMount(() => {
+		hydrated = true;
+	});
 
 	function getInitials(name: string): string {
 		return name
@@ -83,7 +88,11 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
-<section class="credits-page" aria-label="Credits">
+<section
+	class="credits-page"
+	aria-label="Credits"
+	data-rocky-page-ready={hydrated ? 'true' : undefined}
+>
 	<div class="credits-ambient credits-ambient-one"></div>
 	<div class="credits-ambient credits-ambient-two"></div>
 

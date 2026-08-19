@@ -6,13 +6,19 @@
 	let { user = null }: { user: User | null } = $props();
 
 	let showAdministration = $derived(Boolean(user?.isAdmin));
+
+	function toggleSidebar() {
+		sidebarOpen.update((open) => !open);
+	}
 </script>
 
 <header class="topbar">
 	<button
 		class="hamburger"
-		aria-label="Toggle menu"
-		onclick={() => sidebarOpen.update((open) => !open)}
+		aria-label={$sidebarOpen ? 'Close navigation menu' : 'Open navigation menu'}
+		aria-expanded={$sidebarOpen}
+		aria-controls="rocky-sidebar-navigation"
+		onclick={toggleSidebar}
 	>
 		<img src="/navbar.svg" alt="" />
 	</button>

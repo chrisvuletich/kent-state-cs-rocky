@@ -51,20 +51,58 @@ students may continue to use `requests`, `curl`, or any other HTTP client.
 
 Path: run-test/frontend
 
+The compact viewport, state, and per-phase UI acceptance matrix is documented
+in [UI_UX_ACCEPTANCE.md](UI_UX_ACCEPTANCE.md). Keep new UI regression coverage
+inside the existing Selenium harness unless a future requirement cannot be
+tested there.
+
 - test_preview_login_chromedriver.py:
   - opens login preview;
   - signs into a mock admin session;
-  - confirms the dashboard loads.
+  - confirms the dashboard loads without document overflow at all five
+    reference viewports.
+- test_dialog_accessibility_chromedriver.py:
+  - verifies modal dialogs move and contain keyboard focus;
+  - verifies Escape closes the topmost surface and restores its opener;
+  - verifies modal backgrounds become inert;
+  - verifies mobile navigation and chat drawers expose their expanded state;
+  - verifies Dashboard, course, and Account disclosures manage focus predictably.
+- test_responsive_layout_chromedriver.py:
+  - verifies short-laptop and landscape navigation remains locally scrollable;
+  - verifies wide user, audit, API-key, and analytics tables contain their overflow;
+  - verifies analytics summaries wrap at landscape and narrow-phone widths.
+- test_form_semantics_chromedriver.py:
+  - verifies field errors are exposed through `aria-invalid` and `aria-describedby`;
+  - verifies user, course, and analytics tabs support roving keyboard focus;
+  - verifies sortable table headers are keyboard-operable and announce their direction;
+  - verifies each route exposes one current sidebar destination.
+- test_chat_resilience_chromedriver.py:
+  - verifies confirmed chat outages disable sending without locking or clearing the draft;
+  - verifies the institutional logging notice remains visible, readable, and associated with the composer;
+  - verifies failed history refreshes keep cached conversations visible and recover through Retry.
+- test_theme_and_inactive_chromedriver.py:
+  - verifies light and dark account preferences survive reload;
+  - checks the primary dark-theme text tokens against the 4.5:1 contrast target;
+  - verifies inactive users receive a truthful sign-out path and signed-out users cannot reopen it.
+- test_css_motion_chromedriver.py:
+  - emulates the operating system's reduced-motion preference;
+  - verifies Credits remain stationary, readable, and scrollable inside their
+    live region;
+  - verifies the explicit system font and zero-duration component transitions.
 - test_view_titles_chromedriver.py:
   - opens login preview (auth gate aware);
   - signs into mock session;
   - clicks each sidebar view;
-  - asserts each view renders the correct page title.
+  - asserts each view renders the correct page title;
+  - verifies course deep links across reload and browser history;
+  - verifies remembered-view fallback and safe invalid/unauthorized links;
+  - verifies secondary Account, Help, and Admin links use canonical URLs.
 - test_admin_management_chromedriver.py:
   - creates a role-aware external whitelist account;
   - verifies the resulting mutation appears in the Admin audit preview.
 - test_priority_reliability_chromedriver.py:
-  - verifies course cards use button semantics;
+  - verifies course cards use addressable link semantics;
+  - verifies completed streamed conversations become addressable in the URL;
   - verifies existing keys warn before regeneration;
   - checks independent Admin Dashboard sections, shareable analytics state, and
     desktop/mobile chat layout.
@@ -77,10 +115,21 @@ Path: run-test/frontend
 
 From the repository root on macOS/Linux:
 
-- All backend and browser tests: `PYTHONPATH=run-test:rocky-backend python run-test/test_all.py`
+- Complete local release gate: `python run-test/test_all.py`
+- Release gate without Selenium: `python run-test/test_all.py --skip-browser`
 - Backend only: `PYTHONPATH=rocky-backend python -m unittest discover -s run-test/backend -p "test_*.py"`
 - Frontend only: `PYTHONPATH=run-test:rocky-backend python -m unittest discover -s run-test/frontend -p "test_*.py"`
 - Granite bridge only: `cd granite-llm-server && python -m unittest discover -s tests -p "test_*.py"`
+
+Run the release gate from an activated project virtual environment after
+installing the backend, compatibility-test, Granite, and frontend dependencies.
+It runs backend tests, Granite tests, frontend unit tests, Svelte type checks,
+formatting checks, a production frontend build using safe testing-mode values
+(including the buffered `ROCKY_ENABLE_STREAMING=false` baseline),
+and browser tests. It continues after a failed step so one run reports every
+failing surface, then exits nonzero if any step failed. `--skip-browser` is for
+machines without Chrome/Edge or WebDriver; do not use it for the final release
+candidate.
 
 From the repository root in Windows PowerShell, set the Python import path first:
 
@@ -96,6 +145,9 @@ the frontend suite.
 
 The frontend also has Node-based checks. From `rocky-interface`, run
 `npm run lint`, `npm run check`, `npm run test:unit`, and `npm run build`.
+Those direct commands expect the frontend `.env` described in
+`rocky-interface/README.md`; the full test runner supplies its own testing
+environment.
 
 ## Backup and restore count baseline
 
@@ -131,9 +183,27 @@ python run-test/integration/deployment_smoke.py
 The default checks do not generate model output or modify application content.
 They are not invisible: the authenticated model-discovery request is retained
 in institutional audit telemetry and consumes one model-discovery quota unit.
-Add `--include-generation` to send one short request with `store: false` and
-verify the generation rate-limit headers too. The generation is also retained
-in institutional audit telemetry, like every other inference request.
+Add `--include-generation`, `--include-streaming`, or `--include-image` to
+verify the corresponding public inference path and its rate-limit headers. The
+streaming and image checks first require the selected model to advertise the
+matching capability. For a final deployment, test buffered generation and every
+advertised optional path with:
+
+```sh
+python run-test/integration/deployment_smoke.py --include-advertised
+```
+
+All three explicit checks may also be combined:
+
+```sh
+python run-test/integration/deployment_smoke.py \
+  --include-generation \
+  --include-streaming \
+  --include-image
+```
+
+Each generation is retained in institutional audit telemetry, including the
+embedded one-pixel image used by the image smoke check.
 
 Use a dedicated instructor or deployment-test key and avoid running the command
 in a tight loop. The smoke test intentionally does not exhaust the key to prove

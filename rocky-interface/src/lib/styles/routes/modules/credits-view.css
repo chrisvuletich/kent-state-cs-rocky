@@ -390,10 +390,17 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-	.credit-card,
-	.credits-rolling .credits-list {
+	.credit-card {
 		transition: none;
-		animation-duration: 1ms;
+	}
+
+	.credits-rolling .credits-list {
+		animation: none;
+		transform: none;
+	}
+
+	.credits-rolling .credits-stage {
+		overflow: auto;
 	}
 }
 

@@ -55,3 +55,5 @@ Now that you understand the basics of APIs, you're ready to begin using the Rock
 - Generate your API key.
 - Read the Python example.
 - Explore the API Reference.
+- Try the Streaming Example when your model advertises streaming.
+- Try the Image Input Example with course-appropriate local images.
