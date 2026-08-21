@@ -7,11 +7,7 @@
     "role": "admin",
     "is_active": true,
     "settings": {
-      "themePreference": "light",
-      "widgets": [
-        "analytics",
-        "system-info"
-      ]
+      "themePreference": "light"
     }
   },
   {
@@ -22,10 +18,7 @@
     "role": "instructor",
     "is_active": true,
     "settings": {
-      "themePreference": "light",
-      "widgets": [
-        "notifications"
-      ]
+      "themePreference": "light"
     }
   },
   {
@@ -36,8 +29,7 @@
     "role": "instructor",
     "is_active": true,
     "settings": {
-      "themePreference": "light",
-      "widgets": []
+      "themePreference": "light"
     }
   },
   {
@@ -48,12 +40,7 @@
     "role": "student",
     "is_active": true,
     "settings": {
-      "themePreference": "light",
-      "widgets": [
-        "notifications",
-        "system-info",
-        "analytics"
-      ]
+      "themePreference": "light"
     }
   },
   {
@@ -64,11 +51,7 @@
     "role": "student",
     "is_active": true,
     "settings": {
-      "themePreference": "light",
-      "widgets": [
-        "analytics",
-        "notifications"
-      ]
+      "themePreference": "light"
     }
   },
   {
@@ -79,11 +62,7 @@
     "role": "student",
     "is_active": true,
     "settings": {
-      "themePreference": "dark",
-      "widgets": [
-        "analytics",
-        "system-info"
-      ]
+      "themePreference": "dark"
     }
   },
   {
@@ -94,10 +73,7 @@
     "role": "student",
     "is_active": true,
     "settings": {
-      "themePreference": "dark",
-      "widgets": [
-        "notifications"
-      ]
+      "themePreference": "dark"
     }
   }
 ]

@@ -50,7 +50,7 @@ describe('consumeRockyResponseStream', () => {
 	it('decodes split UTF-8 chunks and reports cumulative text deltas', async () => {
 		const encoded = new TextEncoder().encode(encodeEvents(successfulEvents(), '\r\n'));
 		const emoji = new TextEncoder().encode('🪨');
-		const emojiIndex = encoded.findIndex((value, index) =>
+		const emojiIndex = encoded.findIndex((_value, index) =>
 			emoji.every((emojiByte, offset) => encoded[index + offset] === emojiByte)
 		);
 		const chunks = [encoded.slice(0, emojiIndex + 1), encoded.slice(emojiIndex + 1)];

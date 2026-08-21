@@ -432,32 +432,11 @@ class RockyDoctor:
         return [DoctorCheck("PASS", "ROCKY_REQUIRE_REQUEST_LOGGING", value)]
 
     def frontend_flag_checks(self) -> list[DoctorCheck]:
-        checks: list[DoctorCheck] = []
-        for name in ("PUBLIC_ENABLE_DBTEST", "PUBLIC_ENABLE_MICROSOFT_OAUTH"):
-            value = env(name, "false").lower()
-            if value not in {"true", "false"}:
-                checks.append(
-                    DoctorCheck(
-                        "FAIL",
-                        name,
-                        "Must be exactly true or false.",
-                    )
-                )
-            elif (
-                name == "PUBLIC_ENABLE_DBTEST"
-                and self.public_app_env == "production"
-                and value == "true"
-            ):
-                checks.append(
-                    DoctorCheck(
-                        "FAIL",
-                        name,
-                        "Must be false in production.",
-                    )
-                )
-            else:
-                checks.append(DoctorCheck("PASS", name, value))
-        return checks
+        name = "PUBLIC_ENABLE_MICROSOFT_OAUTH"
+        value = env(name, "false").lower()
+        if value not in {"true", "false"}:
+            return [DoctorCheck("FAIL", name, "Must be exactly true or false.")]
+        return [DoctorCheck("PASS", name, value)]
 
     def secret_checks(self) -> list[DoctorCheck]:
         checks: list[DoctorCheck] = []

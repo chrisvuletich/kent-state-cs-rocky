@@ -13,18 +13,6 @@ async function parseResponse<T>(response: Response, action: string): Promise<T> 
 	return (await response.json()) as T;
 }
 
-export async function fetchCurrentUserSettings(): Promise<UserSettings> {
-	const response = await fetch('/api/user-settings', {
-		method: 'GET',
-		headers: {
-			Accept: 'application/json'
-		}
-	});
-
-	const payload = await parseResponse<{ settings: UserSettings }>(response, 'Fetch user settings');
-	return payload.settings;
-}
-
 export async function updateCurrentUserSetting<K extends UserSettingKey>(
 	key: K,
 	value: UserSettings[K]

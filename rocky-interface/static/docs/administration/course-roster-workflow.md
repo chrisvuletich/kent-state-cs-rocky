@@ -24,10 +24,10 @@ Enter the student’s Kent email address, then select **Add User**.
 
 To add the full class at once, select **Import Canvas CSV** and upload the roster exported from Canvas.
 
-![The current Edit Roster page with the Import Canvas CSV control above the roster](/class_doc_2.9.png)
+![The current Edit Roster page with the Import Canvas CSV control above the roster](/class_doc_2.png)
 
 ## 5. Confirm the roster
 
 Added students appear in the roster table with their name, email, role, and API key limit.
 
-![An added student displayed in the course roster table](/class_doc_4.png)
+![An added student displayed in the course roster table](/class_doc_1.png)

@@ -163,8 +163,6 @@ Useful endpoints:
 - `GET /analytics/hardware`
 - `GET /analytics/breakdown`
 - `GET /analytics/requests`
-- `GET /widgets/default`
-- `GET /help/faq`
 
 Admin-only endpoints require the admin headers passed by the Svelte proxy layer.
 The frontend `Analytics` frame consumes these endpoints as a responsive
@@ -195,10 +193,7 @@ Backend-owned fixtures live in:
 
 - `rocky-backend/seed-data/account/users.json`
 - `rocky-backend/seed-data/courses/courses.json`
-- `rocky-backend/seed-data/analytics/kpis.json`
-- `rocky-backend/seed-data/analytics/activity.json`
-- `rocky-backend/seed-data/widgets/widgets.json`
-- `rocky-backend/seed-data/help/faq.json`
+- `rocky-backend/seed-data/api_history.json`
 
 Seed the backend database with:
 

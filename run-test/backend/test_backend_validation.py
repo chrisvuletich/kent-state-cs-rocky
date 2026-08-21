@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 
-from backend.test_support import BackendTestCase, main, seed_backend
+from test_support import BackendTestCase, main, seed_backend
 
 
 class BackendValidationTests(BackendTestCase):
@@ -232,8 +232,8 @@ class BackendValidationTests(BackendTestCase):
         self.assertEqual(len(saved.get("members", [])), 2)
         self.assertEqual(len(saved.get("groups", [])), 1)
 
-    def test_legacy_api_key_endpoint_removed(self):
-        self._log("Posting to removed legacy /api_keys endpoint. Expecting HTTP 404.")
+    def test_unscoped_api_key_creation_endpoint_is_unavailable(self):
+        self._log("Posting to unscoped /api_keys endpoint. Expecting HTTP 404.")
         response = self.client.post(
             "/api_keys",
             json={"u_id": "good.user@kent.edu", "c_id": "course-1", "expire": "not-iso"},

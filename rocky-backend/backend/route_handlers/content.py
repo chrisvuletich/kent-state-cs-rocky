@@ -387,7 +387,7 @@ def _export_row(row: dict[str, Any]) -> dict[str, Any]:
     response_content = response_record.get("output_text", response_record.get("body"))
     return {
         "request_id": row.get("request_id") or row.get("_id"),
-        "received_at": row.get("received_at") or row.get("accepted_at"),
+        "received_at": row.get("received_at"),
         "terminal_at": row.get("terminal_at"),
         "user_id": actor.get("user_id"),
         "user_email": actor.get("email"),
@@ -399,12 +399,12 @@ def _export_row(row: dict[str, Any]) -> dict[str, Any]:
         "source": row.get("source"),
         "operation": row.get("operation") or "responses.create",
         "public_model": model.get("public_model") or request_record.get("model"),
-        "actual_model": model.get("actual_model") or row.get("actual_model"),
+        "actual_model": model.get("actual_model"),
         "outcome": outcome(row),
         "http_status": row.get("http_status"),
-        "request_latency_ms": performance.get("request_latency_ms") or row.get("request_latency_ms"),
-        "input_tokens": usage.get("input_tokens") or row.get("prompt_eval_count"),
-        "output_tokens": usage.get("output_tokens") or row.get("eval_count"),
+        "request_latency_ms": performance.get("request_latency_ms"),
+        "input_tokens": usage.get("input_tokens"),
+        "output_tokens": usage.get("output_tokens"),
         "total_tokens": usage.get("total_tokens"),
         "prompt": prompt,
         "response": response_content,
@@ -588,100 +588,3 @@ def patch_analytics_request_review(deps: dict[str, Any], request_id: str):
     if detail is None:
         return jsonify({"error": "Telemetry request not found."}), 404
     return jsonify(detail)
-
-
-def get_analytics_kpis(deps: dict[str, Any]):
-    """Compatibility response for the current dashboard during Phase 2."""
-    unauthorized = _require_analytics_admin(deps)
-    if unauthorized:
-        return unauthorized
-    try:
-        rows, window, start, end = _analytics_rows(deps)
-        metrics = summary(rows, window, start, end)
-    except AnalyticsQueryError as error:
-        return _analytics_error(error)
-    except Exception as error:
-        return _analytics_failure(deps, error)
-
-    latency = metrics["latency_ms"]["average"]
-    success = metrics["success_rate"]
-    return jsonify([
-        {
-            "label": f"Total Requests ({window})",
-            "value": f'{metrics["requests"]:,}',
-            "delta": f'{metrics["rates"]["average_requests_per_minute"]:,} avg RPM',
-        },
-        {
-            "label": "Average Response Time",
-            "value": f"{latency:,.0f} ms" if latency is not None else "N/A",
-            "delta": f'{metrics["latency_ms"]["samples"]:,} samples',
-        },
-        {
-            "label": "Model Success Rate",
-            "value": f"{success * 100:.1f}%" if success is not None else "N/A",
-            "delta": "Completed inference attempts",
-        },
-        {
-            "label": f"Total Tokens ({window})",
-            "value": f'{metrics["usage"]["total_tokens"]:,}',
-            "delta": f'{metrics["rates"]["average_tokens_per_minute"]:,} avg TPM',
-        },
-    ])
-
-
-def get_analytics_activity(deps: dict[str, Any]):
-    """Compatibility response for the current dashboard during Phase 2."""
-    unauthorized = _require_analytics_admin(deps)
-    if unauthorized:
-        return unauthorized
-    try:
-        rows, window, start, end = _analytics_rows(deps)
-        bucket, _ = resolve_bucket(
-            window, start, end, request.args.get("bucket")
-        )
-        result = timeseries(rows, window, start, end, bucket)
-    except AnalyticsQueryError as error:
-        return _analytics_error(error)
-    except Exception as error:
-        return _analytics_failure(deps, error)
-
-    activity = []
-    for item in result["buckets"]:
-        success = item["success_rate"]
-        activity.append({
-            "window": f'{item["start"]} – {item["end"]}',
-            "requests": item["requests"],
-            "flagged": item["flagged"],
-            "successRate": f"{success * 100:.1f}%" if success is not None else "N/A",
-        })
-    return jsonify(activity)
-
-
-def get_default_widgets(deps: dict[str, Any]):
-    require_requester_identity = deps["require_requester_identity"]
-    _resolve_requester_user_id = deps["_resolve_requester_user_id"]
-    _resolve_user_record = deps["_resolve_user_record"]
-    _can_access_user_record = deps["_can_access_user_record"]
-    _get_settings_for_user = deps["_get_settings_for_user"]
-
-    identity = require_requester_identity()
-    if identity[0] is None:
-        return jsonify({"error": "Authentication headers are required."}), 401
-
-    email, is_admin = identity
-    requester_id = _resolve_requester_user_id(email)
-    user_record = _resolve_user_record(requester_id, email)
-    if not user_record:
-        return jsonify({"error": "User not found"}), 404
-
-    if not _can_access_user_record(email, is_admin, user_record):
-        return jsonify({"error": "You may only access your own settings."}), 403
-
-    settings_payload = _get_settings_for_user(user_record)
-    return jsonify(settings_payload.get("widgets", []))
-
-
-def get_help_faq(deps: dict[str, Any]):
-    _get_collection_snapshot = deps["_get_collection_snapshot"]
-    help_faq = deps["help_faq"]
-    return jsonify(_get_collection_snapshot(help_faq))

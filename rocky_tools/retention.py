@@ -47,7 +47,7 @@ class RequestRetention:
     def run(self, cutoff: datetime, *, apply: bool = False) -> RetentionResult:
         matching: list[tuple[Any, datetime]] = []
         for row in self.telemetry_interactions.find({}):
-            timestamp = _as_utc(row.get("received_at") or row.get("accepted_at"))
+            timestamp = _as_utc(row.get("received_at"))
             if timestamp is not None and timestamp < cutoff:
                 matching.append((row.get("_id"), timestamp))
 

@@ -48,7 +48,6 @@ def production_env():
         "ROCKY_RESPONSES_RATE_LIMIT_PER_MINUTE": "10",
         "ROCKY_MODELS_RATE_LIMIT_PER_MINUTE": "120",
         "PUBLIC_ENABLE_MICROSOFT_OAUTH": "true",
-        "PUBLIC_ENABLE_DBTEST": "false",
         "PUBLIC_MICROSOFT_CLIENT_ID": "client-id",
         "PUBLIC_MICROSOFT_TENANT_ID": "tenant-id",
     }
@@ -318,14 +317,9 @@ class RockyDoctorTests(unittest.TestCase):
         self.assertNotIn("PUBLIC_MICROSOFT_CLIENT_ID", failures)
         self.assertNotIn("PUBLIC_MICROSOFT_TENANT_ID", failures)
 
-    def test_production_rejects_dbtest_and_invalid_boolean_flags(self):
+    def test_production_rejects_invalid_frontend_boolean_flags(self):
         values = production_env()
-        values.update(
-            {
-                "PUBLIC_ENABLE_DBTEST": "true",
-                "PUBLIC_ENABLE_MICROSOFT_OAUTH": "yes",
-            }
-        )
+        values["PUBLIC_ENABLE_MICROSOFT_OAUTH"] = "yes"
         with patch.dict("os.environ", values, clear=True):
             checks = RockyDoctor(
                 include_network=False,
@@ -333,7 +327,6 @@ class RockyDoctorTests(unittest.TestCase):
             ).run()
 
         failures = {check.name for check in checks if check.failed}
-        self.assertIn("PUBLIC_ENABLE_DBTEST", failures)
         self.assertIn("PUBLIC_ENABLE_MICROSOFT_OAUTH", failures)
 
     def test_production_requires_request_logging(self):
@@ -382,7 +375,6 @@ class RockyDoctorTests(unittest.TestCase):
         values = {
             "ROCKY_APP_ENV": "development",
             "ROCKY_DB_BACKEND": "mongita",
-            "PUBLIC_ENABLE_DBTEST": "false",
             "PUBLIC_ENABLE_MICROSOFT_OAUTH": "false",
         }
         with patch.dict("os.environ", values, clear=True):

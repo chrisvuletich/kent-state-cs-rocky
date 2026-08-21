@@ -202,36 +202,18 @@ class RoleJourneyE2ETests(FrontendBrowserTestCase):
         warning.dismiss()
         self.capture_evidence("instructor-student-group-keys")
 
-    def test_4_logout_clears_account_state_and_protects_the_app(self):
+    def test_4_logout_clears_the_session_and_protects_the_app(self):
         self._login_as("admin.local@kent.edu")
-        self.driver.execute_script(
-            """
-            localStorage.setItem('rocky.currentUser', 'phase-four-user');
-            localStorage.setItem('rocky_current_frame', 'phase-four-frame');
-            localStorage.setItem('rocky_selected_course', 'phase-four-course');
-            """
-        )
         self._click_sidebar_destination("Account")
         self._click_element(By.XPATH, "//button[normalize-space()='Log Out']")
         self.wait.until(EC.url_contains("/login"))
         self.wait.until(EC.title_is("Sign in | Rocky"))
 
-        cached_values = self.driver.execute_script(
-            """
-            return [
-              localStorage.getItem('rocky.currentUser'),
-              localStorage.getItem('rocky_current_frame'),
-              localStorage.getItem('rocky_selected_course')
-            ];
-            """
-        )
-        self.assertEqual(cached_values, [None, None, None])
-
         self.driver.get(f"{BASE_URL}/")
         self.wait.until(EC.url_contains("/login"))
         with self.assertRaises(NoSuchElementException):
             self.driver.find_element(By.CSS_SELECTOR, ".app-shell")
-        self.capture_evidence("logout-clears-account-state")
+        self.capture_evidence("logout-clears-session")
 
 
 if __name__ == "__main__":

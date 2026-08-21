@@ -59,17 +59,3 @@ export async function updateSettingForUser<K extends UserSettingKey>(
 
 	return parseRemoteSettingsResponse(response);
 }
-
-export async function updateSettingsPatchForUser(
-	user: User,
-	patch: Partial<UserSettings>
-): Promise<UserSettings> {
-	const identity = buildIdentity(user);
-	const response = await fetch(`${API_BASE_URL}/user-settings`, {
-		method: 'PATCH',
-		headers: buildHeaders(user),
-		body: JSON.stringify({ ...identity, patch })
-	});
-
-	return parseRemoteSettingsResponse(response);
-}

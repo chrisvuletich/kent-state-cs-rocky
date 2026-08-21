@@ -38,7 +38,6 @@ from backend.course_actions import (
     update_course_member_key_limit,
 )
 from backend.config import get_settings
-from backend.fixtures import read_seed_json
 from backend.storage import Collections, build_collections
 from backend.validation import (
     is_valid_email,
@@ -70,7 +69,6 @@ def _load_seed_data_module():
 
 _seed_data = _load_seed_data_module()
 seed_data_database = _seed_data.seed_database
-seed_data_static_content = _seed_data.seed_static_content
 
 settings = get_settings()
 app = Flask(__name__)
@@ -87,10 +85,6 @@ api_history = collections.api_history
 telemetry_interactions = collections.telemetry_interactions
 telemetry_current = collections.telemetry_current
 telemetry_hardware = collections.telemetry_hardware
-analytics_kpis = collections.analytics_kpis
-analytics_activity = collections.analytics_activity
-widgets_default = collections.widgets_default
-help_faq = collections.help_faq
 
 ALLOWED_THEME_PREFERENCES = {"light", "dark"}
 ALLOWED_PROFILE_PICTURES = {
@@ -114,10 +108,6 @@ def _parse_object_id(value: str):
 
 def _bad_request(message: str):
     return jsonify({"error": message}), 400
-
-
-def _course_has_api_key(course: dict[str, Any]) -> bool:
-    return _get_active_course_api_key(course) is not None
 
 
 def _iter_course_api_keys(course: dict[str, Any]) -> list[dict[str, Any]]:
@@ -260,117 +250,11 @@ def _parse_iso_datetime(value: Any):
         return None
 
 
-def _find_last_api_key_generation(course: dict[str, Any], requester_identifier: str, owner_type: str, owner_id: str):
-    course_code = normalize_str(course.get("code"))
-    course_id = course.get("id") if isinstance(course.get("id"), int) else None
-    normalized_requester = normalize_str(requester_identifier).lower()
-    normalized_owner_type = normalize_str(owner_type).lower() or "person"
-    normalized_owner_id = normalize_str(owner_id).lower() or normalized_requester
-
-    latest_entry = None
-    latest_created = None
-
-    for entry in api_history.find():
-        if not isinstance(entry, dict):
-            continue
-        if normalize_str(entry.get("event_type")).lower() != "generate-key":
-            continue
-        if course_id is not None:
-            if entry.get("course_id") != course_id:
-                continue
-        elif course_code and normalize_str(entry.get("c_id")) != course_code:
-            continue
-
-        entry_requester = normalize_str(entry.get("u_id")).lower()
-        if entry_requester != normalized_requester:
-            continue
-
-        entry_owner_type = normalize_str(entry.get("meta", {}).get("owner_type") if isinstance(entry.get("meta"), dict) else "").lower()
-        entry_owner_id = normalize_str(entry.get("meta", {}).get("owner_id") if isinstance(entry.get("meta"), dict) else "").lower()
-        if entry_owner_type and entry_owner_type != normalized_owner_type:
-            continue
-        if entry_owner_id and entry_owner_id != normalized_owner_id:
-            continue
-
-        created_at = _parse_iso_datetime(entry.get("created"))
-        if created_at is None:
-            continue
-        if latest_created is None or created_at > latest_created:
-            latest_created = created_at
-            latest_entry = entry
-
-    return latest_entry, latest_created
-
-
-def _default_widgets_payload() -> list[dict[str, Any]]:
-    rows = _get_collection_snapshot(widgets_default)
-    widgets: list[dict[str, Any]] = []
-    for item in rows:
-        if not isinstance(item, dict):
-            continue
-        widget_id = normalize_str(item.get("id")).lower()
-        title = normalize_str(item.get("title")) or "Untitled Widget"
-        lines = item.get("lines") if isinstance(item.get("lines"), list) else []
-        cleaned_lines = [normalize_str(line) for line in lines if normalize_str(line)]
-        widget_doc: dict[str, Any] = {"title": title}
-        if widget_id:
-            widget_doc["id"] = widget_id
-            widget_doc["widgetId"] = widget_id
-            widget_doc["link"] = f"/widgets/default#{widget_id}"
-        if cleaned_lines:
-            widget_doc["lines"] = cleaned_lines
-        widgets.append(widget_doc)
-    return widgets
-
-
-def _default_widget_ids() -> list[str]:
-    return [widget_id for widget_id in (_widget_id(widget) for widget in _default_widgets_payload()) if widget_id]
-
-
 def _default_user_settings() -> dict[str, Any]:
     return {
         "themePreference": "light",
         "profilePicture": "/batch_dog.svg",
-        "widgets": [],
     }
-
-
-def _widget_signature(widget: dict[str, Any]) -> tuple[str, str, tuple[str, ...]]:
-    title = normalize_str(widget.get("title")).lower()
-    lines = widget.get("lines") if isinstance(widget.get("lines"), list) else []
-    normalized_lines = tuple(normalize_str(line) for line in lines if normalize_str(line))
-    return title, "", normalized_lines
-
-
-def _widget_id(widget: dict[str, Any]) -> str:
-    candidate = widget.get("widgetId") or widget.get("id")
-    return normalize_str(candidate).lower()
-
-
-def _canonical_available_widgets() -> list[dict[str, Any]]:
-    return _default_widgets_payload()
-
-
-def _expand_widget_selection(raw_widgets: Any) -> list[dict[str, Any]]:
-    available_widgets = _canonical_available_widgets()
-    available_by_id = {_widget_id(widget): widget for widget in available_widgets if _widget_id(widget)}
-    expanded: list[dict[str, Any]] = []
-
-    if not isinstance(raw_widgets, list):
-        raw_widgets = []
-
-    for item in raw_widgets:
-        widget_id = ""
-        if isinstance(item, str):
-            widget_id = item.strip().lower()
-        elif isinstance(item, dict):
-            widget_id = _widget_id(item)
-
-        canonical_widget = available_by_id.get(widget_id)
-        if canonical_widget is not None:
-            expanded.append(canonical_widget)
-
-    return expanded
 
 
 def _serialize_value(value: Any):
@@ -504,13 +388,6 @@ def _normalize_oauth_payload(payload: Any):
     }, None
 
 
-def _build_display_name(first_name: str, last_name: str, email: str) -> str:
-    full_name = f"{first_name} {last_name}".strip()
-    if full_name:
-        return full_name
-    return email.split("@", 1)[0]
-
-
 def _resolve_requester_user_id(email: str) -> str:
     user_record = _resolve_user_record(None, email)
     if user_record:
@@ -571,33 +448,6 @@ def _can_access_user_record(requester_email: str, requester_is_admin: bool, targ
     return normalize_str(target_user.get("email")).lower() == normalize_str(requester_email).lower()
 
 
-def _sanitize_widgets(raw: Any) -> list[str]:
-    available_widgets = _canonical_available_widgets()
-    available_by_id = {_widget_id(widget): widget for widget in available_widgets if _widget_id(widget)}
-    available_signatures = {_widget_signature(widget): widget for widget in available_widgets}
-
-    if not isinstance(raw, list):
-        return []
-
-    widgets: list[str] = []
-    for item in raw:
-        widget_id = ""
-        if isinstance(item, str):
-            widget_id = item.strip().lower()
-        elif isinstance(item, dict):
-            widget_id = _widget_id(item)
-            if not widget_id:
-                signature = _widget_signature(item)
-                canonical_widget = available_signatures.get(signature)
-                if canonical_widget is not None:
-                    widget_id = _widget_id(canonical_widget)
-
-        if widget_id and widget_id in available_by_id:
-            widgets.append(widget_id)
-
-    return widgets
-
-
 def _sanitize_user_settings(raw: Any):
     settings_payload = _default_user_settings()
     if isinstance(raw, dict):
@@ -608,41 +458,7 @@ def _sanitize_user_settings(raw: Any):
         if profile_picture in ALLOWED_PROFILE_PICTURES:
             settings_payload["profilePicture"] = profile_picture
 
-    raw_widgets = raw.get("widgets") if isinstance(raw, dict) else None
-    settings_payload["widgets"] = _sanitize_widgets(raw_widgets)
-
     return settings_payload
-
-
-def _resolve_user_settings(settings_payload: dict[str, Any]) -> dict[str, Any]:
-    resolved = dict(settings_payload)
-    resolved["widgets"] = _expand_widget_selection(settings_payload.get("widgets"))
-    return resolved
-
-
-def _sanitize_user_settings_patch(raw: Any):
-    if not isinstance(raw, dict):
-        return {}, "patch must be a JSON object."
-
-    patch: dict[str, Any] = {}
-    if "themePreference" in raw:
-        theme = normalize_str(raw.get("themePreference")).lower()
-        if theme not in ALLOWED_THEME_PREFERENCES:
-            allowed = ", ".join(sorted(ALLOWED_THEME_PREFERENCES))
-            return {}, f"themePreference must be one of: {allowed}."
-        patch["themePreference"] = theme
-
-    if "widgets" in raw:
-        patch["widgets"] = _sanitize_widgets(raw.get("widgets"))
-
-    if "profilePicture" in raw:
-        profile_picture = normalize_str(raw.get("profilePicture"))
-        if profile_picture not in ALLOWED_PROFILE_PICTURES:
-            allowed = ", ".join(sorted(ALLOWED_PROFILE_PICTURES))
-            return {}, f"profilePicture must be one of: {allowed}."
-        patch["profilePicture"] = profile_picture
-
-    return patch, None
 
 
 def _get_settings_for_user(user_record: dict[str, Any]):
@@ -671,7 +487,7 @@ def _get_settings_for_user(user_record: dict[str, Any]):
                 "settings": current,
             }
         )
-    return _resolve_user_settings(current)
+    return current
 
 
 def _upsert_settings_for_user(user_record: dict[str, Any], settings_payload: dict[str, Any]):
@@ -705,10 +521,6 @@ def seed_database(payload: dict[str, Any]) -> dict[str, int]:
 	return seed_data_database(collections, payload)
 
 
-def seed_static_content() -> dict[str, int]:
-	return seed_data_static_content(collections, read_seed_json)
-
-
 def _route_deps() -> dict[str, Any]:
     return {
         "settings": settings,
@@ -720,10 +532,6 @@ def _route_deps() -> dict[str, Any]:
         "telemetry_interactions": telemetry_interactions,
         "telemetry_current": telemetry_current,
         "telemetry_hardware": telemetry_hardware,
-        "analytics_kpis": analytics_kpis,
-        "analytics_activity": analytics_activity,
-        "widgets_default": widgets_default,
-        "help_faq": help_faq,
         "is_valid_email": is_valid_email,
         "logger": logger,
         "require_admin": require_admin,
@@ -742,11 +550,8 @@ def _route_deps() -> dict[str, Any]:
         "_normalize_oauth_payload": _normalize_oauth_payload,
         "_is_kent_email": _is_kent_email,
         "_can_access_user_record": _can_access_user_record,
-        "_default_widgets_payload": _default_widgets_payload,
         "_get_settings_for_user": _get_settings_for_user,
         "_sanitize_user_settings": _sanitize_user_settings,
-        "_sanitize_user_settings_patch": _sanitize_user_settings_patch,
-        "_resolve_user_settings": _resolve_user_settings,
         "_upsert_settings_for_user": _upsert_settings_for_user,
         "_serialize_value": _serialize_value,
         "_attach_course_key_state": _attach_course_key_state,
@@ -966,11 +771,6 @@ def get_user_settings():
     return settings_handlers.get_user_settings(_route_deps())
 
 
-@app.route("/user-settings", methods=["PATCH"])
-def patch_user_settings():
-    return settings_handlers.patch_user_settings(_route_deps())
-
-
 @app.route("/user-settings/<setting_key>", methods=["PATCH"])
 def patch_user_setting(setting_key):
     return settings_handlers.patch_user_setting(_route_deps(), setting_key)
@@ -979,16 +779,6 @@ def patch_user_setting(setting_key):
 @app.route("/courses/<course_id>/api-history", methods=["GET"])
 def get_course_api_history(course_id):
     return course_handlers.get_course_api_history(_route_deps(), course_id)
-
-
-@app.route("/analytics/kpis", methods=["GET"])
-def get_analytics_kpis():
-    return content_handlers.get_analytics_kpis(_route_deps())
-
-
-@app.route("/analytics/activity", methods=["GET"])
-def get_analytics_activity():
-    return content_handlers.get_analytics_activity(_route_deps())
 
 
 @app.route("/analytics/summary", methods=["GET"])
@@ -1041,16 +831,6 @@ def patch_analytics_request_review(request_id):
     return content_handlers.patch_analytics_request_review(
         _route_deps(), request_id
     )
-
-
-@app.route("/widgets/default", methods=["GET"])
-def get_default_widgets():
-    return content_handlers.get_default_widgets(_route_deps())
-
-
-@app.route("/help/faq", methods=["GET"])
-def get_help_faq():
-    return content_handlers.get_help_faq(_route_deps())
 
 
 if __name__ == "__main__":

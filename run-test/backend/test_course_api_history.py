@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from backend.test_support import BackendTestCase, main, seed_backend
+from test_support import BackendTestCase, main, seed_backend
 
 
 class CourseApiHistoryTests(BackendTestCase):
@@ -116,24 +116,6 @@ class CourseApiHistoryTests(BackendTestCase):
         self.assertEqual((history_meta.get("owner_id") or "").lower(), "group-se3010-a")
         self.assertEqual((history_entry.get("group_id") or "").lower(), "group-se3010-a")
         self.assertTrue(history_entry.get("is_group_member"))
-
-    def test_analytics_and_widget_endpoints_exist(self):
-        self._log("Verifying analytics/widgets endpoints are available for remote frontend mode.")
-
-        endpoints = [
-            ("/analytics/kpis", False),
-            ("/analytics/activity", True),
-            ("/widgets/default", False),
-        ]
-
-        for endpoint, may_be_empty in endpoints:
-            response = self.client.get(endpoint, headers=self.admin_headers)
-            self.assertEqual(response.status_code, 200, msg=f"Expected 200 for {endpoint}")
-            payload = response.get_json()
-            self.assertIsInstance(payload, list, msg=f"Expected list payload for {endpoint}")
-            if not may_be_empty:
-                self.assertGreater(len(payload), 0, msg=f"Expected non-empty payload for {endpoint}")
-
 
 if __name__ == "__main__":
     import unittest

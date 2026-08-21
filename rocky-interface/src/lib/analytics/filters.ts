@@ -59,11 +59,11 @@ function recognized<T extends string>(value: string, allowed: readonly T[], fall
 }
 
 export function parseAnalyticsFilters(params: URLSearchParams): AnalyticsFilterState {
-	const windowValue = bounded(params.get('range') || params.get('analytics_window'), 16);
-	const dimensionValue = bounded(params.get('dimension') || params.get('analytics_dimension'), 32);
+	const windowValue = bounded(params.get('range'), 16);
+	const dimensionValue = bounded(params.get('dimension'), 32);
 	const operationValue = bounded(params.get('operation'), 64);
-	const outcomeValue = bounded(params.get('outcome') || params.get('analytics_outcome'), 32);
-	const reviewValue = bounded(params.get('review') || params.get('analytics_review'), 32);
+	const outcomeValue = bounded(params.get('outcome'), 32);
+	const reviewValue = bounded(params.get('review'), 32);
 	return {
 		window: recognized(windowValue, analyticsWindows, defaultAnalyticsFilters.window),
 		dimension: recognized(dimensionValue, analyticsDimensions, defaultAnalyticsFilters.dimension),
@@ -76,7 +76,7 @@ export function parseAnalyticsFilters(params: URLSearchParams): AnalyticsFilterS
 		source: bounded(params.get('source'), 128),
 		errorType: bounded(params.get('error_type'), 128),
 		review: recognized(reviewValue, ['all', 'flagged', ...analyticsReviewStatuses], 'all'),
-		requestId: bounded(params.get('request') || params.get('analytics_request'))
+		requestId: bounded(params.get('request'))
 	};
 }
 

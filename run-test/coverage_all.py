@@ -14,7 +14,6 @@ NPM = "npm.cmd" if os.name == "nt" else "npm"
 FRONTEND_TEST_ENV = {
     "PUBLIC_APP_ENV": "testing",
     "PUBLIC_API_BASE_URL": "http://127.0.0.1:5001",
-    "PUBLIC_ENABLE_DBTEST": "false",
     "PUBLIC_ENABLE_MICROSOFT_OAUTH": "false",
     "ROCKY_ENABLE_STREAMING": "false",
 }

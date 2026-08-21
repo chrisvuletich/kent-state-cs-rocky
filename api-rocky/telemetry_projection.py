@@ -34,24 +34,22 @@ def refresh_current(interactions, current, users, as_of=None,
     revision = counter(prior, "counter_revision")
     latency_total = counter(prior, "request_latency_ms_total")
     latency_samples = counter(prior, "request_latency_samples_total")
-    accepted = counter(prior, "interactions_accepted_total")
+    received = counter(prior, "interactions_received_total")
     terminal = sum(counter(prior, field) for field in (
         "interactions_completed_total",
         "interactions_rejected_total",
         "interactions_failed_total",
         "interactions_timed_out_total",
     ))
-    if terminal > accepted:
-        raise ValueError("Telemetry terminal totals exceed accepted total.")
-    active = accepted - terminal
+    if terminal > received:
+        raise ValueError("Telemetry terminal totals exceed received total.")
+    active = received - terminal
     unresolved = 0
-    for row in interactions.find({
-        "state": {"$in": ["accepted", "received"]},
-    }):
-        accepted_at = row.get("received_at") or row.get("accepted_at")
-        if not isinstance(accepted_at, datetime):
+    for row in interactions.find({"state": "received"}):
+        received_at = row.get("received_at")
+        if not isinstance(received_at, datetime):
             raise ValueError("Active telemetry is missing its received time.")
-        age = (projection_time - utc(accepted_at)).total_seconds()
+        age = (projection_time - utc(received_at)).total_seconds()
         if age < 0:
             continue
         if age > unresolved_after_seconds:

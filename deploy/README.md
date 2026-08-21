@@ -185,19 +185,6 @@ ROCKY_SESSION_SECRET=...
 ROCKY_INTERNAL_PROXY_SECRET=...
 ```
 
-## Telemetry schema-v2 migration
-
-Before restarting the chat API with permanent request logging for the first
-time, back up MongoDB and run the telemetry migration from the release checkout:
-
-```sh
-set -a
-. /etc/rocky/backend.env
-set +a
-.venv/bin/python api-rocky/migrate_telemetry_v2.py --dry-run
-.venv/bin/python api-rocky/migrate_telemetry_v2.py
-```
-
 Production defaults to `ROCKY_REQUIRE_REQUEST_LOGGING=true`; set it explicitly
 in `/etc/rocky/backend.env` to document that unlogged inference is prohibited.
 

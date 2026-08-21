@@ -1,4 +1,3 @@
-import { toActivityRow, toKpiMetric, type ActivityRow, type KpiMetric } from '$lib/types/analytics';
 import {
 	normalizeCourseDetails,
 	normalizeCourseGroups,
@@ -9,7 +8,6 @@ import {
 	type CourseDetail,
 	type CourseGroup
 } from '$lib/types/course';
-import { normalizeFaqItems, type ApiFaqItem, type FaqItem } from '$lib/types/help';
 
 const USER_SAFE_ACTION_FAILURE = 'Action failed. Please try again.';
 const USER_SAFE_NETWORK_FAILURE = 'Unable to reach the server. Please try again.';
@@ -57,42 +55,4 @@ export async function fetchCourseGroups(): Promise<CourseGroup[]> {
 		}));
 	});
 	return normalizeCourseGroups(rawGroups);
-}
-
-export async function fetchAnalyticsKpis(): Promise<KpiMetric[]> {
-	const url = '/api/backend/analytics/kpis';
-	const rawKpis = await fetchJson<Array<Partial<KpiMetric>>>(url);
-	return rawKpis.map(toKpiMetric);
-}
-
-export async function fetchAnalyticsActivity(): Promise<ActivityRow[]> {
-	const url = '/api/backend/analytics/activity';
-	const rawRows = await fetchJson<Array<Partial<ActivityRow>>>(url);
-	return rawRows.map(toActivityRow);
-}
-
-export async function fetchFaqItems(): Promise<FaqItem[]> {
-	const url = '/api/backend/help/faq';
-	const rawItems = await fetchJson<ApiFaqItem[]>(url);
-	return normalizeFaqItems(rawItems);
-}
-
-/**
- * Derives assigned course IDs for a user based on courses where they appear as a member.
- * Courses are the authoritative source of truth for user-course relationships.
- * @param userId - The user id used for relational matching in course members
- * @param courseDetails - The list of course details with member information to search through
- * @returns Array of course IDs where the user is a member
- */
-export function getUserAssignedCourseIds(userId: string, courseDetails: CourseDetail[]): number[] {
-	const normalizedId = userId.trim();
-	const normalizedEmail = userId.trim().toLowerCase();
-	return courseDetails
-		.filter((course) => {
-			return course.members.some(
-				(member) => member.id === normalizedId || member.email.toLowerCase() === normalizedEmail
-			);
-		})
-		.map((course) => course.id)
-		.filter((id): id is number => typeof id === 'number');
 }

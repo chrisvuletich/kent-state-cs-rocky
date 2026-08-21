@@ -12,10 +12,6 @@
 		try {
 			if (ENABLE_MICROSOFT_OAUTH) await clearMicrosoftAuthCache();
 		} finally {
-			localStorage.removeItem('rocky.currentUser');
-			localStorage.removeItem('rocky_current_frame');
-			localStorage.removeItem('rocky_selected_course');
-			document.cookie = 'rocky_current_frame=; Path=/; Max-Age=0; SameSite=Lax';
 			await goto('/login', { replaceState: true });
 		}
 	}

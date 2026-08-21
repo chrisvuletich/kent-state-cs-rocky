@@ -73,8 +73,8 @@ enforce token-per-minute limits, so it does not emit token-limit headers.
 ## Permanent request records
 
 When telemetry is enabled, every `POST /v1/responses` attempt receives an
-`x-request-id` (also available as `X-Rocky-Request-Id`) and is written to `telemetry_interactions`. Schema-v2
-records include the complete parsed request and public response, credential
+`x-request-id` (also available as `X-Rocky-Request-Id`) and is written to
+`telemetry_interactions`. Records include the complete parsed request and public response, credential
 ownership, trustworthy user attribution when available, course/group context,
 outcome, token counts, and model timing. Authorization headers, plaintext API
 keys, key hashes, cookies, and service secrets are not recorded.
@@ -87,15 +87,3 @@ Production defaults to `ROCKY_REQUIRE_REQUEST_LOGGING=true`. If the initial
 audit insert or any required pre-inference request, identity, or model-input
 update fails, Rocky returns `503` without invoking the model. Set the variable
 explicitly to `false` only when unlogged inference is acceptable.
-
-Before deploying schema-v2 logging to a database containing the original
-seven-day telemetry records, inspect and apply the migration:
-
-```sh
-python api-rocky/migrate_telemetry_v2.py --dry-run
-python api-rocky/migrate_telemetry_v2.py
-```
-
-The migration removes `expires_at`, drops the old TTL index, labels existing
-records as schema version 1 with unavailable content, and creates the new
-permanent-record indexes. Back up MongoDB before running the non-dry command.

@@ -35,7 +35,7 @@ export const settingsDefinitions: { [K in UserSettingKey]: SettingDefinition<K> 
 };
 
 export function isUserSettingKey(value: string): value is UserSettingKey {
-	return value in settingsDefinitions;
+	return Object.hasOwn(settingsDefinitions, value);
 }
 
 export function getDefaultUserSettings(): UserSettings {
@@ -53,24 +53,6 @@ export function sanitizeUserSettings(raw: unknown): UserSettings {
 
 	const input = raw as Partial<Record<UserSettingKey, unknown>>;
 	const output: UserSettings = { ...defaults };
-
-	if (settingsDefinitions.themePreference.validate(input.themePreference)) {
-		output.themePreference = input.themePreference;
-	}
-	if (settingsDefinitions.profilePicture.validate(input.profilePicture)) {
-		output.profilePicture = input.profilePicture;
-	}
-
-	return output;
-}
-
-export function sanitizeUserSettingsPatch(raw: unknown): Partial<UserSettings> {
-	if (!raw || typeof raw !== 'object') {
-		return {};
-	}
-
-	const input = raw as Partial<Record<UserSettingKey, unknown>>;
-	const output: Partial<UserSettings> = {};
 
 	if (settingsDefinitions.themePreference.validate(input.themePreference)) {
 		output.themePreference = input.themePreference;

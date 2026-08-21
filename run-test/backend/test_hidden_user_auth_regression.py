@@ -286,7 +286,7 @@ class HiddenUserAuthRegressionTests(unittest.TestCase):
         for malformed_input in malformed_inputs:
             self._assert_invalid(self._post_conversation_list(malformed_input))
 
-    def test_invalid_auth_never_calls_granite_or_accepts_telemetry(self):
+    def test_invalid_auth_is_logged_without_calling_granite(self):
         telemetry_store = Mock()
         api_rocky.telemetry_store = telemetry_store
 
@@ -303,7 +303,7 @@ class HiddenUserAuthRegressionTests(unittest.TestCase):
 
         self._assert_invalid(response)
         request_ai.assert_not_called()
-        telemetry_store.record_accepted.assert_not_called()
+        telemetry_store.record_received.assert_called_once()
 
     def test_reinitializing_same_owner_secret_and_database_still_succeeds(self):
         persistent_database = FakeCollection()

@@ -700,15 +700,6 @@ def telemetry_request_record(payload=None, raw_body=None):
             "byte_length": len(encoded),
             "sha256": hashlib.sha256(encoded).hexdigest(),
         }
-    elif body is None and isinstance(raw_body, str):
-        # Retain compatibility for callers outside the route. The request route
-        # passes bytes so malformed UTF-8 is hashed exactly as submitted.
-        encoded = raw_body.encode("utf-8")
-        malformed_body = {
-            "omitted": True,
-            "byte_length": len(encoded),
-            "sha256": hashlib.sha256(encoded).hexdigest(),
-        }
     record = {
         "body": body,
         "raw_body": None,
@@ -1000,13 +991,11 @@ def terminal_telemetry_json(
 
 
 def rate_limit_key_doc(key_doc):
-    """Return a credential with a stable public key ID, backfilling legacy rows."""
+    """Return a credential only when it has the public ID used for limits."""
     if not isinstance(key_doc, dict):
         return None
 
-    stored_key_id = key_doc.get("key_id")
-    key_id = stored_key_id.strip() if isinstance(stored_key_id, str) else ""
-    if key_id:
+    if optional_text(key_doc.get("key_id"), 256):
         return key_doc
 
     # Database-free route tests intentionally use synthetic key documents. This
@@ -1014,36 +1003,7 @@ def rate_limit_key_doc(key_doc):
     if DATABASE_INITIALIZATION_SKIPPED_FOR_TESTS and rate_limiter is None:
         return key_doc
 
-    document_id = key_doc.get("_id")
-    collection = current_api_keys_collection()
-    if document_id is None or collection is None:
-        return None
-
-    candidate_key_id = generate_public_key_id()
-    legacy_key_id_query = (
-        {"$in": [None, ""]}
-        if stored_key_id is None or stored_key_id == ""
-        else stored_key_id
-    )
-    try:
-        collection.update_one(
-            {
-                "_id": document_id,
-                "key_id": legacy_key_id_query,
-            },
-            {"$set": {"key_id": candidate_key_id}},
-        )
-        refreshed = collection.find_one({"_id": document_id})
-    except Exception as error:
-        app.logger.warning(
-            "rate_limit.key_id_backfill_failed error_type=%s",
-            type(error).__name__,
-        )
-        return None
-
-    if not isinstance(refreshed, dict):
-        return None
-    return refreshed if optional_text(refreshed.get("key_id"), 256) else None
+    return None
 
 
 def rate_limit_response_headers(decision):
@@ -2685,11 +2645,6 @@ def should_use_web_history(request_body, key_doc):
     return bool(request_body.get("conversation_id")) or is_trusted_web_request(key_doc)
 
 
-def should_store_history(request_body):
-    """Backward-compatible helper retained for callers outside the main route."""
-    return should_store_response(request_body)
-
-
 def extract_user_message_text(request_body):
     """Extracts the latest user message from the request body."""
     if isinstance(request_body, str):
@@ -2970,26 +2925,6 @@ def messages_to_granite_input(messages):
         })
 
     return granite_input
-
-def build_history_request_body(original_request_body, granite_input):
-    """
-    Builds a request body for Granite using loaded conversation history.
-    Keeps generation options, but removes app-only fields.
-    """
-    if isinstance(original_request_body, dict):
-        request_body = {
-            k: v for k, v in original_request_body.items()
-            if k not in {"input", "conversation_id", "store"}
-        }
-    else:
-        request_body = {}
-
-    request_body["model"] = PUBLIC_MODEL
-    request_body["input"] = granite_input
-
-    return request_body
-
-
 
 def extract_message_content_text(content):
     if isinstance(content, str):

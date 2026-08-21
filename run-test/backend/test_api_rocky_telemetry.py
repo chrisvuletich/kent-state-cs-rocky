@@ -187,7 +187,7 @@ class ApiTelemetryTests(unittest.TestCase):
         self.assertEqual((response.status_code, row["outcome"]), (200, "completed"))
         self.assertEqual(response.headers["X-Rocky-Request-Id"], row["_id"])
         expected = {
-            "interactions_accepted_total": 1,
+            "interactions_received_total": 1,
             "interactions_completed_total": 1,
             "active_requests": 0,
             "model_input_bytes_total": 211,
@@ -201,7 +201,7 @@ class ApiTelemetryTests(unittest.TestCase):
         self.assertEqual({field: current.get(field) for field in expected},
                          expected)
         self.assertEqual(current["request_latency_ms_total"],
-                         row["request_latency_ms"])
+                         row["performance"]["request_latency_ms"])
         self.assertEqual(row["schema_version"], 2)
         self.assertEqual(row["operation"], "responses.create")
         self.assertIsNotNone(row.get("inference_dispatched_at"))
@@ -446,7 +446,7 @@ class ApiTelemetryTests(unittest.TestCase):
                          ["failed", "timed_out", "timed_out"])
         self.assertEqual(current["request_latency_samples_total"], 3)
         self.assertEqual(current["request_latency_ms_total"],
-                         sum(row["request_latency_ms"] for row in rows))
+                         sum(row["performance"]["request_latency_ms"] for row in rows))
 
         with patch.object(rocky, "get_or_create_conversation",
                           side_effect=RuntimeError("persistence failed")):
@@ -652,7 +652,7 @@ class ProjectionTests(unittest.TestCase):
 
     def test_projection_is_permanent_idempotent_and_refreshes_users(self):
         self.seed(
-            counter_revision=8, interactions_accepted_total=6,
+            counter_revision=8, interactions_received_total=6,
             interactions_completed_total=2, interactions_failed_total=1,
             interactions_timed_out_total=1, active_requests=99,
             model_input_bytes_total=301, model_output_bytes_total=402,
@@ -661,12 +661,12 @@ class ProjectionTests(unittest.TestCase):
         )
         self.users.insert_many([{"_id": "one"}, {"_id": "two"}])
         self.interactions.insert_many([
-            {"_id": "active", "state": "accepted",
-             "accepted_at": self.now - timedelta(seconds=10)},
-            {"_id": "unresolved", "state": "accepted",
-             "accepted_at": self.now - timedelta(seconds=300)},
+            {"_id": "active", "state": "received",
+             "received_at": self.now - timedelta(seconds=10)},
+            {"_id": "unresolved", "state": "received",
+             "received_at": self.now - timedelta(seconds=300)},
             {"_id": "expired", "state": "terminal",
-             "accepted_at": self.now - timedelta(days=8)},
+             "received_at": self.now - timedelta(days=8)},
         ])
         first = refresh_current(self.interactions, self.current, self.users,
                                 as_of=self.now)
@@ -677,7 +677,7 @@ class ProjectionTests(unittest.TestCase):
         expected = {
             "registered_users": 2, "active_requests": 2,
             "unresolved_interactions": 1, "average_latency_ms": 200,
-            "interactions_accepted_total": 6,
+            "interactions_received_total": 6,
             "interactions_completed_total": 2,
             "model_input_bytes_total": 301, "model_output_bytes_total": 402,
             "prompt_tokens_total": 15, "output_tokens_total": 22,
@@ -687,7 +687,7 @@ class ProjectionTests(unittest.TestCase):
 
     def test_stale_and_racing_projection_cannot_overwrite_current(self):
         prior_time = self.now - timedelta(minutes=1)
-        self.seed(counter_revision=3, interactions_accepted_total=2,
+        self.seed(counter_revision=3, interactions_received_total=2,
                   registered_users=7, updated_at=prior_time)
         newer = refresh_current(self.interactions, self.current, self.users,
                                 as_of=self.now + timedelta(seconds=10))
@@ -696,15 +696,15 @@ class ProjectionTests(unittest.TestCase):
             self.interactions, self.current, self.users, as_of=self.now
         ), newer)
 
-        def accept():
+        def receive():
             self.current.update_one({"_id": CURRENT_DOCUMENT_ID}, {"$inc": {
-                "counter_revision": 1, "interactions_accepted_total": 1,
+                "counter_revision": 1, "interactions_received_total": 1,
                 "active_requests": 1,
             }})
 
         racing = Mock()
         racing.find.side_effect = lambda query: (
-            accept(), self.interactions.find(query)
+            receive(), self.interactions.find(query)
         )[1]
         result = refresh_current(racing, self.current, self.users,
                                  as_of=self.now + timedelta(seconds=20))
@@ -719,14 +719,20 @@ class LiveSmokeTests(unittest.TestCase):
             "schema_version": 2, "content_available": True,
             "request": {"input_text": live_telemetry_smoke.PROMPT},
             "response": {"output_text": "Rocky"},
-            "model_input_bytes": 10, "model_output_bytes": 20,
-            "request_latency_ms": 5,
+            "usage": {
+                "input_tokens": 3,
+                "output_tokens": 2,
+                "input_bytes": 10,
+                "output_bytes": 20,
+            },
+            "performance": {"request_latency_ms": 5},
         }
         before = dict(CURRENT_COUNTER_DEFAULTS)
         after = {
-            **before, "interactions_accepted_total": 1,
+            **before, "interactions_received_total": 1,
             "interactions_completed_total": 1,
             "model_input_bytes_total": 10, "model_output_bytes_total": 20,
+            "prompt_tokens_total": 3, "output_tokens_total": 2,
             "request_latency_ms_total": 5,
             "request_latency_samples_total": 1,
         }

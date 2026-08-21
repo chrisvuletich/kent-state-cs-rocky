@@ -3,11 +3,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 from backend.api_key_generator import generate_hidden_api_key_pair
-
-try:
-    from backend.test_support import BackendTestCase, main
-except ModuleNotFoundError:
-    from test_support import BackendTestCase, main
+from test_support import BackendTestCase, main
 
 
 class MicrosoftOAuthTests(BackendTestCase):

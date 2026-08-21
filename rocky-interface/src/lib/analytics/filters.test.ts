@@ -27,21 +27,6 @@ describe('analytics URL filters', () => {
 		);
 	});
 
-	it('accepts legacy analytics links and writes the canonical compact form', () => {
-		const state = parseAnalyticsFilters(
-			new URLSearchParams(
-				'analytics_window=1h&analytics_dimension=course&analytics_outcome=completed&analytics_request=req-1'
-			)
-		);
-		const url = analyticsUrl(new URL('https://rocky.example/?doc=reference'), state);
-		expect(url.searchParams.get('frame')).toBe('analytics');
-		expect(url.searchParams.get('range')).toBe('1h');
-		expect(url.searchParams.get('dimension')).toBe('course');
-		expect(url.searchParams.get('outcome')).toBe('completed');
-		expect(url.searchParams.get('request')).toBe('req-1');
-		expect(url.searchParams.has('analytics_window')).toBe(false);
-	});
-
 	it('round-trips the bounded error-type filter in canonical URLs', () => {
 		const state = parseAnalyticsFilters(new URLSearchParams(`error_type=${'x'.repeat(140)}`));
 		expect(state.errorType).toHaveLength(128);

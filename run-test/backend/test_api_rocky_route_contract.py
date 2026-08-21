@@ -224,38 +224,6 @@ class ApiRockyRouteContractTests(unittest.TestCase):
                 self.api.FixedWindowRateLimiter,
             )
 
-    def test_legacy_key_gets_a_stable_public_id_before_limiting(self):
-        legacy_key = {"_id": "legacy-key", "owner_id": "student-one"}
-        stored_key = dict(legacy_key)
-        collection = Mock()
-
-        def update_one(_query, update):
-            stored_key.update(update["$set"])
-            return Mock(modified_count=1)
-
-        collection.update_one.side_effect = update_one
-        collection.find_one.side_effect = lambda _query: dict(stored_key)
-
-        with (
-            patch.object(self.api, "rate_limiter", Mock()),
-            patch.object(
-                self.api,
-                "current_api_keys_collection",
-                return_value=collection,
-            ),
-        ):
-            normalized = self.api.rate_limit_key_doc(legacy_key)
-
-        self.assertTrue(normalized["key_id"].startswith("akid_"))
-        self.assertEqual(stored_key["key_id"], normalized["key_id"])
-        collection.update_one.assert_called_once_with(
-            {
-                "_id": "legacy-key",
-                "key_id": {"$in": [None, ""]},
-            },
-            {"$set": {"key_id": normalized["key_id"]}},
-        )
-
     def test_development_bypass_has_a_non_secret_rate_limit_identity(self):
         with (
             patch.object(
@@ -322,7 +290,7 @@ class ApiRockyRouteContractTests(unittest.TestCase):
         response = self.client.post(
             "/v1/responses",
             json={
-                "api-key": "legacy-body-key",
+                "api-key": "body-only-key",
                 "model": self.api.PUBLIC_MODEL,
                 "input": "route contract prompt",
                 "store": False,
@@ -1251,7 +1219,7 @@ class ApiRockyRouteContractTests(unittest.TestCase):
                 patch.object(
                     self.api,
                     "get_key_doc",
-                    return_value={"owner_id": "legacy-student"},
+                    return_value={"owner_id": "missing-key-id-student"},
                 ),
                 patch.object(self.api, "rate_limit_key_doc", return_value=None),
             ):

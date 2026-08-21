@@ -21,12 +21,7 @@ export const appFrameQueryKeys: Record<FrameName, readonly string[]> = {
 		'source',
 		'error_type',
 		'review',
-		'request',
-		'analytics_window',
-		'analytics_dimension',
-		'analytics_request',
-		'analytics_outcome',
-		'analytics_review'
+		'request'
 	],
 	users: [],
 	courses: ['course'],

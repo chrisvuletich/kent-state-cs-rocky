@@ -19,10 +19,10 @@ export default defineConfig(({ mode }) => {
 				reportOnFailure: true,
 				skipFull: true,
 				thresholds: {
-					statements: 13,
-					branches: 14,
-					functions: 12,
-					lines: 14
+					statements: 14,
+					branches: 16,
+					functions: 13,
+					lines: 15
 				}
 			}
 		}

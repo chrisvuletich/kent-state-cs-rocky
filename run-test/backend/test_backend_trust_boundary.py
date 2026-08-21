@@ -5,7 +5,7 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 
-from backend.test_support import BackendTestCase
+from test_support import BackendTestCase
 
 
 class BackendTrustBoundaryTests(BackendTestCase):

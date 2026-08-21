@@ -61,7 +61,3 @@ export function toFrameLabel(frame: FrameName): string {
 export function isFrameName(value: unknown): value is FrameName {
 	return typeof value === 'string' && value in frameLabels;
 }
-
-export function toFrameName(value: string, fallback: FrameName = 'dashboard'): FrameName {
-	return isFrameName(value) ? value : fallback;
-}

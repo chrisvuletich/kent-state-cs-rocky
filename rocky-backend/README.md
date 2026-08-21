@@ -87,8 +87,6 @@ python main.py
 
 Default URL: `http://127.0.0.1:5001`
 
-The canonical widget catalog lives in `seed-data/widgets/widgets.json` and is exposed through the widget endpoint.
-
 Health check: `GET /health`
 
 ## Telemetry analytics
@@ -151,8 +149,7 @@ conversation content.
 Supported windows are `15m`, `1h`, `6h`, `24h`, `7d`, and `30d`. Time-series
 buckets are `minute`, `hour`, and `day`; combinations producing more than 1,000
 rows are rejected. Breakdown results are capped at 100 rows and request indexes
-at 200 rows. The older `/analytics/kpis` and `/analytics/activity` endpoints now
-return live compatibility views rather than fixture values.
+at 200 rows.
 
 Exports are administrator-only, generated directly in memory, and never left
 as files on the server. JSON preserves stored content exactly. CSV protects
@@ -182,10 +179,7 @@ Seed fixtures are backend-owned in `seed-data`:
 
 - `seed-data/account/users.json`
 - `seed-data/courses/courses.json`
-- `seed-data/analytics/kpis.json`
-- `seed-data/analytics/activity.json`
-- `seed-data/widgets/widgets.json`
-- `seed-data/help/faq.json`
+- `seed-data/api_history.json`
 
 Seeding code lives in:
 
@@ -197,9 +191,6 @@ Run seeding:
 ```powershell
 python seed_from_backend.py
 ```
-
-The analytics JSON files remain only as legacy fixture data. They are not used
-by the live telemetry endpoints.
 
 ## Tests
 

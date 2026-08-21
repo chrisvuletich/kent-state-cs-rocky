@@ -26,48 +26,12 @@ def get_user_settings(deps: dict[str, Any]):
     return jsonify({"settings": settings_payload})
 
 
-def patch_user_settings(deps: dict[str, Any]):
-    require_requester_identity = deps["require_requester_identity"]
-    _resolve_user_record = deps["_resolve_user_record"]
-    _can_access_user_record = deps["_can_access_user_record"]
-    _sanitize_user_settings_patch = deps["_sanitize_user_settings_patch"]
-    _sanitize_user_settings = deps["_sanitize_user_settings"]
-    _upsert_settings_for_user = deps["_upsert_settings_for_user"]
-    _resolve_user_settings = deps["_resolve_user_settings"]
-    _bad_request = deps["_bad_request"]
-
-    identity = require_requester_identity()
-    if identity[0] is None:
-        return jsonify({"error": "Authentication headers are required."}), 401
-
-    email, is_admin = identity
-    data = request.get_json(silent=True)
-    if not isinstance(data, dict):
-        return _bad_request("Request body must be a JSON object.")
-
-    user_record = _resolve_user_record(data.get("userId"), data.get("email") or email)
-    if not user_record:
-        return jsonify({"error": "User not found"}), 404
-    if not _can_access_user_record(email, is_admin, user_record):
-        return jsonify({"error": "You may only access your own settings."}), 403
-
-    patch, patch_error = _sanitize_user_settings_patch(data.get("patch"))
-    if patch_error:
-        return _bad_request(patch_error)
-
-    current = _sanitize_user_settings(user_record.get("settings"))
-    updated = {**current, **patch}
-    _upsert_settings_for_user(user_record, updated)
-    return jsonify({"settings": _resolve_user_settings(updated)})
-
-
 def patch_user_setting(deps: dict[str, Any], setting_key: str):
     require_requester_identity = deps["require_requester_identity"]
     _resolve_user_record = deps["_resolve_user_record"]
     _can_access_user_record = deps["_can_access_user_record"]
     _sanitize_user_settings = deps["_sanitize_user_settings"]
     _upsert_settings_for_user = deps["_upsert_settings_for_user"]
-    _resolve_user_settings = deps["_resolve_user_settings"]
     _bad_request = deps["_bad_request"]
     normalize_str = deps["normalize_str"]
     ALLOWED_THEME_PREFERENCES = deps["ALLOWED_THEME_PREFERENCES"]
@@ -105,4 +69,4 @@ def patch_user_setting(deps: dict[str, Any], setting_key: str):
         return _bad_request(f"Unsupported user setting key: {setting_key}.")
 
     _upsert_settings_for_user(user_record, current)
-    return jsonify({"settings": _resolve_user_settings(current)})
+    return jsonify({"settings": current})

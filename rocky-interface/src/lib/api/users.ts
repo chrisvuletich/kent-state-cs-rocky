@@ -1,12 +1,4 @@
-import {
-	normalizeDbUsers,
-	normalizeUsers,
-	type ApiUser,
-	type DbUser,
-	type User,
-	type CreateUserInput,
-	toCreateUserPayload
-} from '$lib/types/user';
+import { normalizeUsers, type ApiUser, type User } from '$lib/types/user';
 import { showErrorFeedback, showSuccessFeedback } from '$lib/stores/feedbackStore';
 
 const USER_SAFE_ACTION_FAILURE = 'Action failed. Please try again.';
@@ -91,32 +83,6 @@ export async function fetchUsersForViews(): Promise<User[]> {
 	const url = '/api/backend/users';
 	const rawUsers = await fetchJson<ApiUser[]>(url);
 	return normalizeUsers(rawUsers);
-}
-
-export async function fetchUsersForDbTest(): Promise<DbUser[]> {
-	const url = '/api/backend/users';
-	const rawUsers = await fetchJson<ApiUser[]>(url);
-	return normalizeDbUsers(rawUsers);
-}
-
-export async function createUser(input: CreateUserInput): Promise<void> {
-	try {
-		const response = await fetch('/api/backend/users', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify(toCreateUserPayload(input))
-		});
-
-		if (!response.ok) {
-			throw new Error(`Failed to create user (${response.status}).`);
-		}
-
-		showSuccessFeedback('User created successfully.');
-	} catch (err) {
-		const message = getErrorMessage(err, 'Unable to create user.');
-		showErrorFeedback(message);
-		throw err;
-	}
 }
 
 export async function setUserActive(id: string, isActive: boolean): Promise<void> {

@@ -33,7 +33,6 @@ ANALYTICS_ROW_PROJECTION = {
     "request_id": 1,
     "state": 1,
     "received_at": 1,
-    "accepted_at": 1,
     "terminal_at": 1,
     "outcome": 1,
     "http_status": 1,
@@ -50,16 +49,6 @@ ANALYTICS_ROW_PROJECTION = {
     "review": 1,
     "error_stage": 1,
     "error_type": 1,
-    "prompt_eval_count": 1,
-    "eval_count": 1,
-    "model_input_bytes": 1,
-    "model_output_bytes": 1,
-    "total_duration": 1,
-    "load_duration": 1,
-    "prompt_eval_duration": 1,
-    "eval_duration": 1,
-    "request_latency_ms": 1,
-    "actual_model": 1,
 }
 
 
@@ -153,22 +142,14 @@ def bounded_int(value: str | None, default: int, maximum: int) -> int:
 
 def documents_in_range(collection, start: datetime, end: datetime,
                        projection: dict[str, int] | None = None):
-    """Read only the selected interval, including pre-v2 accepted_at records."""
+    """Read only telemetry received within the selected interval."""
     rows: dict[str, dict[str, Any]] = {}
-    queries = (
-        {"received_at": {"$gte": start, "$lt": end}},
-        {"received_at": {"$exists": False},
-         "accepted_at": {"$gte": start, "$lt": end}},
-    )
+    query = {"received_at": {"$gte": start, "$lt": end}}
     try:
-        iterables = [
-            collection.find(query, projection) if projection else collection.find(query)
-            for query in queries
-        ]
-        for result in iterables:
-            for row in result:
-                identifier = str(row.get("request_id") or row.get("_id"))
-                rows[identifier] = row
+        result = collection.find(query, projection) if projection else collection.find(query)
+        for row in result:
+            identifier = str(row.get("request_id") or row.get("_id"))
+            rows[identifier] = row
     except Exception:
         if "mongita" not in type(collection).__module__.lower():
             raise
@@ -281,7 +262,7 @@ def user_usage_summary(collection, identifiers: Iterable[str],
 
 
 def received_at(row: dict[str, Any]) -> datetime | None:
-    return as_utc(row.get("received_at") or row.get("accepted_at"))
+    return as_utc(row.get("received_at"))
 
 
 def open_interaction_counts(collection, generated_at: datetime | None = None,
@@ -293,15 +274,15 @@ def open_interaction_counts(collection, generated_at: datetime | None = None,
         raise ValueError("The analytics clock is invalid.")
     try:
         rows = collection.find(
-            {"state": {"$in": ["received", "accepted"]}},
-            {"received_at": 1, "accepted_at": 1},
+            {"state": "received"},
+            {"received_at": 1},
         )
     except Exception:
         if "mongita" not in type(collection).__module__.lower():
             raise
         rows = (
             row for row in collection.find({})
-            if row.get("state") in {"received", "accepted"}
+            if row.get("state") == "received"
         )
 
     active = 0
@@ -320,35 +301,28 @@ def open_interaction_counts(collection, generated_at: datetime | None = None,
 
 
 def usage(row: dict[str, Any]) -> tuple[int, int, int]:
-    input_tokens = integer(nested(
-        row, "usage", "input_tokens", default=row.get("prompt_eval_count")
-    ))
-    output_tokens = integer(nested(
-        row, "usage", "output_tokens", default=row.get("eval_count")
-    ))
+    input_tokens = integer(nested(row, "usage", "input_tokens"))
+    output_tokens = integer(nested(row, "usage", "output_tokens"))
     total_tokens = integer(nested(row, "usage", "total_tokens"))
     return input_tokens, output_tokens, total_tokens or input_tokens + output_tokens
 
 
 def bytes_used(row: dict[str, Any]) -> tuple[int, int]:
     return (
-        integer(nested(row, "usage", "input_bytes", default=row.get("model_input_bytes"))),
-        integer(nested(row, "usage", "output_bytes", default=row.get("model_output_bytes"))),
+        integer(nested(row, "usage", "input_bytes")),
+        integer(nested(row, "usage", "output_bytes")),
     )
 
 
-def duration_ns(row: dict[str, Any], structured_name: str, legacy_name: str):
-    value = nested(row, "performance", structured_name, default=row.get(legacy_name))
+def duration_ns(row: dict[str, Any], name: str):
+    value = nested(row, "performance", name)
     if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
         return None
     return float(value)
 
 
 def latency(row: dict[str, Any]) -> float | None:
-    value = nested(
-        row, "performance", "request_latency_ms",
-        default=row.get("request_latency_ms"),
-    )
+    value = nested(row, "performance", "request_latency_ms")
     if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
         return None
     return float(value)
@@ -438,13 +412,13 @@ def add_row(metrics: dict[str, Any], row: dict[str, Any]):
             if row_latency is not None:
                 metrics["generation_latencies"].append(row_latency)
     durations = (
-        ("model_total_durations_ns", "model_total_duration_ns", "total_duration"),
-        ("model_load_durations_ns", "model_load_duration_ns", "load_duration"),
-        ("prompt_eval_durations_ns", "prompt_eval_duration_ns", "prompt_eval_duration"),
-        ("generation_durations_ns", "generation_duration_ns", "eval_duration"),
+        ("model_total_durations_ns", "model_total_duration_ns"),
+        ("model_load_durations_ns", "model_load_duration_ns"),
+        ("prompt_eval_durations_ns", "prompt_eval_duration_ns"),
+        ("generation_durations_ns", "generation_duration_ns"),
     )
-    for target, structured_name, legacy_name in durations:
-        value = duration_ns(row, structured_name, legacy_name)
+    for target, name in durations:
+        value = duration_ns(row, name)
         if value is not None:
             metrics[target].append(value)
             if target == "prompt_eval_durations_ns":
@@ -635,7 +609,7 @@ def dimension_value(row: dict[str, Any], dimension: str):
         identifier = nested(row, "course", "group_id")
         label = identifier
     elif dimension == "model":
-        identifier = nested(row, "model", "actual_model") or row.get("actual_model") or nested(row, "request", "model")
+        identifier = nested(row, "model", "actual_model") or nested(row, "request", "model")
         label = identifier
     elif dimension == "source":
         identifier = row.get("source")
@@ -750,7 +724,6 @@ def filter_requests(rows: list[dict[str, Any]], *, requested_outcome=None,
             nested(row, "model", "public_model"),
             nested(row, "model", "actual_model"),
             nested(row, "request", "model"),
-            row.get("actual_model"),
         )):
             continue
         if source and not _matches_identifier(row.get("source"), source):
@@ -826,9 +799,7 @@ def current_snapshot(document: dict[str, Any] | None,
         ),
         "registered_users": integer(row.get("registered_users")),
         "lifetime": {
-            "requests": integer(
-                row.get("interactions_received_total", row.get("interactions_accepted_total"))
-            ),
+            "requests": integer(row.get("interactions_received_total")),
             "outcomes": {
                 name: integer(row.get(f"interactions_{name}_total"))
                 for name in OUTCOMES

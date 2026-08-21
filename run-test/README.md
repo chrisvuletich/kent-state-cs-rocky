@@ -16,8 +16,7 @@ Path: run-test/backend
 
 - seed_data.json: mixed valid and invalid records for validation coverage.
 - test_seed_data_shape.py:
-  - checks the real backend seed data has one admin, two instructors, four users, and six courses;
-  - verifies widgets are embedded per user.
+  - checks the real backend seed data has one admin, two instructors, four students, and six courses.
 - test_backend_validation.py:
   - verifies accepted data is inserted;
   - verifies invalid data is rejected;
@@ -27,11 +26,9 @@ Path: run-test/backend
   - verifies rejected mutations do not create events and sensitive fields are removed;
   - verifies account deactivation suspends owned API keys.
 - test_user_settings.py:
-  - verifies per-user settings are readable and writable;
-  - verifies widgets stay isolated per user.
+  - verifies per-user settings are readable and writable.
 - test_course_api_history.py:
-  - verifies API history records grouped and ungrouped usage;
-  - verifies analytics and widgets endpoints remain reachable.
+  - verifies API history records grouped and ungrouped usage.
 - test_authorization_matrix.py:
   - keeps student, instructor, administrator, inactive-account, closed-course,
     and trusted-proxy expectations in one data-driven role matrix;

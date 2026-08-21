@@ -21,8 +21,6 @@ STRING_FIELDS = ("actual_model", "stop_reason")
 CURRENT_COUNTER_DEFAULTS = {
     "counter_revision": 0,
     "interactions_received_total": 0,
-    # Retained for compatibility with the original telemetry projection.
-    "interactions_accepted_total": 0,
     "interactions_completed_total": 0,
     "interactions_rejected_total": 0,
     "interactions_failed_total": 0,
@@ -134,8 +132,6 @@ class TelemetryStore:
             "schema_version": SCHEMA_VERSION,
             "state": "received",
             "received_at": received_at,
-            # Keep this alias while the projection and older tooling migrate.
-            "accepted_at": received_at,
             "review": document.get("review") if isinstance(document.get("review"), dict) else {
                 "version": 0,
                 "flagged": False,
@@ -157,7 +153,6 @@ class TelemetryStore:
                 "$inc": {
                     "counter_revision": 1,
                     "interactions_received_total": 1,
-                    "interactions_accepted_total": 1,
                     "active_requests": 1,
                 },
                 "$max": {"last_interaction_at": received_at},
@@ -167,13 +162,6 @@ class TelemetryStore:
         except Exception as error:
             safe_log(self.logger, "telemetry.receive_counter_failed", error)
         return interaction
-
-    def record_accepted(self, request_id=None, record=None):
-        """Compatibility wrapper for callers using the original method name."""
-        if request_id is None:
-            from uuid import uuid4
-            request_id = str(uuid4())
-        return self.record_received(request_id, record=record)
 
     def update_interaction(self, interaction, fields):
         if (not isinstance(interaction, dict)
@@ -217,8 +205,6 @@ class TelemetryStore:
             "state": "terminal",
             "outcome": outcome,
             "terminal_at": terminal_at,
-            "request_latency_ms": request_latency_ms,
-            **metrics,
         })
         performance = terminal_fields.get("performance")
         if not isinstance(performance, dict):

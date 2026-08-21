@@ -87,13 +87,6 @@ def _prepare_course_payload(raw_course: dict[str, Any], user_id_by_email: dict[s
     return payload
 
 
-def _insert_static_collection(collection, rows: list[dict[str, Any]]) -> int:
-    collection.delete_many({})
-    if rows:
-        collection.insert_many(rows)
-    return len(rows)
-
-
 def seed_database(collections, payload: dict[str, Any]) -> dict[str, int]:
     summary = {
         "users_inserted": 0,
@@ -163,12 +156,3 @@ def seed_database(collections, payload: dict[str, Any]) -> dict[str, int]:
         summary["api_keys_inserted"] += 1
 
     return summary
-
-
-def seed_static_content(collections, read_seed_json) -> dict[str, int]:
-    return {
-        "analytics_kpis_inserted": _insert_static_collection(collections.analytics_kpis, read_seed_json("analytics", "kpis.json")),
-        "analytics_activity_inserted": _insert_static_collection(collections.analytics_activity, read_seed_json("analytics", "activity.json")),
-        "widgets_default_inserted": _insert_static_collection(collections.widgets_default, read_seed_json("widgets", "widgets.json")),
-        "help_faq_inserted": _insert_static_collection(collections.help_faq, read_seed_json("help", "faq.json")),
-    }

@@ -3,7 +3,6 @@ import { env } from '$env/dynamic/public';
 
 const PUBLIC_APP_ENV = (env.PUBLIC_APP_ENV ?? (dev ? 'development' : 'production')).toString();
 const PUBLIC_API_BASE_URL = (env.PUBLIC_API_BASE_URL ?? 'http://localhost:5001').toString();
-const PUBLIC_ENABLE_DBTEST = (env.PUBLIC_ENABLE_DBTEST ?? 'false').toString();
 const PUBLIC_ENABLE_MICROSOFT_OAUTH = (env.PUBLIC_ENABLE_MICROSOFT_OAUTH ?? 'false').toString();
 const PUBLIC_MICROSOFT_CLIENT_ID = (env.PUBLIC_MICROSOFT_CLIENT_ID ?? '').toString();
 const PUBLIC_MICROSOFT_TENANT_ID = (env.PUBLIC_MICROSOFT_TENANT_ID ?? '').toString();
@@ -67,10 +66,6 @@ export function parseApiBaseUrl(value: string): string {
 export const APP_ENV = parseAppEnv(requirePublicEnv('PUBLIC_APP_ENV', PUBLIC_APP_ENV));
 export const API_BASE_URL = parseApiBaseUrl(
 	requirePublicEnv('PUBLIC_API_BASE_URL', PUBLIC_API_BASE_URL)
-);
-export const ENABLE_DBTEST = parseBooleanEnv(
-	'PUBLIC_ENABLE_DBTEST',
-	requirePublicEnv('PUBLIC_ENABLE_DBTEST', PUBLIC_ENABLE_DBTEST)
 );
 
 export type AuthMode = 'preview' | 'microsoft';

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from backend.test_support import BackendTestCase, main
+from test_support import BackendTestCase, main
 
 
 class TelemetryAnalyticsEndpointTests(BackendTestCase):
@@ -411,8 +411,6 @@ class TelemetryAnalyticsEndpointTests(BackendTestCase):
 
     def test_routes_are_admin_only_and_query_inputs_are_bounded(self):
         routes = (
-            "/analytics/kpis",
-            "/analytics/activity",
             "/analytics/summary",
             "/analytics/current",
             "/analytics/timeseries",
@@ -445,35 +443,6 @@ class TelemetryAnalyticsEndpointTests(BackendTestCase):
             "/analytics/requests/req_missing", headers=self.admin_headers
         )
         self.assertEqual(missing.status_code, 404)
-
-    def test_legacy_accepted_at_records_remain_queryable(self):
-        main.telemetry_interactions.insert_one({
-            "_id": "legacy",
-            "state": "terminal",
-            "outcome": "completed",
-            "accepted_at": self.now - timedelta(minutes=3),
-            "prompt_eval_count": 4,
-            "eval_count": 2,
-            "request_latency_ms": 20,
-        })
-        payload = self.client.get(
-            "/analytics/summary?window=1h", headers=self.admin_headers
-        ).get_json()
-        self.assertEqual(payload["requests"], 6)
-        self.assertEqual(payload["usage"]["total_tokens"], 56)
-
-    def test_compatibility_endpoints_are_live_not_seeded(self):
-        kpis = self.client.get(
-            "/analytics/kpis?window=24h", headers=self.admin_headers
-        ).get_json()
-        activity = self.client.get(
-            "/analytics/activity?window=1h&bucket=hour",
-            headers=self.admin_headers,
-        ).get_json()
-        self.assertEqual(kpis[0]["value"], "5")
-        self.assertEqual(kpis[3]["value"], "50")
-        self.assertEqual(sum(row["requests"] for row in activity), 5)
-
 
 if __name__ == "__main__":
     import unittest

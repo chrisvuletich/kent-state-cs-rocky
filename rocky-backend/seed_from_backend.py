@@ -12,7 +12,6 @@ SEED_DATA_DIR = BACKEND_DIR / "seed-data"
 FIXTURE_PATH = ROOT / "run-test" / "backend" / "seed_data.json"
 USERS_FILE = BACKEND_DIR / "seed-data" / "account" / "users.json"
 COURSES_FILE = BACKEND_DIR / "seed-data" / "courses" / "courses.json"
-WIDGETS_FILE = BACKEND_DIR / "seed-data" / "widgets" / "widgets.json"
 API_HISTORY_FILE = BACKEND_DIR / "seed-data" / "api_history.json"
 ALLOWED_THEME_PREFERENCES = {"light", "dark"}
 
@@ -54,71 +53,19 @@ def _parse_semester(raw: str) -> tuple[int, str]:
     return year, term
 
 
-def _normalize_widget_list(raw_widgets, fallback_widgets):
-    if not isinstance(raw_widgets, list):
-        return [item.get("id") for item in fallback_widgets if isinstance(item, dict) and item.get("id")]
-
-    widgets = []
-    available_by_id = {
-        (item.get("id") or "").strip().lower(): item
-        for item in fallback_widgets
-        if isinstance(item, dict) and isinstance(item.get("id"), str)
-    }
-    available_signatures = {
-        (
-            (item.get("title") or "").strip().lower() if isinstance(item, dict) else "",
-            tuple(
-                line.strip()
-                for line in (item.get("lines") if isinstance(item, dict) and isinstance(item.get("lines"), list) else [])
-                if isinstance(line, str) and line.strip()
-            ),
-        ): item
-        for item in fallback_widgets
-        if isinstance(item, dict)
-    }
-    for item in raw_widgets:
-        widget_id = ""
-        if isinstance(item, str):
-            widget_id = item.strip().lower()
-        elif isinstance(item, dict):
-            widget_id = (item.get("widgetId") or item.get("id") or "").strip().lower() if isinstance(item.get("widgetId") or item.get("id"), str) else ""
-        else:
-            continue
-        canonical_widget = available_by_id.get(widget_id)
-        if canonical_widget is None:
-            signature = (
-                (item.get("title") or "").strip().lower() if isinstance(item.get("title"), str) else "",
-                tuple(
-                    line.strip()
-                    for line in (item.get("lines") if isinstance(item.get("lines"), list) else [])
-                    if isinstance(line, str) and line.strip()
-                ),
-            )
-            canonical_widget = available_signatures.get(signature)
-        if canonical_widget is not None:
-            widgets.append((canonical_widget.get("id") or "").strip().lower())
-
-    return widgets or [item.get("id") for item in fallback_widgets if isinstance(item, dict) and item.get("id")]
-
-
-def _normalize_user_settings(raw_settings, fallback_widgets):
+def _normalize_user_settings(raw_settings):
     theme = "light"
     if isinstance(raw_settings, dict):
         candidate_theme = (raw_settings.get("themePreference") or "").strip().lower()
         if candidate_theme in ALLOWED_THEME_PREFERENCES:
             theme = candidate_theme
 
-    widgets = fallback_widgets
-    if isinstance(raw_settings, dict):
-        widgets = _normalize_widget_list(raw_settings.get("widgets"), fallback_widgets)
-
-    return {"themePreference": theme, "widgets": widgets}
+    return {"themePreference": theme}
 
 
 def seed_from_backend() -> dict[str, int]:
     raw_users = _load_json(USERS_FILE)
     raw_courses = _load_json(COURSES_FILE)
-    raw_widgets = _load_json(WIDGETS_FILE)
     raw_api_history = _load_json(API_HISTORY_FILE)
 
     main.users.delete_many({})
@@ -144,7 +91,7 @@ def seed_from_backend() -> dict[str, int]:
         raw_is_active = raw.get("is_active") if raw.get("is_active") is not None else raw.get("isActive")
         is_active = True if raw_is_active is None else bool(raw_is_active)
 
-        settings_payload = _normalize_user_settings(raw.get("settings"), raw_widgets)
+        settings_payload = _normalize_user_settings(raw.get("settings"))
 
         user_doc = {
             "first_name": (raw.get("first_name") or "").strip(),
@@ -352,14 +299,11 @@ def seed_from_backend() -> dict[str, int]:
         main.api_history.insert_one(history_doc)
         api_history_inserted += 1
 
-    static_summary = main.seed_static_content()
-
     return {
         "users_inserted": users_inserted,
         "courses_inserted": courses_inserted,
         "api_keys_inserted": api_keys_inserted,
         "api_history_inserted": api_history_inserted,
-        **static_summary,
     }
 
 
@@ -375,10 +319,6 @@ def use_in_memory_db() -> None:
     main.telemetry_interactions = test_collections.telemetry_interactions
     main.telemetry_current = test_collections.telemetry_current
     main.telemetry_hardware = test_collections.telemetry_hardware
-    main.analytics_kpis = test_collections.analytics_kpis
-    main.analytics_activity = test_collections.analytics_activity
-    main.widgets_default = test_collections.widgets_default
-    main.help_faq = test_collections.help_faq
 
 
 def load_seed_fixture(path: Path = FIXTURE_PATH) -> dict:

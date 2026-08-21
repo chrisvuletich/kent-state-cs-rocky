@@ -89,15 +89,21 @@ def run_live_smoke():
             raise SmokeFailure("PLAINTEXT_KEY_STORED")
 
         after = refresh_current(interactions, current, users)
+        usage = interaction.get("usage")
+        performance = interaction.get("performance")
+        if not isinstance(usage, dict) or not isinstance(performance, dict):
+            raise SmokeFailure("METRIC_INVALID")
 
         requirements = {
-            "interactions_accepted_total": 1,
+            "interactions_received_total": 1,
             "interactions_completed_total": 1,
             "request_latency_samples_total": 1,
+            "model_input_bytes_total": integer(usage, "input_bytes"),
+            "model_output_bytes_total": integer(usage, "output_bytes"),
+            "request_latency_ms_total": integer(
+                performance, "request_latency_ms"
+            ),
         }
-        for field in ("model_input_bytes", "model_output_bytes",
-                      "request_latency_ms"):
-            requirements[f"{field}_total"] = integer(interaction, field)
         deltas = {}
         for field, expected in requirements.items():
             change = integer(after, field) - integer(before, field)
@@ -105,12 +111,12 @@ def run_live_smoke():
                 raise SmokeFailure("METRIC_DELTA_MISSING")
             deltas[field] = change
 
-        for source, total in (("prompt_eval_count", "prompt_tokens_total"),
-                              ("eval_count", "output_tokens_total")):
-            if source not in interaction:
+        for source, total in (("input_tokens", "prompt_tokens_total"),
+                              ("output_tokens", "output_tokens_total")):
+            if source not in usage:
                 continue
             change = integer(after, total) - integer(before, total, 0)
-            if change != integer(interaction, source):
+            if change != integer(usage, source):
                 raise SmokeFailure("TOKEN_DELTA_MISSING")
             deltas[total] = change
         return deltas

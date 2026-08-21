@@ -22,10 +22,6 @@ class Collections:
     conversations: any
     messages: any
     responses: any
-    analytics_kpis: any
-    analytics_activity: any
-    widgets_default: any
-    help_faq: any
 
 
 def _from_db(db) -> Collections:
@@ -41,10 +37,6 @@ def _from_db(db) -> Collections:
         conversations=db["conversations"],
         messages=db["messages"],
         responses=db["responses"],
-        analytics_kpis=db["analytics_kpis"],
-        analytics_activity=db["analytics_activity"],
-        widgets_default=db["widgets_default"],
-        help_faq=db["help_faq"],
     )
 
 

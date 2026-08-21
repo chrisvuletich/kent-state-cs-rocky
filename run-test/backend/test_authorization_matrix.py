@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import unittest
 from unittest.mock import patch
 
-from backend.test_support import BackendTestCase, main, seed_backend
+from test_support import BackendTestCase, main, seed_backend
 
 
 @dataclass(frozen=True)
