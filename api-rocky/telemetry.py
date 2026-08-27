@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 
 CURRENT_DOCUMENT_ID = "rocky:model-runtime"
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 OUTCOMES = {"completed", "rejected", "failed", "timed_out"}
 DELIVERY_STATUSES = {"completed", "client_disconnected"}
 BYTE_FIELDS = ("model_input_bytes", "model_output_bytes")
@@ -18,6 +18,20 @@ INTEGER_FIELDS = (
     "eval_duration",
 )
 STRING_FIELDS = ("actual_model", "stop_reason")
+QUEUE_STATUSES = {
+    "not_queued",
+    "admitted",
+    "queue_full",
+    "queue_memory_full",
+    "timed_out",
+    "cancelled",
+}
+QUEUE_INTEGER_FIELDS = (
+    "depth_on_arrival",
+    "wait_ms",
+    "capacity",
+    "queued_bytes_on_arrival",
+)
 CURRENT_COUNTER_DEFAULTS = {
     "counter_revision": 0,
     "interactions_received_total": 0,
@@ -63,6 +77,27 @@ def sanitize_model_metrics(metrics):
         value = metrics.get(field)
         if isinstance(value, str) and value.strip():
             safe[field] = value.strip()[:256]
+    queue = sanitize_queue_metrics(metrics.get("queue"))
+    if queue is not None:
+        safe["queue"] = queue
+    return safe
+
+
+def sanitize_queue_metrics(queue):
+    if not isinstance(queue, dict) or queue.get("status") not in QUEUE_STATUSES:
+        return None
+    safe = {"status": queue["status"]}
+    for field in QUEUE_INTEGER_FIELDS:
+        value = count(queue.get(field))
+        if value is None:
+            return None
+        safe[field] = value
+    initial_position = queue.get("initial_position")
+    if initial_position is not None:
+        initial_position = count(initial_position)
+        if initial_position is None:
+            return None
+        safe["initial_position"] = initial_position
     return safe
 
 

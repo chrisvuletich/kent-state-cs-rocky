@@ -120,6 +120,18 @@ From the repository root on macOS/Linux:
 - Frontend only: `PYTHONPATH=run-test:rocky-backend python -m unittest discover -s run-test/frontend -p "test_*.py"`
 - Granite bridge only: `cd granite-llm-server && python -m unittest discover -s tests -p "test_*.py"`
 
+The required concurrency, cancellation, bounded-memory, timeout, and streaming
+regressions for Granite's admission queue are listed in
+[`../granite-llm-server/INFERENCE_QUEUE_CONTRACT.md`](../granite-llm-server/INFERENCE_QUEUE_CONTRACT.md).
+The isolated queue plus buffered, queued-stream, active-heartbeat, and
+deployment-thread contract integrations have deterministic coverage. Queue
+telemetry sanitization, persistence, private streaming transport, and readiness
+snapshots are also covered. A route-level acceptance test verifies six validated
+requests complete FIFO with only one active model call. The opt-in deployment
+smoke `--include-queue-burst` repeats a six-client burst against the public API
+after the timeout rollout. Live rollout validation remains required before the
+longer wait is enabled on Rocky.
+
 Run the release gate from an activated project virtual environment after
 installing the backend, compatibility-test, Granite, and frontend dependencies.
 It runs backend tests, Granite tests, frontend unit tests, Svelte type checks,
@@ -194,7 +206,6 @@ IFS= read -r -s ROCKY_API_KEY
 printf '\n'
 export ROCKY_API_KEY
 python run-test/integration/deployment_smoke.py
-unset ROCKY_API_KEY
 ```
 
 The default checks do not generate model output or modify application content.
@@ -207,7 +218,9 @@ matching capability. For a final deployment, test buffered generation and every
 advertised optional path with:
 
 ```sh
-python run-test/integration/deployment_smoke.py --include-advertised
+python run-test/integration/deployment_smoke.py \
+  --timeout 390 \
+  --include-advertised
 ```
 
 All three explicit checks may also be combined:
@@ -221,6 +234,24 @@ python run-test/integration/deployment_smoke.py \
 
 Each generation is retained in institutional audit telemetry, including the
 embedded one-pixel image used by the image smoke check.
+
+After deploying the tracked timeout ladder, repeat the six-client classroom
+burst with:
+
+```sh
+python run-test/integration/deployment_smoke.py \
+  --timeout 390 \
+  --include-queue-burst
+```
+
+The burst requires six available Responses requests in the key's current
+rate-limit window. It starts them together, requires six distinct request IDs
+and successful responses, validates every rate-limit header set, and prints the
+IDs for queue-telemetry review. Unset the key after all smoke checks:
+
+```sh
+unset ROCKY_API_KEY
+```
 
 Use a dedicated instructor or deployment-test key and avoid running the command
 in a tight loop. The smoke test intentionally does not exhaust the key to prove

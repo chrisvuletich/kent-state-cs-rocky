@@ -18,6 +18,7 @@ PLACEHOLDER_PREFIXES = ("replace-with", "change-me", "changeme")
 DEPLOYED_INGRESS_MAX_REQUEST_BYTES = 10 * 1024 * 1024
 BUILT_IN_CHAT_MAX_IMAGE_CHARACTERS = 10 * 1024 * 1024
 MAX_IMAGE_DATA_URL_PREFIX_CHARACTERS = len("data:image/jpeg;base64,")
+MINIMUM_GENERATION_TIMEOUT_MARGIN_SECONDS = 15
 PRODUCTION_SECRETS = (
     "ROCKY_HIDDEN_API_KEY_SECRET",
     "ROCKY_SESSION_SECRET",
@@ -85,6 +86,25 @@ def configured_image_limits() -> dict[str, int] | None:
     except ValueError:
         return None
     return limits
+
+
+def configured_generation_timeouts() -> dict[str, float] | None:
+    settings = {
+        "granite_client_seconds": ("ROCKY_GRANITE_TIMEOUT_SECONDS", 315),
+        "ollama_request_seconds": ("ROCKY_OLLAMA_TIMEOUT_SECONDS", 150),
+        "queue_wait_seconds": ("ROCKY_GRANITE_QUEUE_WAIT_SECONDS", 120),
+        "heartbeat_seconds": ("ROCKY_GRANITE_QUEUE_HEARTBEAT_SECONDS", 10),
+    }
+    values: dict[str, float] = {}
+    try:
+        for public_name, (environment_name, default) in settings.items():
+            value = float(env(environment_name, str(default)))
+            if not math.isfinite(value):
+                return None
+            values[public_name] = value
+    except ValueError:
+        return None
+    return values
 
 
 def derive_frontend_api_url() -> str:
@@ -285,6 +305,8 @@ class RockyDoctor:
             "ROCKY_RESPONSES_RATE_LIMIT_PER_MINUTE": (10, 1, None),
             "ROCKY_MODELS_RATE_LIMIT_PER_MINUTE": (120, 1, None),
             "ROCKY_GRANITE_MAX_CONCURRENT": (1, 1, None),
+            "ROCKY_GRANITE_QUEUE_CAPACITY": (12, 0, None),
+            "ROCKY_GRANITE_QUEUE_MAX_BYTES": (64 * 1024 * 1024, 0, None),
             "ROCKY_GRANITE_MAX_REQUEST_BYTES": (10 * 1024 * 1024, 1, None),
             "ROCKY_MONGODB_CONNECT_ATTEMPTS": (10, 1, None),
             "ROCKY_HARDWARE_SAMPLE_INTERVAL_SECONDS": (30, 10, None),
@@ -381,14 +403,16 @@ class RockyDoctor:
                         )
 
         float_settings = {
-            "ROCKY_GRANITE_TIMEOUT_SECONDS": (170.0, 0.0, False),
+            "ROCKY_GRANITE_TIMEOUT_SECONDS": (315.0, 0.0, False),
             "ROCKY_READINESS_TIMEOUT_SECONDS": (3.0, 0.0, False),
             "ROCKY_OLLAMA_TIMEOUT_SECONDS": (150.0, 0.0, False),
             "ROCKY_OLLAMA_READY_TIMEOUT_SECONDS": (2.0, 0.0, False),
-            "ROCKY_GRANITE_QUEUE_WAIT_SECONDS": (1.0, 0.0, True),
+            "ROCKY_GRANITE_QUEUE_WAIT_SECONDS": (120.0, 0.0, True),
+            "ROCKY_GRANITE_QUEUE_HEARTBEAT_SECONDS": (10.0, 0.1, True),
             "ROCKY_MONGODB_RETRY_SECONDS": (2.0, 0.0, True),
             "ROCKY_HARDWARE_COMMAND_TIMEOUT_SECONDS": (3.0, 0.0, False),
         }
+        parsed_floats: dict[str, float] = {}
         for name, (default, minimum, allow_minimum) in float_settings.items():
             raw_value = env(name, str(default))
             try:
@@ -401,6 +425,28 @@ class RockyDoctor:
             elif value < minimum or (value == minimum and not allow_minimum):
                 comparison = "at least" if allow_minimum else "greater than"
                 errors.append(f"{name} must be {comparison} {minimum:g}")
+            else:
+                parsed_floats[name] = value
+
+        timeout_names = (
+            "ROCKY_GRANITE_TIMEOUT_SECONDS",
+            "ROCKY_OLLAMA_TIMEOUT_SECONDS",
+            "ROCKY_GRANITE_QUEUE_WAIT_SECONDS",
+        )
+        if all(name in parsed_floats for name in timeout_names):
+            minimum_granite_timeout = (
+                parsed_floats["ROCKY_OLLAMA_TIMEOUT_SECONDS"]
+                + parsed_floats["ROCKY_GRANITE_QUEUE_WAIT_SECONDS"]
+                + MINIMUM_GENERATION_TIMEOUT_MARGIN_SECONDS
+            )
+            if (
+                parsed_floats["ROCKY_GRANITE_TIMEOUT_SECONDS"]
+                < minimum_granite_timeout
+            ):
+                errors.append(
+                    "ROCKY_GRANITE_TIMEOUT_SECONDS must cover the queue wait "
+                    "plus Ollama timeout and at least 15 seconds of margin"
+                )
 
         return [
             DoctorCheck(
@@ -698,6 +744,7 @@ class RockyDoctor:
         capabilities = payload.get("capabilities")
         streaming = payload.get("streaming")
         image_input = payload.get("image_input")
+        timeouts = payload.get("timeouts")
 
         if expected_streaming is None:
             errors.append("ROCKY_ENABLE_STREAMING is invalid")
@@ -739,6 +786,32 @@ class RockyDoctor:
             if expected_image_input and image_input.get("limits_match") is not True:
                 errors.append("image_input.limits_match is not true")
 
+        expected_timeouts = configured_generation_timeouts()
+        if expected_timeouts is None:
+            errors.append("configured generation timeouts are invalid")
+        elif not isinstance(timeouts, dict):
+            errors.append("timeout readiness was not reported")
+        else:
+            if (
+                timeouts.get("granite_client_seconds")
+                != expected_timeouts["granite_client_seconds"]
+            ):
+                errors.append(
+                    "timeouts.granite_client_seconds does not match configuration"
+                )
+            expected_granite = {
+                name: expected_timeouts[name]
+                for name in (
+                    "ollama_request_seconds",
+                    "queue_wait_seconds",
+                    "heartbeat_seconds",
+                )
+            }
+            if timeouts.get("granite") != expected_granite:
+                errors.append("timeouts.granite does not match configuration")
+            if timeouts.get("configuration_matches") is not True:
+                errors.append("timeouts.configuration_matches is not true")
+
         return errors
 
     def check_granite_readiness(self) -> DoctorCheck:
@@ -753,6 +826,19 @@ class RockyDoctor:
             return DoctorCheck(
                 "FAIL", "Granite readiness", f"Connection failed: {type(error).__name__}."
             )
+        expected_timeouts = configured_generation_timeouts()
+        expected_granite_timeouts = (
+            {
+                name: expected_timeouts[name]
+                for name in (
+                    "ollama_request_seconds",
+                    "queue_wait_seconds",
+                    "heartbeat_seconds",
+                )
+            }
+            if expected_timeouts is not None
+            else None
+        )
         passed = (
             response.status_code == 200
             and payload.get("ok") is True
@@ -760,10 +846,14 @@ class RockyDoctor:
             and isinstance(payload.get("dependencies"), dict)
             and payload["dependencies"].get("ollama") is True
             and payload["dependencies"].get("model_available") is True
+            and payload.get("timeouts") == expected_granite_timeouts
         )
         detail = (
-            f"Ollama has model '{self.inference_model}'."
+            f"Ollama has model '{self.inference_model}' and timeout settings match."
             if passed
-            else f"HTTP {response.status_code}; Ollama or the configured model is unavailable."
+            else (
+                f"HTTP {response.status_code}; Ollama, model, or generation "
+                "timeout settings are unavailable or mismatched."
+            )
         )
         return DoctorCheck("PASS" if passed else "FAIL", "Granite readiness", detail)

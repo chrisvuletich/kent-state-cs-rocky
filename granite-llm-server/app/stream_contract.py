@@ -42,8 +42,16 @@ def validate_stream_event(event: Mapping[str, object]) -> dict[str, object]:
         _nonempty_string(error.get("type"), "error.error.type")
         _nonempty_string(error.get("message"), "error.error.message")
         expected_keys = {"type", "error"}
+        if "telemetry" in normalized:
+            if not isinstance(normalized.get("telemetry"), Mapping):
+                raise ValueError("error.telemetry must be an object.")
+            expected_keys.add("telemetry")
     else:
         expected_keys = {"type"}
+        if "telemetry" in normalized:
+            if not isinstance(normalized.get("telemetry"), Mapping):
+                raise ValueError("cancelled.telemetry must be an object.")
+            expected_keys.add("telemetry")
 
     if set(normalized) != expected_keys:
         raise ValueError(f"{event_type} event contains unsupported fields.")
@@ -64,6 +72,8 @@ def encode_stream_event(event: Mapping[str, object]) -> str:
 def validate_stream(events: Iterable[Mapping[str, object]]) -> None:
     """Validate ordering for one complete internal generation stream."""
     stream = [validate_stream_event(event) for event in events]
+    if len(stream) == 1 and stream[0]["type"] in {"error", "cancelled"}:
+        return
     if len(stream) < 2 or stream[0]["type"] != "started":
         raise ValueError("A Granite stream must begin with started.")
     if stream[-1]["type"] not in TERMINAL_EVENT_TYPES:

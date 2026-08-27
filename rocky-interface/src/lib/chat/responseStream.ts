@@ -70,14 +70,16 @@ class SseFrameDecoder {
 			const frame = this.buffer.slice(0, separator.index);
 			this.buffer = this.buffer.slice(separator.index + separator[0].length);
 			if (frame.length > MAX_BUFFERED_FRAME_CHARACTERS) invalidStream();
-			events.push(this.parseFrame(frame));
+			const event = this.parseFrame(frame);
+			if (event) events.push(event);
 		}
 		if (this.buffer.length > MAX_BUFFERED_FRAME_CHARACTERS) invalidStream();
 		return events;
 	}
 
-	private parseFrame(frame: string): StreamEvent {
+	private parseFrame(frame: string): StreamEvent | null {
 		const lines = frame.split(/\r?\n/);
+		if (lines.length === 1 && lines[0] === ': keepalive') return null;
 		if (lines.length !== 2 || !lines[0].startsWith('event: ') || !lines[1].startsWith('data: ')) {
 			invalidStream();
 		}

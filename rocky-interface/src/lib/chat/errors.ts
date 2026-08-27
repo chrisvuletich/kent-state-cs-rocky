@@ -95,10 +95,15 @@ export function chatHttpFailure(
 		};
 	}
 	if (code === 'model_busy') {
+		const retrySeconds = retryAfterSeconds(context.retryAfter) ?? 2;
 		return {
 			kind: 'busy',
-			message: withRequestId('Rocky is busy right now. Wait a moment and try again.', requestId),
-			markUnavailable: true
+			message: withRequestId(
+				`Rocky is busy right now. Try again in ${retrySeconds} seconds.`,
+				requestId
+			),
+			markUnavailable: false,
+			retryAfterSeconds: retrySeconds
 		};
 	}
 	if (code === 'request_logging_unavailable') {

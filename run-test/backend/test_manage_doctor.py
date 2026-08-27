@@ -47,6 +47,10 @@ def production_env():
         "ROCKY_GRANITE_TOKEN": "g" * 40,
         "ROCKY_RESPONSES_RATE_LIMIT_PER_MINUTE": "10",
         "ROCKY_MODELS_RATE_LIMIT_PER_MINUTE": "120",
+        "ROCKY_GRANITE_TIMEOUT_SECONDS": "315",
+        "ROCKY_OLLAMA_TIMEOUT_SECONDS": "150",
+        "ROCKY_GRANITE_QUEUE_WAIT_SECONDS": "120",
+        "ROCKY_GRANITE_QUEUE_HEARTBEAT_SECONDS": "10",
         "PUBLIC_ENABLE_MICROSOFT_OAUTH": "true",
         "PUBLIC_MICROSOFT_CLIENT_ID": "client-id",
         "PUBLIC_MICROSOFT_TENANT_ID": "tenant-id",
@@ -89,6 +93,15 @@ def healthy_routes():
                     "granite_enabled": False,
                     "limits_match": True,
                 },
+                "timeouts": {
+                    "granite_client_seconds": 315,
+                    "granite": {
+                        "ollama_request_seconds": 150,
+                        "queue_wait_seconds": 120,
+                        "heartbeat_seconds": 10,
+                    },
+                    "configuration_matches": True,
+                },
             },
         ),
         "http://granite.example:5002/ready": FakeResponse(
@@ -97,6 +110,11 @@ def healthy_routes():
                 "ok": True,
                 "model": "course-model",
                 "dependencies": {"ollama": True, "model_available": True},
+                "timeouts": {
+                    "ollama_request_seconds": 150,
+                    "queue_wait_seconds": 120,
+                    "heartbeat_seconds": 10,
+                },
             },
         ),
     }
@@ -168,6 +186,45 @@ class RockyDoctorTests(unittest.TestCase):
         rendered = " ".join(check.detail for check in checks)
         self.assertNotIn("mongodb://database.example", rendered)
         self.assertNotIn("g" * 40, rendered)
+
+    def test_timeout_ladder_must_cover_queue_wait_and_model_generation(self):
+        values = production_env()
+        values["ROCKY_GRANITE_TIMEOUT_SECONDS"] = "280"
+        with patch.dict("os.environ", values, clear=True):
+            checks = RockyDoctor(
+                include_network=False,
+                mongo_pinger=lambda _uri, _database: None,
+            ).run()
+
+        runtime_check = next(
+            check for check in checks if check.name == "runtime settings"
+        )
+        self.assertEqual(runtime_check.status, "FAIL")
+        self.assertIn(
+            "must cover the queue wait plus Ollama timeout",
+            runtime_check.detail,
+        )
+
+    def test_readiness_rejects_timeout_configuration_drift(self):
+        routes = healthy_routes()
+        routes["http://127.0.0.1:5003/ready"]._payload["timeouts"][
+            "configuration_matches"
+        ] = False
+        routes["http://granite.example:5002/ready"]._payload["timeouts"][
+            "queue_wait_seconds"
+        ] = 1
+
+        with patch.dict("os.environ", production_env(), clear=True):
+            checks = RockyDoctor(
+                session=FakeSession(routes),
+                mongo_pinger=lambda _uri, _database: None,
+            ).run()
+
+        failures = {check.name: check.detail for check in checks if check.failed}
+        self.assertIn("chat API readiness", failures)
+        self.assertIn("Granite readiness", failures)
+        self.assertIn("timeout", failures["chat API readiness"])
+        self.assertIn("timeout", failures["Granite readiness"])
 
     def test_readiness_rejects_a_frontend_and_service_streaming_mismatch(self):
         values = production_env()
@@ -419,6 +476,9 @@ class RockyDoctorTests(unittest.TestCase):
                 "ROCKY_CHAT_API_PORT": "not-a-port",
                 "ROCKY_GRANITE_TIMEOUT_SECONDS": "nan",
                 "ROCKY_GRANITE_MAX_CONCURRENT": "0",
+                "ROCKY_GRANITE_QUEUE_CAPACITY": "-1",
+                "ROCKY_GRANITE_QUEUE_MAX_BYTES": "unbounded",
+                "ROCKY_GRANITE_QUEUE_HEARTBEAT_SECONDS": "0.09",
                 "ROCKY_RESPONSES_RATE_LIMIT_PER_MINUTE": "0",
                 "ROCKY_MODELS_RATE_LIMIT_PER_MINUTE": "not-an-integer",
                 "ROCKY_MAX_IMAGES_PER_REQUEST": "17",
@@ -444,6 +504,12 @@ class RockyDoctorTests(unittest.TestCase):
         self.assertIn("ROCKY_CHAT_API_PORT must be an integer", runtime_check.detail)
         self.assertIn("ROCKY_GRANITE_TIMEOUT_SECONDS must be a finite number", runtime_check.detail)
         self.assertIn("ROCKY_GRANITE_MAX_CONCURRENT must be at least 1", runtime_check.detail)
+        self.assertIn("ROCKY_GRANITE_QUEUE_CAPACITY must be at least 0", runtime_check.detail)
+        self.assertIn("ROCKY_GRANITE_QUEUE_MAX_BYTES must be an integer", runtime_check.detail)
+        self.assertIn(
+            "ROCKY_GRANITE_QUEUE_HEARTBEAT_SECONDS must be at least 0.1",
+            runtime_check.detail,
+        )
         self.assertIn(
             "ROCKY_RESPONSES_RATE_LIMIT_PER_MINUTE must be at least 1",
             runtime_check.detail,

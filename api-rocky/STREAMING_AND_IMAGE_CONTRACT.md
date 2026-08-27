@@ -82,10 +82,13 @@ data: {"type":"error","sequence_number":5,"code":"model_timeout","message":"Mode
 
 ```
 
-Rocky validates Granite's status, media type, first event, and configured model
-before sending the public SSE prefix. Midstream provider details are sanitized.
-A downstream disconnect closes Granite, which closes Ollama. If generation is
-still underway, Rocky records a failed interaction with
+Rocky validates Granite's status and media type before sending the public SSE
+prefix, then validates the first meaningful event and configured model while
+the public stream is open. This lets queued requests return response headers
+promptly so a downstream disconnect can cancel the queued Granite ticket.
+Invalid or unexpected private events become a sanitized public `error` event;
+provider details are never forwarded. A downstream disconnect closes Granite,
+which closes Ollama. If generation is still underway, Rocky records a failed interaction with
 `error_type=client_disconnected`, including any partial generated text. If the
 model already completed while Rocky was emitting its final SSE frames, the
 model outcome remains completed and the separate delivery status records
@@ -130,6 +133,15 @@ event format. Requests without `"stream": true` retain the existing JSON
 response. Ollama's upstream framing follows its documented
 [NDJSON streaming format](https://docs.ollama.com/api/streaming).
 
+The bounded admission queue is specified separately in
+[`../granite-llm-server/INFERENCE_QUEUE_CONTRACT.md`](../granite-llm-server/INFERENCE_QUEUE_CONTRACT.md).
+Its private blank-line heartbeats are transport keepalives rather than events,
+so they do not change the event sequence below. Rocky relays them as standard
+SSE `: keepalive` comments, which do not consume sequence numbers and are
+ignored by SSE clients, but let the proxy chain detect a downstream disconnect
+while generation is queued or while an admitted Ollama stream has not produced
+visible text. Active keepalives never include raw reasoning or provider data.
+
 The event shapes are:
 
 ```json
@@ -140,7 +152,7 @@ The event shapes are:
 {"type":"cancelled"}
 ```
 
-Every stream:
+Every admitted stream whose provider opens successfully:
 
 - Begins with exactly one `started` event.
 - Contains only `delta` events between start and termination.
@@ -148,11 +160,21 @@ Every stream:
 - Requires at least one non-empty delta before `completed`.
 - Rejects unknown event fields so provider details cannot leak accidentally.
 
+A stream that expires or is cancelled while still waiting has not started
+inference, so it may contain one terminal `error` or `cancelled` event without a
+preceding `started` event. The same single-terminal form is used when a queued
+stream is admitted but its provider connection fails after response headers
+were committed and before `started` can be emitted. Rocky accepts these bounded
+pre-start exceptions and translates them to the existing public terminal error
+without emitting `response.completed`.
+
 Ollama's newline-delimited stream is decoded incrementally with a 1 MiB line
 limit and 16 MiB total limit. UTF-8 and JSON are strict, raw reasoning text is
 discarded, and only allowlisted final telemetry is retained. Upstream failures
-before Granite starts its response remain JSON errors with their real status;
-failures after `started` become a terminal sanitized `error` event.
+on an immediately admitted request before Granite starts its response remain
+JSON errors with their real status. A failure after response commit, including
+one encountered after queue admission, becomes a terminal sanitized `error`
+event.
 
 If the downstream connection closes, Granite closes the Ollama response and
 releases its inference slot. No `cancelled` event can be delivered over a

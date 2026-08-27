@@ -58,13 +58,31 @@ printf 'Rocky deployment test API key: '
 IFS= read -r -s ROCKY_API_KEY
 printf '\n'
 export ROCKY_API_KEY
-python run-test/integration/deployment_smoke.py --include-advertised
-unset ROCKY_API_KEY
+python run-test/integration/deployment_smoke.py \
+  --timeout 390 \
+  --include-advertised
 ```
 
 Every inference request, including the embedded one-pixel image, is retained in
 institutional audit telemetry. Run this once per deployment rather than as a
 frequent health poll.
+
+After the queue timeout ladder is deployed, use the same key to run the
+six-client acceptance burst once. Ensure at least six Responses requests remain
+in the key's current rate-limit window:
+
+```sh
+python run-test/integration/deployment_smoke.py \
+  --timeout 390 \
+  --include-queue-burst
+```
+
+Require `PASS` for both queue-burst results, then use the six printed request
+IDs to inspect queue status and wait time in permanent telemetry.
+
+```sh
+unset ROCKY_API_KEY
+```
 
 Finally, verify the built-in chat in a student account:
 

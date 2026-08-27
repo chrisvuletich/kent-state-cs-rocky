@@ -22,7 +22,7 @@ class TelemetryAnalyticsEndpointTests(BackendTestCase):
         document = {
             "_id": request_id,
             "request_id": request_id,
-            "schema_version": 2,
+            "schema_version": 3,
             "state": "terminal" if outcome else "received",
             "received_at": self.now - timedelta(minutes=minutes_ago),
             "source": source,

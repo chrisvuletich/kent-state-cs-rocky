@@ -5,7 +5,10 @@ import json
 import os
 import re
 import sys
+import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from threading import Barrier
 from typing import Any
 from urllib.parse import urlparse, urlunparse
 
@@ -25,6 +28,7 @@ RATE_LIMIT_HEADERS = (
     "x-ratelimit-reset-requests",
 )
 RATE_LIMIT_WINDOW_SECONDS = 60
+QUEUE_BURST_REQUESTS = 6
 
 
 @dataclass(frozen=True)
@@ -37,6 +41,7 @@ class SmokeConfig:
     include_streaming: bool = False
     include_image: bool = False
     include_advertised: bool = False
+    include_queue_burst: bool = False
 
 
 @dataclass(frozen=True)
@@ -335,9 +340,15 @@ def check_rate_limit_headers(response: requests.Response, name: str) -> SmokeChe
 
 
 class DeploymentSmoke:
-    def __init__(self, config: SmokeConfig, session: requests.Session | None = None):
+    def __init__(
+        self,
+        config: SmokeConfig,
+        session: requests.Session | None = None,
+        burst_request=None,
+    ):
         self.config = config
         self.session = session or requests.Session()
+        self.burst_request = burst_request or requests.post
         self.auth_headers = {"Authorization": f"Bearer {config.api_key}"}
 
     def request(self, method: str, path: str, **kwargs):
@@ -373,6 +384,11 @@ class DeploymentSmoke:
                 self.check_streaming_generation,
             ),
             ("image generation", include_image, self.check_image_generation),
+            (
+                "queue burst",
+                self.config.include_queue_burst,
+                self.check_queue_burst,
+            ),
         ]
         failed_prerequisites = [check.name for check in checks if not check.passed]
         for name, enabled, check_function in requested_checks:
@@ -687,6 +703,129 @@ class DeploymentSmoke:
             rate_limit_check,
         )
 
+    def check_queue_burst(
+        self,
+        model: ModelInfo,
+    ) -> tuple[SmokeCheck, SmokeCheck]:
+        """Submit one synchronized six-client burst through the public API."""
+        start_barrier = Barrier(QUEUE_BURST_REQUESTS)
+        burst_started = time.monotonic()
+
+        def submit(index):
+            start_barrier.wait()
+            request_started = time.monotonic()
+            try:
+                response = self.burst_request(
+                    f"{self.config.base_url}/v1/responses",
+                    headers={
+                        **self.auth_headers,
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": model.model_id,
+                        "input": (
+                            f"Queue burst check {index + 1}. "
+                            "Reply with one short sentence."
+                        ),
+                        "max_output_tokens": 32,
+                        "store": False,
+                    },
+                    timeout=self.config.timeout_seconds,
+                )
+            except requests.RequestException as error:
+                return {
+                    "index": index,
+                    "passed": False,
+                    "rate_limit_passed": False,
+                    "detail": f"Connection failed: {type(error).__name__}",
+                    "request_id": "",
+                    "elapsed_ms": round(
+                        (time.monotonic() - request_started) * 1000
+                    ),
+                }
+
+            payload = response_payload(response)
+            completion = self.completed_json_check(
+                f"queue burst request {index + 1}",
+                response,
+                payload,
+                model.model_id,
+            )
+            rate_limit = check_rate_limit_headers(
+                response,
+                f"queue burst request {index + 1} rate limit",
+            )
+            result = {
+                "index": index,
+                "passed": response.status_code == 200 and completion.passed,
+                "rate_limit_passed": rate_limit.passed,
+                "detail": (
+                    completion.detail
+                    if response.status_code == 200
+                    else error_detail(response, payload)
+                ),
+                "request_id": request_id_for(response),
+                "elapsed_ms": round(
+                    (time.monotonic() - request_started) * 1000
+                ),
+            }
+            response.close()
+            return result
+
+        with ThreadPoolExecutor(max_workers=QUEUE_BURST_REQUESTS) as executor:
+            results = sorted(
+                executor.map(submit, range(QUEUE_BURST_REQUESTS)),
+                key=lambda result: result["index"],
+            )
+
+        request_ids = [result["request_id"] for result in results]
+        unique_request_ids = (
+            len(request_ids) == QUEUE_BURST_REQUESTS
+            and len(set(request_ids)) == QUEUE_BURST_REQUESTS
+            and all(request_ids)
+        )
+        completed = sum(result["passed"] for result in results)
+        elapsed_ms = round((time.monotonic() - burst_started) * 1000)
+        failed_details = [
+            f"#{result['index'] + 1}: {result['detail']}"
+            for result in results
+            if not result["passed"]
+        ]
+        if completed != QUEUE_BURST_REQUESTS:
+            detail = (
+                f"Completed {completed}/{QUEUE_BURST_REQUESTS}; "
+                + "; ".join(failed_details)
+            )
+        elif not unique_request_ids:
+            detail = "All requests completed, but request IDs were missing or duplicated."
+        else:
+            maximum_request_ms = max(result["elapsed_ms"] for result in results)
+            detail = (
+                f"Completed {QUEUE_BURST_REQUESTS}/{QUEUE_BURST_REQUESTS} in "
+                f"{elapsed_ms} ms; longest request {maximum_request_ms} ms; "
+                "request IDs: " + ", ".join(request_ids) + "."
+            )
+
+        rate_limit_failures = sum(
+            not result["rate_limit_passed"] for result in results
+        )
+        return (
+            SmokeCheck(
+                "queue burst",
+                completed == QUEUE_BURST_REQUESTS and bool(unique_request_ids),
+                detail,
+            ),
+            SmokeCheck(
+                "queue burst rate limit",
+                rate_limit_failures == 0,
+                (
+                    "All six responses included valid request-limit headers."
+                    if rate_limit_failures == 0
+                    else f"{rate_limit_failures} response(s) had invalid request-limit headers."
+                ),
+            ),
+        )
+
     @staticmethod
     def completed_json_check(
         name: str,
@@ -731,6 +870,7 @@ def build_config(args: argparse.Namespace) -> SmokeConfig:
         include_streaming=args.include_streaming,
         include_image=args.include_image,
         include_advertised=args.include_advertised,
+        include_queue_burst=args.include_queue_burst,
     )
 
 
@@ -773,6 +913,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=(
             "Submit buffered generation plus every optional inference path the "
             "selected model advertises."
+        ),
+    )
+    parser.add_argument(
+        "--include-queue-burst",
+        action="store_true",
+        help=(
+            "Submit six small concurrent audited requests to verify deployed "
+            "queue admission."
         ),
     )
     return parser.parse_args(argv)

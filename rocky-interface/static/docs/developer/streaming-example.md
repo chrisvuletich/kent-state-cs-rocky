@@ -35,7 +35,7 @@ with requests.post(
     headers=headers,
     json=payload,
     stream=True,
-    timeout=180,
+    timeout=390,
 ) as response:
     request_id = response.headers.get("x-request-id", "not provided")
     response.raise_for_status()
@@ -153,4 +153,3 @@ if (!completed) throw new Error(`Rocky stream ended before completion (request $
 - An `error` event is terminal even though the HTTP status is already 200.
 - A closed connection without `response.completed` or `error` is incomplete.
 - Keep `x-request-id` for troubleshooting, but never log the API key.
-

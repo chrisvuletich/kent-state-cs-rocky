@@ -80,6 +80,10 @@ OLLAMA_MODEL=gemma4:latest
 ROCKY_GRANITE_URL=http://GRANITE_PRIVATE_ADDRESS:5002/generate
 ROCKY_GRANITE_READY_URL=http://GRANITE_PRIVATE_ADDRESS:5002/ready
 ROCKY_GRANITE_TOKEN=...
+ROCKY_GRANITE_TIMEOUT_SECONDS=315
+ROCKY_OLLAMA_TIMEOUT_SECONDS=150
+ROCKY_GRANITE_QUEUE_WAIT_SECONDS=120
+ROCKY_GRANITE_QUEUE_HEARTBEAT_SECONDS=10
 ROCKY_MAX_CONTEXT_CHARS=60000
 ROCKY_MAX_OUTPUT_TOKENS=2048
 ROCKY_MAX_REQUEST_BYTES=262144
@@ -105,7 +109,10 @@ OLLAMA_BASE_URL=http://127.0.0.1:11434
 OLLAMA_MODEL=gemma4:latest
 ROCKY_MAX_OUTPUT_TOKENS=2048
 ROCKY_GRANITE_MAX_CONCURRENT=1
-ROCKY_GRANITE_QUEUE_WAIT_SECONDS=1
+ROCKY_GRANITE_QUEUE_CAPACITY=12
+ROCKY_GRANITE_QUEUE_HEARTBEAT_SECONDS=10
+ROCKY_GRANITE_QUEUE_MAX_BYTES=67108864
+ROCKY_GRANITE_QUEUE_WAIT_SECONDS=120
 ROCKY_GRANITE_MAX_REQUEST_BYTES=10485760
 ROCKY_ENABLE_STREAMING=false
 ROCKY_ENABLE_IMAGE_INPUT=false
@@ -115,6 +122,25 @@ ROCKY_MAX_IMAGE_TOTAL_BYTES=6291456
 ROCKY_MAX_IMAGE_PIXELS=20000000
 ROCKY_MAX_IMAGE_TOTAL_PIXELS=40000000
 ```
+
+Granite uses a bounded, process-local FIFO queue when its inference slots are
+occupied. Buffered generation and queued and active stream heartbeats are
+integrated now. The tracked service examples provide 16 total request threads
+in each chat-facing service, enough for the default one active request, twelve
+waiters, and health-check headroom. If queue capacity or active capacity is
+increased, increase total threads to at least active capacity plus queue
+capacity plus two; keep Granite at exactly one worker so it retains one global
+in-memory queue.
+Timeout ordering, final deployment settings, and rollout acceptance criteria
+are defined in
+[`../granite-llm-server/INFERENCE_QUEUE_CONTRACT.md`](../granite-llm-server/INFERENCE_QUEUE_CONTRACT.md).
+The tracked Phase 6 ladder is now 150 seconds for Ollama, 120 seconds for queue
+waiting, 300 seconds for Granite Gunicorn, 315 seconds for Rocky's Granite
+client, 330 seconds for Rocky chat API Gunicorn, and 360 seconds for Nginx.
+Apply the environment, systemd, and Nginx changes together. Authenticated
+readiness and `manage.py doctor` reject mismatched Granite timeout settings.
+Bounded queue telemetry remains available in permanent interaction records and
+the Rocky `/ready` aggregate queue snapshot.
 
 To roll out Responses streaming, first deploy this code with the flag left
 `false` in all three environments. Then set `ROCKY_ENABLE_STREAMING=true` in Granite's environment and
@@ -321,7 +347,9 @@ python run-test/integration/deployment_smoke.py \
 For the normal final verification, the equivalent capability-aware shortcut is:
 
 ```sh
-python run-test/integration/deployment_smoke.py --include-advertised
+python run-test/integration/deployment_smoke.py \
+  --timeout 390 \
+  --include-advertised
 ```
 
 It always checks buffered generation and automatically checks streaming and
@@ -329,9 +357,28 @@ image input when the selected model advertises them. Explicit feature flags
 remain useful when a feature is required but unexpectedly absent: they fail
 instead of silently omitting that path.
 
+After the timeout ladder and longer queue wait are deployed, run the explicit
+classroom-burst check once with a fresh deployment-test key:
+
+```sh
+python run-test/integration/deployment_smoke.py \
+  --timeout 390 \
+  --include-queue-burst
+```
+
+This starts six small buffered requests together, requires all six to complete
+without `model_busy`, validates every request ID and rate-limit header set, and
+prints the IDs for correlation with permanent queue telemetry. It does not
+assume client numbering is server arrival order. In Analytics, confirm one
+request was immediately admitted, the others were queued, and compare their
+queue wait and model latency with the incident baseline. The deployment-test
+key must have at least six Responses requests left in its current rate-limit
+window.
+
 When both optional capabilities are advertised, either combined form submits
 three short, permanently audited generation requests in addition to model
-discovery. Use it once per deployment rather than as a frequent poll.
+discovery. Queue-burst mode submits six more. Use these modes once per
+deployment rather than as frequent polls.
 
 Unset the key when finished:
 

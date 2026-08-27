@@ -71,8 +71,8 @@ class OpenAiSdkCompatibilityTests(unittest.TestCase):
     def granite_stream(self, *deltas: str):
         upstream_response = Mock()
         events = [
-            {"type": "delta", "text": delta}
-            for delta in deltas
+            {"type": "started", "model": self.api.INFERENCE_MODEL},
+            *({"type": "delta", "text": delta} for delta in deltas),
         ]
         events.append(
             {
@@ -88,10 +88,13 @@ class OpenAiSdkCompatibilityTests(unittest.TestCase):
         )
         return self.api.GraniteEventStream(
             upstream_response,
-            iter(
-                json.dumps(event, separators=(",", ":")).encode("utf-8") + b"\n"
-                for event in events
-            ),
+            iter([
+                b"\n",
+                *(
+                    json.dumps(event, separators=(",", ":")).encode("utf-8") + b"\n"
+                    for event in events
+                ),
+            ]),
             [0],
             self.api.INFERENCE_MODEL,
         )

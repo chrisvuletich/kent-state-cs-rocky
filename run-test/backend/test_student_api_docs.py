@@ -193,8 +193,100 @@ class StudentApiDocumentationTests(unittest.TestCase):
         for placeholder in sorted(placeholders):
             with self.subTest(placeholder=placeholder):
                 self.assertIn(placeholder, guide)
+        self.assertIn("--include-queue-burst", guide)
+        self.assertIn("six small buffered requests", guide)
         self.assertNotIn("/home/bboggia", guide)
         self.assertNotIn("bboggia:bboggia", guide)
+
+    def test_chat_services_have_queue_and_health_thread_headroom(self):
+        granite_env = (
+            ROOT / "granite-llm-server" / ".env.example"
+        ).read_text(encoding="utf-8")
+        granite_service = (
+            ROOT / "deploy" / "systemd" / "rocky-granite.service.example"
+        ).read_text(encoding="utf-8")
+        chat_service = (
+            ROOT / "deploy" / "systemd" / "rocky-chat-api.service.example"
+        ).read_text(encoding="utf-8")
+
+        queue_capacity = int(re.search(
+            r"^ROCKY_GRANITE_QUEUE_CAPACITY=(\d+)$",
+            granite_env,
+            re.MULTILINE,
+        ).group(1))
+        active_capacity = int(re.search(
+            r"^ROCKY_GRANITE_MAX_CONCURRENT=(\d+)$",
+            granite_env,
+            re.MULTILINE,
+        ).group(1))
+        granite_threads = int(re.search(
+            r"--threads (\d+)", granite_service
+        ).group(1))
+        chat_workers = int(re.search(
+            r"--workers (\d+)", chat_service
+        ).group(1))
+        chat_threads = int(re.search(
+            r"--threads (\d+)", chat_service
+        ).group(1))
+        required_connections = queue_capacity + active_capacity + 2
+
+        self.assertIn("--workers 1", granite_service)
+        self.assertGreaterEqual(granite_threads, required_connections)
+        self.assertGreaterEqual(
+            chat_workers * chat_threads,
+            required_connections,
+        )
+
+    def test_generation_timeout_ladder_covers_queue_and_model_runtime(self):
+        environment = (ROOT / ".env.example").read_text(encoding="utf-8")
+        granite_service = (
+            ROOT / "deploy" / "systemd" / "rocky-granite.service.example"
+        ).read_text(encoding="utf-8")
+        chat_service = (
+            ROOT / "deploy" / "systemd" / "rocky-chat-api.service.example"
+        ).read_text(encoding="utf-8")
+        nginx = (
+            ROOT / "deploy" / "nginx" / "rocky.cs.kent.edu.conf"
+        ).read_text(encoding="utf-8")
+
+        def setting(name):
+            match = re.search(rf"^{name}=(\d+)$", environment, re.MULTILINE)
+            self.assertIsNotNone(match, name)
+            return int(match.group(1))
+
+        def gunicorn_timeout(service):
+            return int(re.search(r"--timeout (\d+)", service).group(1))
+
+        response_location = nginx.split(
+            "location = /v1/responses {", 1
+        )[1].split("location = /v1/models {", 1)[0]
+        frontend_location = nginx.split("location / {", 1)[1]
+        def proxy_timeout(location, directive):
+            match = re.search(rf"proxy_{directive}_timeout (\d+)s", location)
+            self.assertIsNotNone(match, directive)
+            return int(match.group(1))
+
+        response_proxy_timeout = proxy_timeout(response_location, "read")
+        response_proxy_send_timeout = proxy_timeout(response_location, "send")
+        frontend_proxy_timeout = proxy_timeout(frontend_location, "read")
+        frontend_proxy_send_timeout = proxy_timeout(frontend_location, "send")
+
+        ollama_timeout = setting("ROCKY_OLLAMA_TIMEOUT_SECONDS")
+        queue_wait = setting("ROCKY_GRANITE_QUEUE_WAIT_SECONDS")
+        granite_gunicorn_timeout = gunicorn_timeout(granite_service)
+        granite_client_timeout = setting("ROCKY_GRANITE_TIMEOUT_SECONDS")
+        chat_gunicorn_timeout = gunicorn_timeout(chat_service)
+
+        self.assertGreaterEqual(
+            granite_gunicorn_timeout,
+            queue_wait + ollama_timeout + 15,
+        )
+        self.assertLess(granite_gunicorn_timeout, granite_client_timeout)
+        self.assertLess(granite_client_timeout, chat_gunicorn_timeout)
+        self.assertLess(chat_gunicorn_timeout, response_proxy_timeout)
+        self.assertEqual(response_proxy_send_timeout, response_proxy_timeout)
+        self.assertEqual(frontend_proxy_timeout, response_proxy_timeout)
+        self.assertEqual(frontend_proxy_send_timeout, response_proxy_timeout)
 
 
 if __name__ == "__main__":

@@ -74,7 +74,7 @@ def run_live_smoke():
                 or interaction.get("state") != "terminal"
                 or interaction.get("outcome") != "completed"):
             raise SmokeFailure("CORRELATED_INTERACTION_MISSING")
-        if (interaction.get("schema_version") != 2
+        if (interaction.get("schema_version") != 3
                 or interaction.get("content_available") is not True
                 or interaction.get("expires_at") is not None):
             raise SmokeFailure("PERMANENT_RECORD_MISSING")

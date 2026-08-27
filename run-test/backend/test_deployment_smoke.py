@@ -4,6 +4,7 @@ import importlib.util
 import json
 import os
 import sys
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -199,6 +200,7 @@ class DeploymentSmokeTests(unittest.TestCase):
         include_streaming=False,
         include_image=False,
         include_advertised=False,
+        include_queue_burst=False,
         expected_model="course-model",
     ):
         return smoke.SmokeConfig(
@@ -210,6 +212,7 @@ class DeploymentSmokeTests(unittest.TestCase):
             include_streaming=include_streaming,
             include_image=include_image,
             include_advertised=include_advertised,
+            include_queue_burst=include_queue_burst,
         )
 
     def test_non_generating_smoke_checks_public_health_and_models(self):
@@ -416,6 +419,109 @@ class DeploymentSmokeTests(unittest.TestCase):
         self.assertIs(post_calls[1][2]["json"]["stream"], True)
         self.assertIs(post_calls[2][2]["json"]["stream"], False)
 
+    def test_queue_burst_submits_six_concurrent_bounded_requests(self):
+        calls = []
+        state_lock = threading.Lock()
+        all_entered = threading.Barrier(smoke.QUEUE_BURST_REQUESTS)
+        active = 0
+        maximum_active = 0
+
+        def burst_request(url, **kwargs):
+            nonlocal active, maximum_active
+            prompt = kwargs["json"]["input"]
+            index = int(prompt.split("Queue burst check ", 1)[1].split(".", 1)[0])
+            with state_lock:
+                calls.append((url, kwargs))
+                active += 1
+                maximum_active = max(maximum_active, active)
+            all_entered.wait(timeout=1)
+            with state_lock:
+                active -= 1
+            return FakeResponse(
+                200,
+                {
+                    "status": "completed",
+                    "model": "course-model",
+                    "output_text": f"Rocky {index}",
+                    "usage": {
+                        "input_tokens": 4,
+                        "output_tokens": 2,
+                        "total_tokens": 6,
+                    },
+                },
+                {
+                    "x-request-id": f"req_burst_{index}",
+                    "x-ratelimit-limit-requests": "10",
+                    "x-ratelimit-remaining-requests": "4",
+                    "x-ratelimit-reset-requests": "42s",
+                },
+            )
+
+        checks = smoke.DeploymentSmoke(
+            self.config(include_queue_burst=True),
+            session=FakeSession(successful_routes()),
+            burst_request=burst_request,
+        ).run()
+
+        self.assertTrue(all(check.passed for check in checks))
+        self.assertEqual(
+            [check.name for check in checks[-2:]],
+            ["queue burst", "queue burst rate limit"],
+        )
+        self.assertEqual(len(calls), smoke.QUEUE_BURST_REQUESTS)
+        self.assertEqual(maximum_active, smoke.QUEUE_BURST_REQUESTS)
+        self.assertTrue(all(
+            call[1]["json"]["max_output_tokens"] == 32
+            and call[1]["json"]["store"] is False
+            for call in calls
+        ))
+        self.assertIn("Completed 6/6", checks[-2].detail)
+        self.assertIn("req_burst_1", checks[-2].detail)
+
+    def test_queue_burst_reports_model_busy_without_hiding_other_results(self):
+        def burst_request(_url, **kwargs):
+            prompt = kwargs["json"]["input"]
+            index = int(prompt.split("Queue burst check ", 1)[1].split(".", 1)[0])
+            headers = {
+                "x-request-id": f"req_burst_{index}",
+                "x-ratelimit-limit-requests": "10",
+                "x-ratelimit-remaining-requests": "4",
+                "x-ratelimit-reset-requests": "42s",
+            }
+            if index == 3:
+                return FakeResponse(
+                    503,
+                    {
+                        "error": {
+                            "type": "server_error",
+                            "code": "model_busy",
+                            "message": "The model is busy. Try again shortly.",
+                        }
+                    },
+                    headers,
+                )
+            return FakeResponse(
+                200,
+                {
+                    "status": "completed",
+                    "model": "course-model",
+                    "output_text": f"Rocky {index}",
+                    "usage": {},
+                },
+                headers,
+            )
+
+        checks = smoke.DeploymentSmoke(
+            self.config(include_queue_burst=True),
+            session=FakeSession(successful_routes()),
+            burst_request=burst_request,
+        ).run()
+
+        self.assertFalse(checks[-2].passed)
+        self.assertIn("Completed 5/6", checks[-2].detail)
+        self.assertIn("#3: HTTP 503", checks[-2].detail)
+        self.assertTrue(checks[-1].passed)
+
     def test_advertised_mode_runs_every_supported_inference_path(self):
         routes = successful_routes()
         buffered_response = routes[("POST", "https://rocky.example/v1/responses")]
@@ -595,6 +701,7 @@ class DeploymentSmokeTests(unittest.TestCase):
                 "--include-streaming",
                 "--include-image",
                 "--include-advertised",
+                "--include-queue-burst",
             ]
         )
         with patch.dict(
@@ -609,6 +716,7 @@ class DeploymentSmokeTests(unittest.TestCase):
         self.assertTrue(config.include_streaming)
         self.assertTrue(config.include_image)
         self.assertTrue(config.include_advertised)
+        self.assertTrue(config.include_queue_burst)
         self.assertNotIn("sk_kent_secret", repr(config))
 
     def test_configuration_rejects_missing_key_and_invalid_url(self):

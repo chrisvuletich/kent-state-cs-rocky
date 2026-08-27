@@ -10,7 +10,7 @@ Group={{ROCKY_GROUP}}
 WorkingDirectory={{ROCKY_APP_DIR}}/granite-llm-server
 EnvironmentFile=/etc/rocky/granite.env
 Environment=PYTHONUNBUFFERED=1
-ExecStart={{ROCKY_APP_DIR}}/.venv/bin/gunicorn --worker-class gthread --workers 1 --threads 4 --timeout 165 --bind {{GRANITE_BIND_IP}}:5002 --access-logfile - --error-logfile - app.main:app
+ExecStart={{ROCKY_APP_DIR}}/.venv/bin/gunicorn --worker-class gthread --workers 1 --threads 16 --timeout 300 --bind {{GRANITE_BIND_IP}}:5002 --access-logfile - --error-logfile - app.main:app
 Restart=on-failure
 RestartSec=5
 

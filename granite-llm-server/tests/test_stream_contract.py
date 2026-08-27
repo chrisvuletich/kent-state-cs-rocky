@@ -29,6 +29,20 @@ class GraniteStreamContractTests(unittest.TestCase):
         self.assertEqual(encoded, FIXTURE_PATH.read_text(encoding="utf-8"))
 
     def test_error_and_cancelled_are_valid_terminal_events(self):
+        validate_stream([{
+            "type": "error",
+            "error": {"type": "model_busy", "message": "Model busy."},
+        }])
+        validate_stream([{"type": "cancelled"}])
+        validate_stream([{
+            "type": "error",
+            "error": {"type": "model_busy", "message": "Model busy."},
+            "telemetry": {"queue": {"status": "timed_out"}},
+        }])
+        validate_stream([{
+            "type": "cancelled",
+            "telemetry": {"queue": {"status": "cancelled"}},
+        }])
         validate_stream([
             {"type": "started", "model": "gemma4:latest"},
             {
@@ -49,6 +63,12 @@ class GraniteStreamContractTests(unittest.TestCase):
             {"type": "delta", "text": "ok", "provider": "ollama"},
             {"type": "completed", "telemetry": {}, "metadata": [],},
             {"type": "error", "error": {"type": "model_error"}},
+            {
+                "type": "error",
+                "error": {"type": "model_error", "message": "Failed."},
+                "telemetry": [],
+            },
+            {"type": "cancelled", "telemetry": []},
         )
         for event in invalid_events:
             with self.subTest(event=event), self.assertRaises(ValueError):
@@ -56,6 +76,8 @@ class GraniteStreamContractTests(unittest.TestCase):
 
     def test_stream_validation_rejects_invalid_ordering(self):
         invalid_streams = (
+            [],
+            [{"type": "delta", "text": "missing start"}],
             [{"type": "delta", "text": "missing start"}, {"type": "cancelled"}],
             [{"type": "started", "model": "model"}, {"type": "delta", "text": "open"}],
             [

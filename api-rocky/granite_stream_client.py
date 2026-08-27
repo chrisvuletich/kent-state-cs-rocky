@@ -14,6 +14,7 @@ _STREAM_CHUNK_BYTES = 16 * 1024
 _MAX_STREAM_LINE_BYTES = 1024 * 1024
 _MAX_STREAM_BODY_BYTES = 16 * 1024 * 1024
 _MAX_ERROR_MESSAGE_LENGTH = 512
+GRANITE_STREAM_HEARTBEAT = object()
 
 
 class GraniteStreamError(Exception):
@@ -42,6 +43,17 @@ def _request_error_kind(error):
     )
 
 
+def granite_http_error_kind(status_code, granite_error_type):
+    """Map only Granite's explicit capacity signal to a public busy error."""
+    if granite_error_type == "bad_request" or status_code == 400:
+        return "bad_request"
+    if granite_error_type == "model_busy":
+        return "busy"
+    if granite_error_type == "model_timeout" or status_code == 504:
+        return "timeout"
+    return "network"
+
+
 def _close_response(response):
     try:
         response.close()
@@ -49,7 +61,7 @@ def _close_response(response):
         pass
 
 
-def _iter_bounded_lines(response, byte_counter):
+def _iter_bounded_lines(response, byte_counter, *, include_blank=False):
     buffer = bytearray()
     try:
         for chunk in response.iter_content(chunk_size=_STREAM_CHUNK_BYTES):
@@ -75,7 +87,7 @@ def _iter_bounded_lines(response, byte_counter):
                     line = line[:-1]
                 if len(line) > _MAX_STREAM_LINE_BYTES:
                     raise GraniteStreamError("bad_response")
-                if line.strip():
+                if line.strip() or include_blank:
                     yield line
     except requests.RequestException as error:
         raise GraniteStreamError(_request_error_kind(error)) from error
@@ -120,7 +132,10 @@ def _validate_event(event):
         if not isinstance(event.get("metadata"), Mapping):
             raise GraniteStreamError("bad_response")
     elif event_type == "error":
-        if set(event) != {"type", "error"}:
+        if set(event) not in (
+            {"type", "error"},
+            {"type", "error", "telemetry"},
+        ):
             raise GraniteStreamError("bad_response")
         error = event.get("error")
         if not isinstance(error, Mapping) or set(error) != {"type", "message"}:
@@ -129,8 +144,12 @@ def _validate_event(event):
             raise GraniteStreamError("bad_response")
         if not isinstance(error.get("message"), str) or not error.get("message"):
             raise GraniteStreamError("bad_response")
+        if "telemetry" in event and not isinstance(event["telemetry"], Mapping):
+            raise GraniteStreamError("bad_response")
     elif event_type == "cancelled":
-        if set(event) != {"type"}:
+        if set(event) not in ({"type"}, {"type", "telemetry"}):
+            raise GraniteStreamError("bad_response")
+        if "telemetry" in event and not isinstance(event["telemetry"], Mapping):
             raise GraniteStreamError("bad_response")
     else:
         raise GraniteStreamError("bad_response")
@@ -138,7 +157,7 @@ def _validate_event(event):
 
 
 class GraniteEventStream:
-    """Single-use iterator over validated Granite events after `started`."""
+    """Single-use iterator over a validated Granite stream."""
 
     def __init__(self, response, line_iterator, byte_counter, model):
         self._response = response
@@ -161,14 +180,28 @@ class GraniteEventStream:
         if self._iterated:
             raise RuntimeError("A Granite event stream can only be consumed once.")
         self._iterated = True
+        started = False
         saw_delta = False
         terminal_event = None
 
         try:
             for raw_line in self._line_iterator:
+                if not raw_line.strip():
+                    yield GRANITE_STREAM_HEARTBEAT
+                    continue
                 event = _validate_event(_decode_event(raw_line))
                 event_type = event["type"]
-                if terminal_event is not None or event_type == "started":
+                if terminal_event is not None:
+                    raise GraniteStreamError("bad_response")
+                if not started:
+                    if event_type in {"error", "cancelled"}:
+                        terminal_event = event
+                        continue
+                    if event_type != "started" or event.get("model") != self.model:
+                        raise GraniteStreamError("bad_response")
+                    started = True
+                    continue
+                if event_type == "started":
                     raise GraniteStreamError("bad_response")
                 if event_type == "delta":
                     saw_delta = True
@@ -211,7 +244,7 @@ def _read_error_payload(response, byte_counter):
 
 
 def open_granite_stream(url, payload, headers, timeout, expected_model):
-    """Open Granite and validate its status, media type, and first event."""
+    """Open Granite and validate transport details before lazy event decoding."""
     request_payload = dict(payload)
     request_payload["stream"] = True
     try:
@@ -237,14 +270,7 @@ def open_granite_stream(url, payload, headers, timeout, expected_model):
                 else None
             )
             telemetry = data.get("telemetry")
-            if status_code == 400 or granite_error_type == "bad_request":
-                kind = "bad_request"
-            elif status_code == 503 or granite_error_type == "model_busy":
-                kind = "busy"
-            elif status_code == 504 or granite_error_type == "model_timeout":
-                kind = "timeout"
-            else:
-                kind = "network"
+            kind = granite_http_error_kind(status_code, granite_error_type)
             safe_message = (
                 granite_error.get("message")
                 if kind == "bad_request" and isinstance(granite_error, dict)
@@ -258,23 +284,9 @@ def open_granite_stream(url, payload, headers, timeout, expected_model):
         _close_response(response)
         raise GraniteStreamError("bad_response")
 
-    line_iterator = iter(_iter_bounded_lines(response, byte_counter))
-    try:
-        first_event = _validate_event(_decode_event(next(line_iterator)))
-    except StopIteration as error:
-        _close_response(response)
-        raise GraniteStreamError("bad_response") from error
-    except GraniteStreamError:
-        _close_response(response)
-        raise
-
-    if first_event.get("type") != "started" or first_event.get("model") != expected_model:
-        _close_response(response)
-        raise GraniteStreamError("bad_response")
-
     return GraniteEventStream(
         response,
-        line_iterator,
+        iter(_iter_bounded_lines(response, byte_counter, include_blank=True)),
         byte_counter,
-        first_event["model"],
+        expected_model,
     )

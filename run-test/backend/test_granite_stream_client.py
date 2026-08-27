@@ -65,6 +65,14 @@ def successful_body():
                 "model_input_bytes": 100,
                 "model_output_bytes": 50,
                 "provider": {"eval_count": 2},
+                "queue": {
+                    "status": "not_queued",
+                    "initial_position": 0,
+                    "depth_on_arrival": 0,
+                    "wait_ms": 0,
+                    "capacity": 12,
+                    "queued_bytes_on_arrival": 0,
+                },
             },
             "metadata": {"source": "ollama"},
         }),
@@ -104,10 +112,134 @@ class GraniteStreamClientTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "only be consumed once"):
             list(stream)
 
+    def test_blank_queue_heartbeats_are_surfaced_before_started(self):
+        body = b"\n\r\n\n" + successful_body()
+        response = FakeResponse([body[:2], body[2:]])
+
+        stream, _post = self.open(response)
+
+        items = list(stream)
+        self.assertEqual(len(items), 6)
+        self.assertTrue(all(
+            item is client.GRANITE_STREAM_HEARTBEAT
+            for item in items[:3]
+        ))
+        events = items[3:]
+        self.assertEqual([event["type"] for event in events], [
+            "delta",
+            "delta",
+            "completed",
+        ])
+        self.assertEqual(stream.received_bytes, len(body))
+        self.assertEqual(response.close_calls, 1)
+
+    def test_active_heartbeat_is_surfaced_after_started(self):
+        body = b"".join((
+            encode_event({"type": "started", "model": "gemma4:latest"}),
+            b"\n",
+            encode_event({"type": "delta", "text": "Answer"}),
+            encode_event({
+                "type": "completed",
+                "telemetry": {},
+                "metadata": {},
+            }),
+        ))
+        response = FakeResponse([body])
+
+        stream, _post = self.open(response)
+        items = list(stream)
+
+        self.assertIs(items[0], client.GRANITE_STREAM_HEARTBEAT)
+        self.assertEqual([item["type"] for item in items[1:]], [
+            "delta",
+            "completed",
+        ])
+
+    def test_open_is_lazy_and_can_close_before_the_first_event(self):
+        response = FakeResponse([successful_body()])
+
+        stream, _post = self.open(response)
+
+        self.assertFalse(hasattr(response, "chunk_size"))
+        self.assertEqual(stream.received_bytes, 0)
+        stream.close()
+        self.assertEqual(response.close_calls, 1)
+
+    def test_terminal_queue_error_before_started_is_a_valid_stream(self):
+        terminal_event = {
+            "type": "error",
+            "error": {
+                "type": "model_busy",
+                "message": "The model is busy. Try again shortly.",
+            },
+            "telemetry": {
+                "queue": {
+                    "status": "timed_out",
+                    "initial_position": 1,
+                    "depth_on_arrival": 0,
+                    "wait_ms": 1000,
+                    "capacity": 12,
+                    "queued_bytes_on_arrival": 0,
+                },
+            },
+        }
+        body = b"\n\n" + encode_event(terminal_event)
+        response = FakeResponse([body])
+
+        stream, _post = self.open(response)
+
+        items = list(stream)
+        self.assertEqual(items[-1], terminal_event)
+        self.assertTrue(all(
+            item is client.GRANITE_STREAM_HEARTBEAT
+            for item in items[:-1]
+        ))
+        self.assertEqual(stream.model, "gemma4:latest")
+        self.assertEqual(response.close_calls, 1)
+
+    def test_terminal_queue_error_rejects_trailing_events(self):
+        body = b"".join((
+            encode_event({
+                "type": "error",
+                "error": {
+                    "type": "model_busy",
+                    "message": "The model is busy. Try again shortly.",
+                },
+            }),
+            encode_event({"type": "delta", "text": "too late"}),
+        ))
+        response = FakeResponse([body])
+        stream, _post = self.open(response)
+
+        with self.assertRaises(client.GraniteStreamError) as raised:
+            list(stream)
+
+        self.assertEqual(raised.exception.kind, "bad_response")
+        self.assertEqual(response.close_calls, 1)
+
+    def test_terminal_event_rejects_non_object_telemetry(self):
+        for event in (
+            {
+                "type": "error",
+                "error": {"type": "model_error", "message": "Failed."},
+                "telemetry": [],
+            },
+            {"type": "cancelled", "telemetry": []},
+        ):
+            with self.subTest(event=event):
+                response = FakeResponse([encode_event(event)])
+                stream, _post = self.open(response)
+                with self.assertRaises(client.GraniteStreamError) as raised:
+                    list(stream)
+                self.assertEqual(raised.exception.kind, "bad_response")
+                self.assertEqual(response.close_calls, 1)
+
     def test_open_maps_bounded_granite_json_errors_and_closes(self):
         cases = (
             (400, "bad_request", "bad_request"),
             (503, "model_busy", "busy"),
+            (503, "service_unavailable", "network"),
+            (503, None, "network"),
             (504, "model_timeout", "timeout"),
             (502, "model_error", "network"),
         )
@@ -141,26 +273,35 @@ class GraniteStreamClientTests(unittest.TestCase):
                 )
 
     def test_open_rejects_wrong_media_type_first_event_or_model(self):
-        responses = (
-            FakeResponse([successful_body()], content_type="application/json"),
+        wrong_media_type = FakeResponse(
+            [successful_body()],
+            content_type="application/json",
+        )
+        with (
+            patch.object(client.requests, "post", return_value=wrong_media_type),
+            self.assertRaises(client.GraniteStreamError) as raised,
+        ):
+            client.open_granite_stream(
+                "http://granite.test/generate",
+                {},
+                {},
+                170,
+                "gemma4:latest",
+            )
+        self.assertEqual(raised.exception.kind, "bad_response")
+        self.assertEqual(wrong_media_type.close_calls, 1)
+
+        invalid_event_streams = (
             FakeResponse([encode_event({"type": "delta", "text": "early"})]),
             FakeResponse([
                 encode_event({"type": "started", "model": "other-model"})
             ]),
         )
-        for response in responses:
-            with (
-                self.subTest(response=response),
-                patch.object(client.requests, "post", return_value=response),
-                self.assertRaises(client.GraniteStreamError) as raised,
-            ):
-                client.open_granite_stream(
-                    "http://granite.test/generate",
-                    {},
-                    {},
-                    170,
-                    "gemma4:latest",
-                )
+        for response in invalid_event_streams:
+            with self.subTest(response=response):
+                stream, _post = self.open(response)
+                with self.assertRaises(client.GraniteStreamError) as raised:
+                    list(stream)
             self.assertEqual(raised.exception.kind, "bad_response")
             self.assertEqual(response.close_calls, 1)
 

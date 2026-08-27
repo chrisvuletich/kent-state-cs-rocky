@@ -11,10 +11,29 @@ describe('chat failure feedback', () => {
 
 	it('distinguishes timeout, busy, and required logging failures', () => {
 		expect(chatHttpFailure(504, { error: { code: 'model_timeout' } }).kind).toBe('timeout');
-		expect(chatHttpFailure(503, { error: { code: 'model_busy' } }).kind).toBe('busy');
+		expect(chatHttpFailure(503, { error: { code: 'model_busy' } })).toMatchObject({
+			kind: 'busy',
+			markUnavailable: false,
+			retryAfterSeconds: 2
+		});
 		expect(chatHttpFailure(503, { error: { code: 'request_logging_unavailable' } }).kind).toBe(
 			'logging'
 		);
+	});
+
+	it('honors Retry-After for a busy model without marking it unavailable', () => {
+		expect(
+			chatHttpFailure(
+				503,
+				{ error: { code: 'model_busy' } },
+				{ retryAfter: '7', requestId: 'req_busy' }
+			)
+		).toEqual({
+			kind: 'busy',
+			message: 'Rocky is busy right now. Try again in 7 seconds. Request ID: req_busy',
+			markUnavailable: false,
+			retryAfterSeconds: 7
+		});
 	});
 
 	it('uses the API message for ordinary request errors', () => {

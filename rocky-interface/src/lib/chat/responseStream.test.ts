@@ -66,6 +66,24 @@ describe('consumeRockyResponseStream', () => {
 		]);
 	});
 
+	it('ignores queue keepalive comments without consuming sequence numbers', async () => {
+		const events = successfulEvents();
+		const encoded = [
+			encodeEvents(events.slice(0, 4)),
+			': keepalive\n\n',
+			encodeEvents(events.slice(4, 6)),
+			': keepalive\n\n',
+			encodeEvents(events.slice(6))
+		].join('');
+
+		const result = await consumeRockyResponseStream(
+			streamingResponse([new TextEncoder().encode(encoded)])
+		);
+
+		expect(result.outputText).toBe('Olá 🪨');
+		expect(result.response.status).toBe('completed');
+	});
+
 	it('surfaces a typed terminal stream error', async () => {
 		const events = successfulEvents().slice(0, 5);
 		events[4] = event('error', 4, {

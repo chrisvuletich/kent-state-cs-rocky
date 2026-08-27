@@ -59,7 +59,7 @@ response = requests.post(
     "https://rocky.cs.kent.edu/v1/responses",
     headers={"Authorization": f"Bearer {API_KEY}"},
     json={"model": MODEL, "input": prompt, "store": False},
-    timeout=180,
+    timeout=390,
 )
 response.raise_for_status()
 

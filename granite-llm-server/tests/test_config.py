@@ -12,6 +12,9 @@ class GraniteConfigurationTests(unittest.TestCase):
         values = {
             "ROCKY_APP_ENV": "production",
             "ROCKY_GRANITE_PORT": "5002",
+            "ROCKY_GRANITE_QUEUE_CAPACITY": "12",
+            "ROCKY_GRANITE_QUEUE_HEARTBEAT_SECONDS": "0.25",
+            "ROCKY_GRANITE_QUEUE_MAX_BYTES": "67108864",
             "ROCKY_GRANITE_QUEUE_WAIT_SECONDS": "0.5",
             "ROCKY_ENABLE_STREAMING": "true",
             "OLLAMA_BASE_URL": "http://127.0.0.1:11434/",
@@ -24,7 +27,27 @@ class GraniteConfigurationTests(unittest.TestCase):
             )
             self.assertEqual(
                 config.env_float(
-                    "ROCKY_GRANITE_QUEUE_WAIT_SECONDS", 1, minimum=0
+                    "ROCKY_GRANITE_QUEUE_HEARTBEAT_SECONDS",
+                    10,
+                    minimum=0.1,
+                ),
+                0.25,
+            )
+            self.assertEqual(
+                config.env_int(
+                    "ROCKY_GRANITE_QUEUE_CAPACITY", 12, minimum=0
+                ),
+                12,
+            )
+            self.assertEqual(
+                config.env_int(
+                    "ROCKY_GRANITE_QUEUE_MAX_BYTES", 67108864, minimum=0
+                ),
+                67108864,
+            )
+            self.assertEqual(
+                config.env_float(
+                    "ROCKY_GRANITE_QUEUE_WAIT_SECONDS", 120, minimum=0
                 ),
                 0.5,
             )
@@ -45,10 +68,31 @@ class GraniteConfigurationTests(unittest.TestCase):
                 {"minimum": 1, "maximum": 65535},
             ),
             (
+                "ROCKY_GRANITE_QUEUE_CAPACITY",
+                "-1",
+                config.env_int,
+                (12,),
+                {"minimum": 0},
+            ),
+            (
+                "ROCKY_GRANITE_QUEUE_HEARTBEAT_SECONDS",
+                "0.09",
+                config.env_float,
+                (10,),
+                {"minimum": 0.1},
+            ),
+            (
+                "ROCKY_GRANITE_QUEUE_MAX_BYTES",
+                "unbounded",
+                config.env_int,
+                (67108864,),
+                {"minimum": 0},
+            ),
+            (
                 "ROCKY_GRANITE_QUEUE_WAIT_SECONDS",
                 "nan",
                 config.env_float,
-                (1,),
+                (120,),
                 {"minimum": 0},
             ),
             (

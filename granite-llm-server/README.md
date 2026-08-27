@@ -14,6 +14,16 @@ The bridge validates environment names, service URLs, ports, limits, and
 timeouts at startup. Invalid values fail immediately with the setting name;
 omitted optional values use the defaults in `.env.example`.
 
+The bounded FIFO admission behavior for classroom request bursts is defined in
+[`INFERENCE_QUEUE_CONTRACT.md`](INFERENCE_QUEUE_CONTRACT.md). Buffered requests
+now use the process-local queue, bounded by request count and raw request-body
+bytes. Streaming requests share the same admission authority and use blank
+NDJSON heartbeat lines while waiting and whenever an active provider stream is
+temporarily silent. A queued disconnect cancels its ticket; a queue timeout
+becomes a terminal private `model_busy` event. Heartbeat intervals must be at
+least 0.1 seconds. The queue stays inside the single Granite process and does
+not require Redis or a durable job service.
+
 `ROCKY_ENABLE_STREAMING` is a disabled-by-default rollout gate for Granite's
 internal text stream. When enabled, `POST /generate` accepts `"stream": true`,
 requests Ollama's chat stream, and returns provider-neutral NDJSON. The regular
@@ -54,6 +64,14 @@ server-controlled `OLLAMA_MODEL` to Ollama. `/ready` verifies that Ollama is
 reachable and that the configured model is installed. When the bridge token is
 configured, both `/generate` and `/ready` require it in
 `X-Rocky-Granite-Token`.
+
+The authenticated `/ready` response includes an aggregate `queue` snapshot:
+active requests, waiting requests, queued bytes, and each configured maximum.
+It also reports the Ollama request, queue-wait, and heartbeat settings so Rocky
+can reject a partially applied timeout rollout.
+This is operational context only; normal queue occupancy does not make the
+service unhealthy. Each private generation result also includes bounded queue
+admission telemetry for Rocky's permanent interaction record.
 
 ```sh
 curl http://127.0.0.1:5002/ready \

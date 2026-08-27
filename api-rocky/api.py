@@ -32,8 +32,10 @@ from image_input import (
     validate_image_inputs,
 )
 from granite_stream_client import (
+    GRANITE_STREAM_HEARTBEAT,
     GraniteEventStream,
     GraniteStreamError,
+    granite_http_error_kind,
     open_granite_stream,
 )
 from response_stream_contract import (
@@ -175,8 +177,28 @@ PUBLIC_MODEL = os.getenv("ROCKY_PUBLIC_MODEL", INFERENCE_MODEL).strip() or INFER
 CHAT_API_HOST = _env_value("ROCKY_CHAT_API_HOST", "127.0.0.1") or "127.0.0.1"
 CHAT_API_PORT = _env_int("ROCKY_CHAT_API_PORT", 5003, minimum=1, maximum=65535)
 GRANITE_TIMEOUT_SECONDS = _env_float(
-    "ROCKY_GRANITE_TIMEOUT_SECONDS", 170, minimum=0, allow_minimum=False
+    "ROCKY_GRANITE_TIMEOUT_SECONDS", 315, minimum=0, allow_minimum=False
 )
+GRANITE_OLLAMA_TIMEOUT_SECONDS = _env_float(
+    "ROCKY_OLLAMA_TIMEOUT_SECONDS", 150, minimum=0, allow_minimum=False
+)
+GRANITE_QUEUE_WAIT_SECONDS = _env_float(
+    "ROCKY_GRANITE_QUEUE_WAIT_SECONDS", 120, minimum=0
+)
+GRANITE_QUEUE_HEARTBEAT_SECONDS = _env_float(
+    "ROCKY_GRANITE_QUEUE_HEARTBEAT_SECONDS", 10, minimum=0.1
+)
+GRANITE_TIMEOUT_MARGIN_SECONDS = 15
+if GRANITE_TIMEOUT_SECONDS < (
+    GRANITE_OLLAMA_TIMEOUT_SECONDS
+    + GRANITE_QUEUE_WAIT_SECONDS
+    + GRANITE_TIMEOUT_MARGIN_SECONDS
+):
+    raise RuntimeError(
+        "ROCKY_GRANITE_TIMEOUT_SECONDS must cover "
+        "ROCKY_GRANITE_QUEUE_WAIT_SECONDS plus "
+        "ROCKY_OLLAMA_TIMEOUT_SECONDS and at least 15 seconds of margin."
+    )
 GRANITE_READY_URL = _env_http_url(
     "ROCKY_GRANITE_READY_URL",
     GRANITE_URL.rstrip("/").rsplit("/", 1)[0] + "/ready",
@@ -928,6 +950,58 @@ def image_limit_capabilities():
     }
 
 
+def granite_queue_snapshot(payload):
+    if not isinstance(payload, dict):
+        return None
+    queue = payload.get("queue")
+    fields = (
+        "active_requests",
+        "waiting_requests",
+        "queued_bytes",
+        "max_active_requests",
+        "max_waiting_requests",
+        "max_queued_bytes",
+    )
+    if not isinstance(queue, dict):
+        return None
+    snapshot = {}
+    for field in fields:
+        value = queue.get(field)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            return None
+        snapshot[field] = value
+    return snapshot
+
+
+def expected_granite_timeout_snapshot():
+    return {
+        "ollama_request_seconds": GRANITE_OLLAMA_TIMEOUT_SECONDS,
+        "queue_wait_seconds": GRANITE_QUEUE_WAIT_SECONDS,
+        "heartbeat_seconds": GRANITE_QUEUE_HEARTBEAT_SECONDS,
+    }
+
+
+def granite_timeout_snapshot(payload):
+    if not isinstance(payload, dict):
+        return None
+    timeouts = payload.get("timeouts")
+    if not isinstance(timeouts, dict):
+        return None
+    snapshot = {}
+    for field in expected_granite_timeout_snapshot():
+        value = timeouts.get(field)
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or value < 0
+            or (field != "queue_wait_seconds" and value == 0)
+        ):
+            return None
+        snapshot[field] = value
+    return snapshot
+
+
 def telemetry_json(payload, status, interaction, headers=None):
     response = jsonify(payload)
     if isinstance(interaction, dict) and interaction.get("request_id"):
@@ -1099,6 +1173,9 @@ def ready():
     granite_supports_image_input = False
     granite_image_limits = None
     granite_image_limits_match = False
+    granite_queue = None
+    granite_timeouts = None
+    granite_timeouts_match = False
     try:
         if api_keys_col is not None:
             api_keys_col.find_one({"_id": "__rocky_readiness__"})
@@ -1120,6 +1197,11 @@ def ready():
         except (TypeError, ValueError):
             granite_payload = {}
         if isinstance(granite_payload, dict):
+            granite_queue = granite_queue_snapshot(granite_payload)
+            granite_timeouts = granite_timeout_snapshot(granite_payload)
+            granite_timeouts_match = (
+                granite_timeouts == expected_granite_timeout_snapshot()
+            )
             reported_model = granite_payload.get("model")
             if isinstance(reported_model, str) and reported_model.strip():
                 granite_model = reported_model.strip()
@@ -1146,6 +1228,7 @@ def ready():
         dependencies["granite"] = (
             granite_response.status_code == 200
             and granite_model == INFERENCE_MODEL
+            and granite_timeouts_match
             and (not ENABLE_STREAMING or granite_supports_streaming)
             and (
                 not ENABLE_IMAGE_INPUT
@@ -1179,6 +1262,12 @@ def ready():
             "limits_match": granite_image_limits_match,
             "rocky_limits": image_limit_capabilities(),
             "granite_limits": granite_image_limits,
+        },
+        "queue": granite_queue,
+        "timeouts": {
+            "granite_client_seconds": GRANITE_TIMEOUT_SECONDS,
+            "granite": granite_timeouts,
+            "configuration_matches": granite_timeouts_match,
         },
     }), 200 if ready_now else 503
 
@@ -1366,7 +1455,7 @@ def telemetry_model_fields(request_body, model_metrics):
         "prompt_eval_duration_ns": metrics.get("prompt_eval_duration"),
         "generation_duration_ns": metrics.get("eval_duration"),
     }
-    return {
+    fields = {
         "usage": {
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
@@ -1380,6 +1469,9 @@ def telemetry_model_fields(request_body, model_metrics):
             "actual_model": metrics.get("actual_model") or INFERENCE_MODEL,
         },
     }
+    if isinstance(metrics.get("queue"), dict):
+        fields["queue"] = metrics["queue"]
+    return fields
 
 
 @app.route("/v1/responses", methods=["POST"])
@@ -3155,6 +3247,7 @@ def extract_granite_telemetry(data):
     metrics = dict(provider) if isinstance(provider, dict) else {}
     metrics["model_input_bytes"] = telemetry.get("model_input_bytes")
     metrics["model_output_bytes"] = telemetry.get("model_output_bytes")
+    metrics["queue"] = telemetry.get("queue")
     return sanitize_model_metrics(metrics)
 
 
@@ -3221,14 +3314,10 @@ def request_ai(request_body, *, normalized=False):
     )
 
     if not 200 <= response_status < 300 or granite_error is not None:
-        if response_status == 400 or granite_error_type == "bad_request":
-            error_type = "bad_request"
-        elif response_status == 503 or granite_error_type == "model_busy":
-            error_type = "busy"
-        elif response_status == 504 or granite_error_type == "model_timeout":
-            error_type = "timeout"
-        else:
-            error_type = "network"
+        error_type = granite_http_error_kind(
+            response_status,
+            granite_error_type,
+        )
         safe_message = None
         if error_type == "bad_request" and isinstance(granite_error, dict):
             safe_message = granite_error.get("message")
@@ -3302,6 +3391,12 @@ def stream_failure_details(error_type):
         "cancelled": (
             "Model generation was cancelled.",
             "response_cancelled",
+            "granite",
+            "failed",
+        ),
+        "busy": (
+            "The model is busy. Try again shortly.",
+            "model_busy",
             "granite",
             "failed",
         ),
@@ -3572,6 +3667,11 @@ class PublicResponseStream:
 
             terminal_seen = False
             for granite_event in self.granite_stream:
+                if granite_event is GRANITE_STREAM_HEARTBEAT:
+                    # SSE comments are ignored by clients but force each proxy
+                    # layer to observe a downstream disconnect while queued.
+                    yield ": keepalive\n\n"
+                    continue
                 event_type = granite_event["type"]
                 if event_type == "delta":
                     text = granite_event["text"]
@@ -3586,6 +3686,10 @@ class PublicResponseStream:
                     continue
 
                 terminal_seen = True
+                if isinstance(granite_event.get("telemetry"), dict):
+                    self.model_metrics = extract_granite_telemetry({
+                        "telemetry": granite_event["telemetry"],
+                    })
                 if event_type == "completed":
                     try:
                         response_payload = self._complete(granite_event)
@@ -3625,11 +3729,12 @@ class PublicResponseStream:
 
                 if event_type == "error":
                     granite_error_type = granite_event["error"]["type"]
-                    failure_type = (
-                        "timeout"
-                        if granite_error_type == "model_timeout"
-                        else "model_error"
-                    )
+                    if granite_error_type == "model_timeout":
+                        failure_type = "timeout"
+                    elif granite_error_type == "model_busy":
+                        failure_type = "busy"
+                    else:
+                        failure_type = "model_error"
                 else:
                     failure_type = "cancelled"
                 message, code, stage, outcome = stream_failure_details(failure_type)

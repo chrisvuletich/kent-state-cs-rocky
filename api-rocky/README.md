@@ -11,6 +11,9 @@ Copy `.env.example` to `.env`, or set the values in the repository-root `.env`. 
 The service validates environment names, booleans, URLs, ports, limits, and
 timeouts at startup. Invalid values fail immediately with the setting name;
 omitted optional values use the defaults in `.env.example`.
+The Granite client timeout must cover Granite's queue wait plus Ollama request
+timeout and at least 15 seconds of transport margin. `/ready` remains unhealthy
+when Granite reports different timeout settings, preventing partial rollout.
 
 Start the complete local stack from the repository root:
 
@@ -76,8 +79,11 @@ When telemetry is enabled, every `POST /v1/responses` attempt receives an
 `x-request-id` (also available as `X-Rocky-Request-Id`) and is written to
 `telemetry_interactions`. Records include the complete parsed request and public response, credential
 ownership, trustworthy user attribution when available, course/group context,
-outcome, token counts, and model timing. Authorization headers, plaintext API
-keys, key hashes, cookies, and service secrets are not recorded.
+outcome, token counts, model timing, and bounded queue admission details.
+Queue details include only status, initial position, depth, wait duration,
+capacity, and queued bytes on arrival. Authorization headers, plaintext API
+keys, key hashes, cookies, service secrets, and arbitrary Granite telemetry are
+not recorded.
 Valid prompt, instruction, and response text is recorded verbatim. Malformed
 JSON bodies are represented by their byte length and digest because the service
 cannot reliably distinguish content from accidentally included credentials in

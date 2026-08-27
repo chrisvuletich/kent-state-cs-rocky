@@ -27,12 +27,26 @@ def encode_ndjson_events(events):
     ]
 
 
-def make_granite_event_stream(api, events):
+def make_granite_event_stream(
+    api,
+    events,
+    *,
+    include_started=True,
+    heartbeat_count=0,
+):
     upstream_response = Mock()
     upstream_response.close = Mock()
+    private_events = list(events)
+    if include_started:
+        private_events.insert(0, {
+            "type": "started",
+            "model": api.INFERENCE_MODEL,
+        })
+    private_lines = [b"\n"] * heartbeat_count
+    private_lines.extend(encode_ndjson_events(private_events))
     stream = api.GraniteEventStream(
         upstream_response,
-        iter(encode_ndjson_events(events)),
+        iter(private_lines),
         [0],
         api.INFERENCE_MODEL,
     )
@@ -42,6 +56,8 @@ def make_granite_event_stream(api, events):
 def decode_sse_events(response):
     events = []
     for frame in response.get_data(as_text=True).strip().split("\n\n"):
+        if frame == ": keepalive":
+            continue
         lines = frame.splitlines()
         if len(lines) != 2:
             raise AssertionError(f"Invalid SSE frame: {frame!r}")
@@ -51,6 +67,10 @@ def decode_sse_events(response):
             raise AssertionError("SSE event name differs from payload type.")
         events.append(event)
     return events
+
+
+def granite_timeout_payload(api_module):
+    return api_module.expected_granite_timeout_snapshot()
 
 
 def load_api_with_test_initialization_seam(environment_overrides=None):
@@ -103,7 +123,7 @@ class ApiRockyRouteContractTests(unittest.TestCase):
                 "ROCKY_GRANITE_TIMEOUT_SECONDS",
                 "nan",
                 self.api._env_float,
-                (170, 0, False),
+                (315, 0, False),
             ),
             (
                 "ROCKY_REQUIRE_REQUEST_LOGGING",
@@ -140,6 +160,24 @@ class ApiRockyRouteContractTests(unittest.TestCase):
                         "ROCKY_GRANITE_URL",
                         "http://127.0.0.1:5002/generate",
                     )
+
+    def test_generation_client_timeout_must_cover_queue_and_model_runtime(self):
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "ROCKY_GRANITE_TIMEOUT_SECONDS must cover",
+        ):
+            load_api_with_test_initialization_seam({
+                "ROCKY_GRANITE_TIMEOUT_SECONDS": "284",
+                "ROCKY_OLLAMA_TIMEOUT_SECONDS": "150",
+                "ROCKY_GRANITE_QUEUE_WAIT_SECONDS": "120",
+            })
+
+        configured = load_api_with_test_initialization_seam({
+            "ROCKY_GRANITE_TIMEOUT_SECONDS": "285",
+            "ROCKY_OLLAMA_TIMEOUT_SECONDS": "150",
+            "ROCKY_GRANITE_QUEUE_WAIT_SECONDS": "120",
+        })
+        self.assertEqual(configured.GRANITE_TIMEOUT_SECONDS, 285)
 
     def test_rate_limit_policy_defaults_and_validation(self):
         self.assertEqual(self.api.RESPONSES_RATE_LIMIT_PER_MINUTE, 10)
@@ -580,6 +618,66 @@ class ApiRockyRouteContractTests(unittest.TestCase):
             terminal_call.kwargs["response_payload"]["output_text"],
             "Partial answer",
         )
+        upstream_response.close.assert_called_once()
+
+    def test_queued_stream_timeout_emits_model_busy_without_completion(self):
+        granite_stream, upstream_response = make_granite_event_stream(
+            self.api,
+            [{
+                "type": "error",
+                "error": {
+                    "type": "model_busy",
+                    "message": "The model is busy. Try again shortly.",
+                },
+            }],
+            include_started=False,
+            heartbeat_count=1,
+        )
+        with (
+            patch.object(self.api, "ENABLE_STREAMING", True),
+            patch.object(
+                self.api,
+                "get_key_doc",
+                return_value={"key_id": "key-one", "owner_id": "student-one"},
+            ),
+            patch.object(
+                self.api,
+                "request_ai_stream",
+                return_value=granite_stream,
+            ),
+            patch.object(
+                self.api,
+                "finish_telemetry_interaction",
+                return_value=True,
+            ) as finish_telemetry,
+        ):
+            response = self.client.post(
+                "/v1/responses",
+                json={
+                    "model": self.api.PUBLIC_MODEL,
+                    "input": "Hello",
+                    "stream": True,
+                    "store": False,
+                },
+                headers={"Authorization": "Bearer valid-key"},
+                buffered=True,
+            )
+
+        events = decode_sse_events(response)
+        self.assertIn(": keepalive\n\n", response.get_data(as_text=True))
+        STREAM_EVENT_ADAPTER.validate_python(events[-1])
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(events[-1], {
+            "type": "error",
+            "sequence_number": 4,
+            "code": "model_busy",
+            "message": "The model is busy. Try again shortly.",
+            "param": None,
+        })
+        self.assertNotIn("response.completed", [event["type"] for event in events])
+        terminal_call = finish_telemetry.call_args
+        self.assertEqual(terminal_call.args[1], "failed")
+        self.assertEqual(terminal_call.kwargs["error_type"], "busy")
         upstream_response.close.assert_called_once()
 
     def test_required_terminal_logging_failure_becomes_stream_error(self):
@@ -1399,6 +1497,16 @@ class ApiRockyRouteContractTests(unittest.TestCase):
                 "supports_streaming": False,
                 "supports_image_input": False,
             },
+            "timeouts": granite_timeout_payload(self.api),
+            "queue": {
+                "active_requests": 1,
+                "waiting_requests": 2,
+                "queued_bytes": 300,
+                "max_active_requests": 1,
+                "max_waiting_requests": 12,
+                "max_queued_bytes": 67108864,
+                "private": "must not survive",
+            },
         }
         with (
             patch.object(self.api, "api_keys_col", database),
@@ -1436,6 +1544,19 @@ class ApiRockyRouteContractTests(unittest.TestCase):
             "granite_limits": None,
         })
         self.assertEqual(response.get_json()["capabilities"], self.api.model_capabilities())
+        self.assertEqual(response.get_json()["queue"], {
+            "active_requests": 1,
+            "waiting_requests": 2,
+            "queued_bytes": 300,
+            "max_active_requests": 1,
+            "max_waiting_requests": 12,
+            "max_queued_bytes": 67108864,
+        })
+        self.assertEqual(response.get_json()["timeouts"], {
+            "granite_client_seconds": self.api.GRANITE_TIMEOUT_SECONDS,
+            "granite": granite_timeout_payload(self.api),
+            "configuration_matches": True,
+        })
         self.assertEqual(
             get.call_args.kwargs["headers"],
             {"X-Rocky-Granite-Token": "synthetic-granite-token"},
@@ -1511,6 +1632,34 @@ class ApiRockyRouteContractTests(unittest.TestCase):
             "granite_limits": None,
         })
 
+    def test_readiness_rejects_timeout_configuration_mismatch(self):
+        database = Mock()
+        mismatched_timeouts = granite_timeout_payload(self.api)
+        mismatched_timeouts["queue_wait_seconds"] -= 1
+        granite_response = Mock(status_code=200)
+        granite_response.json.return_value = {
+            "ok": True,
+            "model": self.api.INFERENCE_MODEL,
+            "capabilities": {
+                "supports_streaming": False,
+                "supports_image_input": False,
+            },
+            "timeouts": mismatched_timeouts,
+        }
+        with (
+            patch.object(self.api, "api_keys_col", database),
+            patch.object(self.api.requests, "get", return_value=granite_response),
+        ):
+            response = self.client.get("/ready")
+
+        self.assertEqual(response.status_code, 503)
+        self.assertFalse(response.get_json()["dependencies"]["granite"])
+        self.assertEqual(response.get_json()["timeouts"], {
+            "granite_client_seconds": self.api.GRANITE_TIMEOUT_SECONDS,
+            "granite": mismatched_timeouts,
+            "configuration_matches": False,
+        })
+
     def test_readiness_requires_exact_image_limit_parity(self):
         database = Mock()
         mismatched_limits = self.api.image_limit_capabilities()
@@ -1524,6 +1673,7 @@ class ApiRockyRouteContractTests(unittest.TestCase):
                 "supports_image_input": True,
                 "image_limits": mismatched_limits,
             },
+            "timeouts": granite_timeout_payload(self.api),
         }
         with (
             patch.object(self.api, "api_keys_col", database),
@@ -1657,6 +1807,28 @@ class ApiRockyRouteContractTests(unittest.TestCase):
             post.call_args.kwargs["headers"]["X-Rocky-Granite-Token"],
             "synthetic-granite-token",
         )
+
+    def test_buffered_non_busy_granite_503_remains_a_network_failure(self):
+        granite_response = Mock(status_code=503)
+        granite_response.json.return_value = {
+            "error": {
+                "type": "service_unavailable",
+                "message": "Private Granite configuration detail.",
+            }
+        }
+        with patch.object(
+            self.api.requests,
+            "post",
+            return_value=granite_response,
+        ):
+            result = self.api.request_ai({
+                "model": self.api.PUBLIC_MODEL,
+                "input": "Hello",
+            })
+
+        self.assertEqual(result["error_type"], "network")
+        self.assertEqual(result["error"], "Model service request failed.")
+        self.assertNotIn("Private Granite", result["error"])
 
     def test_streaming_client_authenticates_and_targets_inference_model(self):
         granite_stream = Mock(spec=self.api.GraniteEventStream)

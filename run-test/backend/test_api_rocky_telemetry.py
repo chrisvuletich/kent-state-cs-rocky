@@ -84,6 +84,16 @@ def granite(payload, status=200):
     return response
 
 
+QUEUE_TELEMETRY = {
+    "status": "not_queued",
+    "initial_position": 0,
+    "depth_on_arrival": 0,
+    "wait_ms": 0,
+    "capacity": 12,
+    "queued_bytes_on_arrival": 0,
+}
+
+
 def success(output="Private model reply"):
     return granite({
         "model": "requested-model",
@@ -99,15 +109,24 @@ def success(output="Private model reply"):
                 "eval_duration": 3_700_000_000,
                 "private": "must not be stored",
             },
+            "queue": QUEUE_TELEMETRY,
         },
     })
 
 
 def granite_stream(events):
     response = Mock()
+    terminal_events = copy.deepcopy(events)
+    for event in terminal_events:
+        if event.get("type") in {"completed", "error", "cancelled"}:
+            event.setdefault("telemetry", {})["queue"] = QUEUE_TELEMETRY
+    private_events = [
+        {"type": "started", "model": rocky.INFERENCE_MODEL},
+        *terminal_events,
+    ]
     lines = iter(
         json.dumps(event, separators=(",", ":")).encode("utf-8") + b"\n"
-        for event in events
+        for event in private_events
     )
     return rocky.GraniteEventStream(
         response,
@@ -202,7 +221,7 @@ class ApiTelemetryTests(unittest.TestCase):
                          expected)
         self.assertEqual(current["request_latency_ms_total"],
                          row["performance"]["request_latency_ms"])
-        self.assertEqual(row["schema_version"], 2)
+        self.assertEqual(row["schema_version"], 3)
         self.assertEqual(row["operation"], "responses.create")
         self.assertIsNotNone(row.get("inference_dispatched_at"))
         self.assertNotIn("expires_at", row)
@@ -219,6 +238,7 @@ class ApiTelemetryTests(unittest.TestCase):
         self.assertEqual(row["credential"]["key_id"], "akid_test_person")
         self.assertEqual(row["course"]["course_id"], 44001)
         self.assertEqual(row["usage"]["total_tokens"], 21)
+        self.assertEqual(row["queue"], QUEUE_TELEMETRY)
         self.assertEqual(
             row["request"]["body"]["metadata"],
             {"assignment": "lab-one", "token": "[REDACTED]"},
@@ -255,6 +275,27 @@ class ApiTelemetryTests(unittest.TestCase):
         self.assertEqual(row["request"]["body"]["input"], prompt)
         self.assertEqual(row["response"]["output_text"], output)
 
+    def test_queue_telemetry_is_strictly_sanitized(self):
+        valid = {
+            **QUEUE_TELEMETRY,
+            "prompt": "must not survive",
+            "request_id": "must not survive",
+        }
+        self.assertEqual(
+            rocky.extract_granite_telemetry({
+                "telemetry": {"queue": valid},
+            })["queue"],
+            QUEUE_TELEMETRY,
+        )
+
+        invalid = {**QUEUE_TELEMETRY, "wait_ms": True}
+        self.assertNotIn(
+            "queue",
+            rocky.extract_granite_telemetry({
+                "telemetry": {"queue": invalid},
+            }),
+        )
+
     def test_streaming_success_is_audited_with_full_output_and_usage(self):
         stream = granite_stream([
             {"type": "delta", "text": "Audited "},
@@ -288,6 +329,7 @@ class ApiTelemetryTests(unittest.TestCase):
         self.assertEqual(row["usage"]["input_tokens"], 5)
         self.assertEqual(row["usage"]["output_tokens"], 2)
         self.assertEqual(row["request"]["body"]["stream"], True)
+        self.assertEqual(row["queue"], QUEUE_TELEMETRY)
         self.assertEqual(row["delivery"]["status"], "completed")
         self.assertIsInstance(row["delivery"]["recorded_at"], datetime)
         self.assertEqual(
@@ -318,6 +360,7 @@ class ApiTelemetryTests(unittest.TestCase):
         self.assertEqual(row["outcome"], "timed_out")
         self.assertEqual(row["response"]["output_text"], "Partial private output")
         self.assertEqual(row["error_type"], "timeout")
+        self.assertEqual(row["queue"], QUEUE_TELEMETRY)
         self.assertEqual(
             rocky.telemetry_current_col.find_one({})["active_requests"],
             0,
@@ -716,7 +759,7 @@ class LiveSmokeTests(unittest.TestCase):
         request_id = str(uuid4())
         interaction = {
             "_id": request_id, "state": "terminal", "outcome": "completed",
-            "schema_version": 2, "content_available": True,
+            "schema_version": 3, "content_available": True,
             "request": {"input_text": live_telemetry_smoke.PROMPT},
             "response": {"output_text": "Rocky"},
             "usage": {

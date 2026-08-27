@@ -43,7 +43,7 @@ payload = {
     "store": False,
 }
 
-response = requests.post(url, headers=headers, json=payload, timeout=180)
+response = requests.post(url, headers=headers, json=payload, timeout=390)
 response.raise_for_status()
 
 print(response.json()["output_text"])

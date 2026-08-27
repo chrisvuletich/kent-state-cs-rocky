@@ -51,7 +51,7 @@ response = requests.post(
         ],
         "store": False,
     },
-    timeout=180,
+    timeout=390,
 )
 response.raise_for_status()
 print(response.json()["output_text"])
