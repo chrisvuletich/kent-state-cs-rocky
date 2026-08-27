@@ -256,3 +256,27 @@ unset ROCKY_API_KEY
 Use a dedicated instructor or deployment-test key and avoid running the command
 in a tight loop. The smoke test intentionally does not exhaust the key to prove
 the `429` path; that behavior is covered by the automated API contract tests.
+
+## Live queue-telemetry verification
+
+After the public queue burst passes, run
+`integration/live_telemetry_smoke.py` once from the deployed revision with a
+dedicated test key and direct access to the production database. This submits
+one additional audited request and verifies that its exact permanent record has
+the completed response, aggregate counter deltas, and the bounded queue object.
+The queue check rejects missing fields, invalid positions, unsuccessful queue
+states, booleans in numeric fields, and unexpected fields that could contain
+request content.
+
+Set `ROCKY_RUN_LIVE_TELEMETRY_SMOKE=1`, `ROCKY_LIVE_API_URL`,
+`ROCKY_LIVE_API_KEY`, `ROCKY_LIVE_MONGODB_URI`, and `ROCKY_LIVE_DB_NAME` in the
+operator shell, then run:
+
+```sh
+ROCKY_LIVE_TIMEOUT_SECONDS=390 \
+  python run-test/integration/live_telemetry_smoke.py
+```
+
+The script prints only counter deltas or a stable failure code. It does not
+print the API key, database URI, prompt, response, or stored queue record. Unset
+the sensitive environment values immediately afterward.

@@ -80,6 +80,17 @@ python run-test/integration/deployment_smoke.py \
 Require `PASS` for both queue-burst results, then use the six printed request
 IDs to inspect queue status and wait time in permanent telemetry.
 
+Run the opt-in live telemetry check once from the deployed revision with a
+dedicated test key and production database access. It verifies that an exact
+correlated request retains the safe queue schema and updates aggregate counters;
+see `run-test/README.md` for its required environment values.
+
+```sh
+ROCKY_RUN_LIVE_TELEMETRY_SMOKE=1 \
+ROCKY_LIVE_TIMEOUT_SECONDS=390 \
+  python run-test/integration/live_telemetry_smoke.py
+```
+
 ```sh
 unset ROCKY_API_KEY
 ```
@@ -101,6 +112,7 @@ After image rollback, restore Rocky's smaller request-body ceiling. Restart the
 affected services and rerun the doctor plus the default non-generating smoke
 test.
 
-Record the deployed revision, whether each optional feature remained enabled,
-and the smoke-test request IDs. Never copy the API key into release notes or
-logs.
+Record the candidate and deployed revisions, doctor result, advertised-feature
+smoke result, queue-burst result and request IDs, live telemetry result, whether
+each optional feature remained enabled, and whether rollback was needed. Never
+copy an API key, database URI, prompt, or response into release notes or logs.

@@ -1,3 +1,4 @@
+import math
 import os
 import sys
 from pathlib import Path
@@ -17,6 +18,15 @@ REQUIRED = (
     "ROCKY_LIVE_MONGODB_URI", "ROCKY_LIVE_DB_NAME",
 )
 PROMPT = "Reply with only the word Rocky. Unicode check: café ☕"
+SUCCESS_QUEUE_STATUSES = {"not_queued", "admitted"}
+QUEUE_FIELDS = {
+    "status",
+    "initial_position",
+    "depth_on_arrival",
+    "wait_ms",
+    "capacity",
+    "queued_bytes_on_arrival",
+}
 
 
 class SmokeFailure(Exception):
@@ -30,12 +40,35 @@ def integer(document, field, default=None):
     return value
 
 
+def validate_queue_telemetry(interaction):
+    queue = interaction.get("queue")
+    if not isinstance(queue, dict) or set(queue) != QUEUE_FIELDS:
+        raise SmokeFailure("QUEUE_TELEMETRY_INVALID")
+    if queue.get("status") not in SUCCESS_QUEUE_STATUSES:
+        raise SmokeFailure("QUEUE_TELEMETRY_INVALID")
+    try:
+        for field in QUEUE_FIELDS - {"status"}:
+            integer(queue, field)
+    except SmokeFailure as error:
+        raise SmokeFailure("QUEUE_TELEMETRY_INVALID") from error
+    position = queue["initial_position"]
+    if (
+        (queue["status"] == "not_queued" and position != 0)
+        or (queue["status"] == "admitted" and position < 1)
+        or position > queue["capacity"]
+    ):
+        raise SmokeFailure("QUEUE_TELEMETRY_INVALID")
+
+
 def run_live_smoke():
     values = {name: os.getenv(name, "").strip() for name in REQUIRED}
     if any(not value for value in values.values()):
         raise SmokeFailure("CONFIG_MISSING")
-    timeout = float(os.getenv("ROCKY_LIVE_TIMEOUT_SECONDS", "210"))
-    if timeout <= 0:
+    try:
+        timeout = float(os.getenv("ROCKY_LIVE_TIMEOUT_SECONDS", "390"))
+    except (TypeError, ValueError) as error:
+        raise SmokeFailure("CONFIG_INVALID") from error
+    if not math.isfinite(timeout) or timeout <= 0:
         raise SmokeFailure("CONFIG_INVALID")
 
     from telemetry_projection import refresh_current
@@ -78,6 +111,7 @@ def run_live_smoke():
                 or interaction.get("content_available") is not True
                 or interaction.get("expires_at") is not None):
             raise SmokeFailure("PERMANENT_RECORD_MISSING")
+        validate_queue_telemetry(interaction)
         stored_request = interaction.get("request")
         stored_response = interaction.get("response")
         if (not isinstance(stored_request, dict)

@@ -769,6 +769,14 @@ class LiveSmokeTests(unittest.TestCase):
                 "output_bytes": 20,
             },
             "performance": {"request_latency_ms": 5},
+            "queue": {
+                "status": "not_queued",
+                "initial_position": 0,
+                "depth_on_arrival": 0,
+                "wait_ms": 0,
+                "capacity": 12,
+                "queued_bytes_on_arrival": 0,
+            },
         }
         before = dict(CURRENT_COUNTER_DEFAULTS)
         after = {
@@ -807,8 +815,48 @@ class LiveSmokeTests(unittest.TestCase):
                 post.call_args.kwargs["headers"],
                 {"Authorization": "Bearer test"},
             )
+            self.assertEqual(post.call_args.kwargs["timeout"], 390)
             response.headers["X-Rocky-Request-Id"] = str(uuid4())
             with self.assertRaises(live_telemetry_smoke.SmokeFailure):
+                live_telemetry_smoke.run_live_smoke()
+
+    def test_live_smoke_requires_bounded_success_queue_telemetry(self):
+        valid = {
+            "status": "admitted",
+            "initial_position": 2,
+            "depth_on_arrival": 1,
+            "wait_ms": 250,
+            "capacity": 12,
+            "queued_bytes_on_arrival": 100,
+        }
+        live_telemetry_smoke.validate_queue_telemetry({"queue": valid})
+
+        invalid = (
+            None,
+            {**valid, "prompt": "must not be stored here"},
+            {**valid, "status": "queue_full"},
+            {**valid, "initial_position": 0},
+            {**valid, "wait_ms": True},
+            {**valid, "initial_position": 13},
+        )
+        for queue in invalid:
+            with self.subTest(queue=queue):
+                with self.assertRaisesRegex(
+                    live_telemetry_smoke.SmokeFailure,
+                    "QUEUE_TELEMETRY_INVALID",
+                ):
+                    live_telemetry_smoke.validate_queue_telemetry({"queue": queue})
+
+    def test_live_smoke_rejects_invalid_timeout_configuration(self):
+        environment = {
+            **{name: "test" for name in live_telemetry_smoke.REQUIRED},
+            "ROCKY_LIVE_TIMEOUT_SECONDS": "nan",
+        }
+        with patch.dict(os.environ, environment):
+            with self.assertRaisesRegex(
+                live_telemetry_smoke.SmokeFailure,
+                "CONFIG_INVALID",
+            ):
                 live_telemetry_smoke.run_live_smoke()
 
 
