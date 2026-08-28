@@ -22,7 +22,8 @@ deployed and keep the successful test output with the release notes.
 - Keep the public model identifier aligned across Rocky, Granite, and the web
   frontend.
 - Before enabling image input, configure the same image count, byte, and pixel
-  limits in Rocky and Granite and use the documented larger request ceilings.
+  limits in Rocky and Granite, set `BODY_SIZE_LIMIT=10M` in the frontend
+  environment, and use the documented larger request ceilings.
 - Back up MongoDB before any release that includes a data migration.
 
 Run the non-network configuration checks on the Rocky host:
@@ -30,8 +31,19 @@ Run the non-network configuration checks on the Rocky host:
 ```sh
 python manage.py doctor \
   --skip-network \
+  --deployment-files \
+  --deployment-host rocky \
   --env-file /etc/rocky/backend.env \
   --env-file /etc/rocky/frontend.env
+```
+
+On Granite, load `/etc/rocky/granite.env` and run the installed-unit check:
+
+```sh
+python manage.py doctor \
+  --deployment-files-only \
+  --deployment-host granite \
+  --env-file /etc/rocky/granite.env
 ```
 
 ## 3. Restart in dependency order
@@ -72,13 +84,19 @@ six-client acceptance burst once. Ensure at least six Responses requests remain
 in the key's current rate-limit window:
 
 ```sh
+export ROCKY_LIVE_DB_NAME=rocky_db
+printf 'Production MongoDB URI: '
+IFS= read -r -s ROCKY_LIVE_MONGODB_URI
+printf '\n'
+export ROCKY_LIVE_MONGODB_URI ROCKY_LIVE_DB_NAME
 python run-test/integration/deployment_smoke.py \
   --timeout 390 \
   --include-queue-burst
 ```
 
-Require `PASS` for both queue-burst results, then use the six printed request
-IDs to inspect queue status and wait time in permanent telemetry.
+Require `PASS` for both queue-burst results. The first result now correlates all
+six request IDs with permanent telemetry and requires at least five requests to
+have actually queued. Queue status and wait time remain visible in Analytics.
 
 Run the opt-in live telemetry check once from the deployed revision with a
 dedicated test key and production database access. It verifies that an exact
@@ -86,13 +104,16 @@ correlated request retains the safe queue schema and updates aggregate counters;
 see `run-test/README.md` for its required environment values.
 
 ```sh
+export ROCKY_LIVE_API_URL="$ROCKY_BASE_URL"
+export ROCKY_LIVE_API_KEY="$ROCKY_API_KEY"
 ROCKY_RUN_LIVE_TELEMETRY_SMOKE=1 \
 ROCKY_LIVE_TIMEOUT_SECONDS=390 \
   python run-test/integration/live_telemetry_smoke.py
 ```
 
 ```sh
-unset ROCKY_API_KEY
+unset ROCKY_API_KEY ROCKY_LIVE_API_KEY ROCKY_LIVE_API_URL \
+  ROCKY_LIVE_MONGODB_URI ROCKY_LIVE_DB_NAME
 ```
 
 Finally, verify the built-in chat in a student account:

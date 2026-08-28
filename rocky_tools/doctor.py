@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import math
 import os
+import re
+import shlex
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable
 from urllib.parse import urlparse
 
@@ -19,6 +22,7 @@ DEPLOYED_INGRESS_MAX_REQUEST_BYTES = 10 * 1024 * 1024
 BUILT_IN_CHAT_MAX_IMAGE_CHARACTERS = 10 * 1024 * 1024
 MAX_IMAGE_DATA_URL_PREFIX_CHARACTERS = len("data:image/jpeg;base64,")
 MINIMUM_GENERATION_TIMEOUT_MARGIN_SECONDS = 15
+SVELTEKIT_BODY_SIZE_LIMIT_BYTES = 10 * 1024 * 1024
 PRODUCTION_SECRETS = (
     "ROCKY_HIDDEN_API_KEY_SECRET",
     "ROCKY_SESSION_SECRET",
@@ -47,6 +51,26 @@ class DoctorCheck:
 
 def env(name: str, default: str = "") -> str:
     return os.getenv(name, default).strip()
+
+
+def parse_adapter_body_size(value: str) -> int | None:
+    match = re.fullmatch(
+        r"([0-9]+(?:\.[0-9]+)?)([KMG]?)",
+        value.strip(),
+        re.IGNORECASE,
+    )
+    if match is None:
+        return None
+    multiplier = {
+        "": 1,
+        "K": 1024,
+        "M": 1024 * 1024,
+        "G": 1024 * 1024 * 1024,
+    }[match.group(2).upper()]
+    parsed = float(match.group(1)) * multiplier
+    if not math.isfinite(parsed) or parsed <= 0 or not parsed.is_integer():
+        return None
+    return int(parsed)
 
 
 def connectable_host(value: str) -> str:
@@ -107,6 +131,24 @@ def configured_generation_timeouts() -> dict[str, float] | None:
     return values
 
 
+def configured_queue_limits() -> dict[str, int] | None:
+    settings = {
+        "max_active_requests": ("ROCKY_GRANITE_MAX_CONCURRENT", 1),
+        "max_waiting_requests": ("ROCKY_GRANITE_QUEUE_CAPACITY", 12),
+        "max_queued_bytes": ("ROCKY_GRANITE_QUEUE_MAX_BYTES", 64 * 1024 * 1024),
+    }
+    values: dict[str, int] = {}
+    try:
+        for public_name, (environment_name, default) in settings.items():
+            value = int(env(environment_name, str(default)))
+            if value < (1 if public_name == "max_active_requests" else 0):
+                return None
+            values[public_name] = value
+    except ValueError:
+        return None
+    return values
+
+
 def derive_frontend_api_url() -> str:
     return env("PUBLIC_API_BASE_URL", "http://localhost:5001").rstrip("/")
 
@@ -160,11 +202,13 @@ class RockyDoctor:
         include_network: bool = True,
         session: requests.Session | None = None,
         mongo_pinger: Callable[[str, str], None] = ping_mongodb,
+        deployment_files: dict[str, Path] | None = None,
     ):
         self.timeout_seconds = timeout_seconds
         self.include_network = include_network
         self.session = session or requests.Session()
         self.mongo_pinger = mongo_pinger
+        self.deployment_files = deployment_files
         self.app_env = env("ROCKY_APP_ENV", "development").lower() or "development"
         self.public_app_env = env("PUBLIC_APP_ENV", self.app_env).lower()
         default_db_backend = "mongodb" if self.app_env == "production" else "mongita"
@@ -177,11 +221,197 @@ class RockyDoctor:
     def run(self) -> list[DoctorCheck]:
         checks: list[DoctorCheck] = []
         checks.extend(self.configuration_checks())
+        if self.deployment_files is not None:
+            checks.extend(self.deployment_file_checks())
         checks.extend(self.database_checks())
         if self.include_network:
             checks.extend(self.network_checks())
         else:
             checks.append(DoctorCheck("INFO", "network checks", "Skipped by --skip-network."))
+        return checks
+
+    @staticmethod
+    def _read_deployment_file(path: Path) -> tuple[str | None, str | None]:
+        try:
+            return path.read_text(encoding="utf-8"), None
+        except OSError as error:
+            return None, f"Cannot read {path}: {type(error).__name__}."
+
+    @staticmethod
+    def _gunicorn_options(unit_text: str) -> dict[str, str] | None:
+        match = re.search(r"^ExecStart=(.+)$", unit_text, flags=re.MULTILINE)
+        if match is None:
+            return None
+        try:
+            arguments = shlex.split(match.group(1))
+        except ValueError:
+            return None
+        options: dict[str, str] = {}
+        index = 0
+        while index < len(arguments):
+            argument = arguments[index]
+            if argument.startswith("--") and "=" in argument:
+                name, value = argument[2:].split("=", 1)
+                options[name] = value
+            elif argument.startswith("--") and index + 1 < len(arguments):
+                options[argument[2:]] = arguments[index + 1]
+                index += 1
+            index += 1
+        return options
+
+    @staticmethod
+    def _nginx_location(config_text: str, path: str) -> str | None:
+        cleaned = re.sub(r"#.*", "", config_text)
+        pattern = rf"location\s+(?:=\s*)?{re.escape(path)}\s*\{{"
+        match = re.search(pattern, cleaned)
+        if match is None:
+            return None
+        depth = 1
+        position = match.end()
+        while position < len(cleaned) and depth:
+            if cleaned[position] == "{":
+                depth += 1
+            elif cleaned[position] == "}":
+                depth -= 1
+            position += 1
+        return cleaned[match.end():position - 1] if depth == 0 else None
+
+    @staticmethod
+    def _nginx_timeout(block: str, directive: str) -> float | None:
+        match = re.search(
+            rf"\b{re.escape(directive)}\s+([0-9]+(?:\.[0-9]+)?)(ms|s|m|h)?\s*;",
+            block,
+        )
+        if match is None:
+            return None
+        multipliers = {None: 1.0, "ms": 0.001, "s": 1.0, "m": 60.0, "h": 3600.0}
+        return float(match.group(1)) * multipliers[match.group(2)]
+
+    def _systemd_unit_check(self, service: str, path: Path) -> DoctorCheck:
+        text, read_error = self._read_deployment_file(path)
+        name = f"installed {service} systemd unit"
+        if read_error:
+            return DoctorCheck("FAIL", name, read_error)
+        options = self._gunicorn_options(text or "")
+        if options is None:
+            return DoctorCheck("FAIL", name, "A parseable ExecStart directive is required.")
+
+        errors: list[str] = []
+        if options.get("worker-class") != "gthread":
+            errors.append("worker-class must be gthread")
+        numeric: dict[str, int] = {}
+        for option in ("workers", "threads", "timeout"):
+            try:
+                numeric[option] = int(options.get(option, ""))
+            except ValueError:
+                errors.append(f"--{option} must be an integer")
+        queue = configured_queue_limits()
+        timeouts = configured_generation_timeouts()
+        if service == "Granite":
+            if numeric.get("workers") != 1:
+                errors.append("--workers must be 1 for the process-local queue")
+            if queue is not None:
+                minimum_threads = (
+                    queue["max_active_requests"] + queue["max_waiting_requests"] + 2
+                )
+                if numeric.get("threads", 0) < minimum_threads:
+                    errors.append(f"--threads must be at least {minimum_threads}")
+            if timeouts is not None:
+                minimum_timeout = math.ceil(
+                    timeouts["queue_wait_seconds"]
+                    + timeouts["ollama_request_seconds"]
+                    + MINIMUM_GENERATION_TIMEOUT_MARGIN_SECONDS
+                )
+                if numeric.get("timeout", 0) < minimum_timeout:
+                    errors.append(f"--timeout must be at least {minimum_timeout}")
+        else:
+            if queue is not None:
+                minimum_threads = (
+                    queue["max_active_requests"] + queue["max_waiting_requests"] + 2
+                )
+                total_threads = numeric.get("workers", 0) * numeric.get("threads", 0)
+                if total_threads < minimum_threads:
+                    errors.append(
+                        f"workers times threads must be at least {minimum_threads}"
+                    )
+            if timeouts is not None and numeric.get("timeout", 0) <= timeouts[
+                "granite_client_seconds"
+            ]:
+                errors.append(
+                    "--timeout must exceed ROCKY_GRANITE_TIMEOUT_SECONDS"
+                )
+        return DoctorCheck(
+            "FAIL" if errors else "PASS",
+            name,
+            "; ".join(errors) if errors else f"{path} has sufficient queue headroom.",
+        )
+
+    def _nginx_config_check(
+        self,
+        path: Path,
+        *,
+        upstream_timeout_seconds: float | None = None,
+    ) -> DoctorCheck:
+        name = "installed Nginx config"
+        text, read_error = self._read_deployment_file(path)
+        if read_error:
+            return DoctorCheck("FAIL", name, read_error)
+        errors: list[str] = []
+        timeouts = configured_generation_timeouts()
+        minimum = timeouts["granite_client_seconds"] if timeouts is not None else None
+        if upstream_timeout_seconds is not None:
+            minimum = max(minimum or 0, upstream_timeout_seconds)
+        for location in ("/v1/responses", "/"):
+            block = self._nginx_location(text or "", location)
+            if block is None:
+                errors.append(f"location {location} is missing")
+                continue
+            for directive in ("proxy_read_timeout", "proxy_send_timeout"):
+                timeout = self._nginx_timeout(block, directive)
+                if timeout is None:
+                    errors.append(f"location {location} is missing {directive}")
+                elif minimum is not None and timeout <= minimum:
+                    errors.append(
+                        f"location {location} {directive} must exceed {minimum:g}s"
+                    )
+        return DoctorCheck(
+            "FAIL" if errors else "PASS",
+            name,
+            "; ".join(errors) if errors else f"{path} has sufficient proxy timeouts.",
+        )
+
+    def deployment_file_checks(self) -> list[DoctorCheck]:
+        allowed = {"granite", "chat", "nginx"}
+        configured = set(self.deployment_files or {})
+        if not configured or not configured.issubset(allowed):
+            return [DoctorCheck(
+                "FAIL",
+                "installed deployment files",
+                "At least one recognized deployment file path is required.",
+            )]
+        assert self.deployment_files is not None
+        chat_text, _read_error = self._read_deployment_file(
+            self.deployment_files["chat"]
+        ) if "chat" in configured else (None, None)
+        chat_options = self._gunicorn_options(chat_text or "")
+        try:
+            chat_timeout = int((chat_options or {}).get("timeout", ""))
+        except ValueError:
+            chat_timeout = None
+        checks: list[DoctorCheck] = []
+        if "granite" in configured:
+            checks.append(self._systemd_unit_check(
+                "Granite", self.deployment_files["granite"]
+            ))
+        if "chat" in configured:
+            checks.append(self._systemd_unit_check(
+                "chat API", self.deployment_files["chat"]
+            ))
+        if "nginx" in configured:
+            checks.append(self._nginx_config_check(
+                self.deployment_files["nginx"],
+                upstream_timeout_seconds=chat_timeout,
+            ))
         return checks
 
     def configuration_checks(self) -> list[DoctorCheck]:
@@ -264,6 +494,16 @@ class RockyDoctor:
             "ROCKY_TELEMETRY_ENABLED": "true",
         }
         errors: list[str] = []
+
+        body_size_limit = parse_adapter_body_size(env("BODY_SIZE_LIMIT", "512K"))
+        if body_size_limit is None:
+            errors.append("BODY_SIZE_LIMIT must be a positive byte size such as 10M")
+        elif self.app_env == "production" and body_size_limit != SVELTEKIT_BODY_SIZE_LIMIT_BYTES:
+            errors.append(
+                "BODY_SIZE_LIMIT must be 10M in production to match the deployed "
+                "Nginx request ceiling"
+            )
+
         for name, default in boolean_settings.items():
             value = env(name, default).lower()
             if value not in {"true", "false"}:
@@ -382,6 +622,14 @@ class RockyDoctor:
                         + max_context_chars
                         + 16 * 1024
                     )
+                    if (
+                        body_size_limit is not None
+                        and body_size_limit < minimum_public_bytes
+                    ):
+                        errors.append(
+                            "BODY_SIZE_LIMIT is too small for the configured "
+                            "image-input budget after Base64 encoding"
+                        )
                     if max_request_bytes < minimum_public_bytes:
                         errors.append(
                             "ROCKY_MAX_REQUEST_BYTES is too small for the "
@@ -744,6 +992,7 @@ class RockyDoctor:
         capabilities = payload.get("capabilities")
         streaming = payload.get("streaming")
         image_input = payload.get("image_input")
+        queue = payload.get("queue")
         timeouts = payload.get("timeouts")
 
         if expected_streaming is None:
@@ -786,6 +1035,18 @@ class RockyDoctor:
             if expected_image_input and image_input.get("limits_match") is not True:
                 errors.append("image_input.limits_match is not true")
 
+        expected_queue = configured_queue_limits()
+        if expected_queue is None:
+            errors.append("configured queue limits are invalid")
+        elif not isinstance(queue, dict):
+            errors.append("queue readiness was not reported")
+        else:
+            for name, expected in expected_queue.items():
+                if queue.get(name) != expected:
+                    errors.append(f"queue.{name} does not match configuration")
+            if payload.get("queue_configuration_matches") is not True:
+                errors.append("queue_configuration_matches is not true")
+
         expected_timeouts = configured_generation_timeouts()
         if expected_timeouts is None:
             errors.append("configured generation timeouts are invalid")
@@ -827,6 +1088,7 @@ class RockyDoctor:
                 "FAIL", "Granite readiness", f"Connection failed: {type(error).__name__}."
             )
         expected_timeouts = configured_generation_timeouts()
+        expected_queue = configured_queue_limits()
         expected_granite_timeouts = (
             {
                 name: expected_timeouts[name]
@@ -846,14 +1108,20 @@ class RockyDoctor:
             and isinstance(payload.get("dependencies"), dict)
             and payload["dependencies"].get("ollama") is True
             and payload["dependencies"].get("model_available") is True
+            and expected_queue is not None
+            and isinstance(payload.get("queue"), dict)
+            and all(
+                payload["queue"].get(name) == expected
+                for name, expected in expected_queue.items()
+            )
             and payload.get("timeouts") == expected_granite_timeouts
         )
         detail = (
-            f"Ollama has model '{self.inference_model}' and timeout settings match."
+            f"Ollama has model '{self.inference_model}'; queue and timeout settings match."
             if passed
             else (
                 f"HTTP {response.status_code}; Ollama, model, or generation "
-                "timeout settings are unavailable or mismatched."
+                "queue or timeout settings are unavailable or mismatched."
             )
         )
         return DoctorCheck("PASS" if passed else "FAIL", "Granite readiness", detail)

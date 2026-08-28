@@ -780,12 +780,12 @@ class LiveSmokeTests(unittest.TestCase):
         }
         before = dict(CURRENT_COUNTER_DEFAULTS)
         after = {
-            **before, "interactions_received_total": 1,
-            "interactions_completed_total": 1,
-            "model_input_bytes_total": 10, "model_output_bytes_total": 20,
-            "prompt_tokens_total": 3, "output_tokens_total": 2,
-            "request_latency_ms_total": 5,
-            "request_latency_samples_total": 1,
+            **before, "interactions_received_total": 3,
+            "interactions_completed_total": 2,
+            "model_input_bytes_total": 15, "model_output_bytes_total": 27,
+            "prompt_tokens_total": 5, "output_tokens_total": 3,
+            "request_latency_ms_total": 12,
+            "request_latency_samples_total": 2,
         }
         interactions = Mock()
         interactions.find_one.side_effect = lambda query: (
@@ -809,7 +809,7 @@ class LiveSmokeTests(unittest.TestCase):
                   side_effect=(before, after, before)),
         ):
             result = live_telemetry_smoke.run_live_smoke()
-            self.assertEqual(result["interactions_completed_total"], 1)
+            self.assertEqual(result["interactions_completed_total"], 2)
             self.assertEqual(post.call_args.args[0], "test/v1/responses")
             self.assertEqual(
                 post.call_args.kwargs["headers"],

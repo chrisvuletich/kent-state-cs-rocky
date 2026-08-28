@@ -39,6 +39,15 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now rocky-granite
 ```
 
+After loading `/etc/rocky/granite.env`, verify the installed unit on Granite:
+
+```sh
+python manage.py doctor \
+  --deployment-files-only \
+  --deployment-host granite \
+  --env-file /etc/rocky/granite.env
+```
+
 If hardware history is enabled, also install and start
 `granite-hardware-metrics.service.example` on Granite and
 `rocky-hardware-sampler.service.example` on Rocky after configuring the
@@ -84,6 +93,9 @@ ROCKY_GRANITE_TIMEOUT_SECONDS=315
 ROCKY_OLLAMA_TIMEOUT_SECONDS=150
 ROCKY_GRANITE_QUEUE_WAIT_SECONDS=120
 ROCKY_GRANITE_QUEUE_HEARTBEAT_SECONDS=10
+ROCKY_GRANITE_MAX_CONCURRENT=1
+ROCKY_GRANITE_QUEUE_CAPACITY=12
+ROCKY_GRANITE_QUEUE_MAX_BYTES=67108864
 ROCKY_MAX_CONTEXT_CHARS=60000
 ROCKY_MAX_OUTPUT_TOKENS=2048
 ROCKY_MAX_REQUEST_BYTES=262144
@@ -92,12 +104,15 @@ ROCKY_ENABLE_IMAGE_INPUT=false
 ```
 
 Set the same student-facing model in `/etc/rocky/frontend.env` so the built-in
-chat sends the advertised identifier. Keep its streaming flag aligned with the
-Rocky chat API during rollout:
+chat sends the advertised identifier. Set the SvelteKit request ceiling to the
+same bounded 10 MiB used by Nginx; its 512 KiB default is too small for Base64
+image attachments. Keep the streaming flag aligned with the Rocky chat API
+during rollout:
 
 ```sh
 ROCKY_PUBLIC_MODEL=gemma4:latest
 ROCKY_ENABLE_STREAMING=false
+BODY_SIZE_LIMIT=10M
 ```
 
 Granite's `/etc/rocky/granite.env` needs:
@@ -108,6 +123,7 @@ ROCKY_GRANITE_TOKEN=...
 OLLAMA_BASE_URL=http://127.0.0.1:11434
 OLLAMA_MODEL=gemma4:latest
 ROCKY_MAX_OUTPUT_TOKENS=2048
+ROCKY_OLLAMA_TIMEOUT_SECONDS=150
 ROCKY_GRANITE_MAX_CONCURRENT=1
 ROCKY_GRANITE_QUEUE_CAPACITY=12
 ROCKY_GRANITE_QUEUE_HEARTBEAT_SECONDS=10
@@ -279,6 +295,8 @@ write application data or print secret values.
 cd {{ROCKY_APP_DIR}}
 source .venv/bin/activate
 python manage.py doctor \
+  --deployment-files \
+  --deployment-host rocky \
   --env-file /etc/rocky/backend.env \
   --env-file /etc/rocky/frontend.env
 ```
@@ -287,7 +305,13 @@ Use `--skip-network` to inspect configuration without contacting services. A
 successful run exits `0`; a failed check exits `1`; invalid command usage exits
 `2`.
 
-The doctor also compares the loaded `ROCKY_ENABLE_STREAMING`,
+With `--deployment-files`, the Rocky doctor validates its installed chat
+systemd worker/timeout settings and Nginx proxy timeouts. Granite uses the
+file-only command shown above because it is a separate host. Use
+`--deployment-host all` only for a combined installation. The default paths may
+be overridden with `--granite-unit`, `--chat-unit`, and `--nginx-config`.
+
+The doctor also compares the loaded queue limits, `ROCKY_ENABLE_STREAMING`,
 `ROCKY_ENABLE_IMAGE_INPUT`, and image-limit settings with the capabilities and
 Rocky/Granite rollout state reported by the chat API's `/ready` response. This
 catches a frontend environment file, Rocky service, or Granite service left on
@@ -361,6 +385,11 @@ After the timeout ladder and longer queue wait are deployed, run the explicit
 classroom-burst check once with a fresh deployment-test key:
 
 ```sh
+export ROCKY_LIVE_DB_NAME='rocky_db'
+printf 'Production MongoDB URI: '
+IFS= read -r -s ROCKY_LIVE_MONGODB_URI
+printf '\n'
+export ROCKY_LIVE_MONGODB_URI ROCKY_LIVE_DB_NAME
 python run-test/integration/deployment_smoke.py \
   --timeout 390 \
   --include-queue-burst
@@ -368,10 +397,11 @@ python run-test/integration/deployment_smoke.py \
 
 This starts six small buffered requests together, requires all six to complete
 without `model_busy`, validates every request ID and rate-limit header set, and
-prints the IDs for correlation with permanent queue telemetry. It does not
-assume client numbering is server arrival order. In Analytics, confirm one
-request was immediately admitted, the others were queued, and compare their
-queue wait and model latency with the incident baseline. The deployment-test
+correlates the IDs with permanent telemetry. It passes only when at least five
+requests were actually queued, proving the installed one-active-request policy
+rather than merely proving six requests completed. It does not assume client
+numbering is server arrival order. Queue status and wait time are also visible
+in each Analytics request detail for optional inspection. The deployment-test
 key must have at least six Responses requests left in its current rate-limit
 window.
 
@@ -383,7 +413,7 @@ deployment rather than as frequent polls.
 Unset the key when finished:
 
 ```sh
-unset ROCKY_API_KEY
+unset ROCKY_API_KEY ROCKY_LIVE_API_KEY ROCKY_LIVE_MONGODB_URI ROCKY_LIVE_DB_NAME
 ```
 
 ### Rate-limit rollout verification
@@ -620,6 +650,8 @@ sudo systemctl start \
 python manage.py database-counts \
   --env-file /etc/rocky/backend.env
 python manage.py doctor \
+  --deployment-files \
+  --deployment-host rocky \
   --env-file /etc/rocky/backend.env \
   --env-file /etc/rocky/frontend.env
 python run-test/integration/deployment_smoke.py

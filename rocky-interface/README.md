@@ -152,6 +152,11 @@ and never fetches remote image URLs. Attached images are shown in optimistic
 messages and in reopened owned conversation history. They are covered by the
 same institutional logging notice as prompts and responses.
 
+Production must set `BODY_SIZE_LIMIT=10M` in the frontend environment. The
+adapter's 512 KiB default cannot carry the documented image budget after
+Base64 encoding; 10 MiB matches the tracked Nginx ceiling while keeping request
+bodies bounded.
+
 The Help Center includes capability-driven API reference material plus
 standalone Streaming and Image Input examples. These examples explain terminal
 SSE errors, network chunk boundaries, image limits, and the institutional

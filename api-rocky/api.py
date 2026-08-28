@@ -188,6 +188,15 @@ GRANITE_QUEUE_WAIT_SECONDS = _env_float(
 GRANITE_QUEUE_HEARTBEAT_SECONDS = _env_float(
     "ROCKY_GRANITE_QUEUE_HEARTBEAT_SECONDS", 10, minimum=0.1
 )
+GRANITE_MAX_CONCURRENT = _env_int(
+    "ROCKY_GRANITE_MAX_CONCURRENT", 1, minimum=1
+)
+GRANITE_QUEUE_CAPACITY = _env_int(
+    "ROCKY_GRANITE_QUEUE_CAPACITY", 12, minimum=0
+)
+GRANITE_QUEUE_MAX_BYTES = _env_int(
+    "ROCKY_GRANITE_QUEUE_MAX_BYTES", 64 * 1024 * 1024, minimum=0
+)
 GRANITE_TIMEOUT_MARGIN_SECONDS = 15
 if GRANITE_TIMEOUT_SECONDS < (
     GRANITE_OLLAMA_TIMEOUT_SECONDS
@@ -973,6 +982,23 @@ def granite_queue_snapshot(payload):
     return snapshot
 
 
+def expected_granite_queue_limits():
+    return {
+        "max_active_requests": GRANITE_MAX_CONCURRENT,
+        "max_waiting_requests": GRANITE_QUEUE_CAPACITY,
+        "max_queued_bytes": GRANITE_QUEUE_MAX_BYTES,
+    }
+
+
+def granite_queue_configuration_matches(snapshot):
+    if not isinstance(snapshot, dict):
+        return False
+    return all(
+        snapshot.get(name) == expected
+        for name, expected in expected_granite_queue_limits().items()
+    )
+
+
 def expected_granite_timeout_snapshot():
     return {
         "ollama_request_seconds": GRANITE_OLLAMA_TIMEOUT_SECONDS,
@@ -1174,6 +1200,7 @@ def ready():
     granite_image_limits = None
     granite_image_limits_match = False
     granite_queue = None
+    granite_queue_configuration_matches_expected = False
     granite_timeouts = None
     granite_timeouts_match = False
     try:
@@ -1198,6 +1225,9 @@ def ready():
             granite_payload = {}
         if isinstance(granite_payload, dict):
             granite_queue = granite_queue_snapshot(granite_payload)
+            granite_queue_configuration_matches_expected = (
+                granite_queue_configuration_matches(granite_queue)
+            )
             granite_timeouts = granite_timeout_snapshot(granite_payload)
             granite_timeouts_match = (
                 granite_timeouts == expected_granite_timeout_snapshot()
@@ -1228,6 +1258,7 @@ def ready():
         dependencies["granite"] = (
             granite_response.status_code == 200
             and granite_model == INFERENCE_MODEL
+            and granite_queue_configuration_matches_expected
             and granite_timeouts_match
             and (not ENABLE_STREAMING or granite_supports_streaming)
             and (
@@ -1264,6 +1295,7 @@ def ready():
             "granite_limits": granite_image_limits,
         },
         "queue": granite_queue,
+        "queue_configuration_matches": granite_queue_configuration_matches_expected,
         "timeouts": {
             "granite_client_seconds": GRANITE_TIMEOUT_SECONDS,
             "granite": granite_timeouts,

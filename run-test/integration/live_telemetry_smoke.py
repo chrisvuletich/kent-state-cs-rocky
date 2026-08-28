@@ -141,7 +141,7 @@ def run_live_smoke():
         deltas = {}
         for field, expected in requirements.items():
             change = integer(after, field) - integer(before, field)
-            if change != expected:
+            if change < expected:
                 raise SmokeFailure("METRIC_DELTA_MISSING")
             deltas[field] = change
 
@@ -150,7 +150,7 @@ def run_live_smoke():
             if source not in usage:
                 continue
             change = integer(after, total) - integer(before, total, 0)
-            if change != integer(usage, source):
+            if change < integer(usage, source):
                 raise SmokeFailure("TOKEN_DELTA_MISSING")
             deltas[total] = change
         return deltas

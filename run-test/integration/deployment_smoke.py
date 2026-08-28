@@ -9,7 +9,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from threading import Barrier
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlparse, urlunparse
 
 import requests
@@ -29,6 +29,14 @@ RATE_LIMIT_HEADERS = (
 )
 RATE_LIMIT_WINDOW_SECONDS = 60
 QUEUE_BURST_REQUESTS = 6
+QUEUE_TELEMETRY_FIELDS = {
+    "status",
+    "initial_position",
+    "depth_on_arrival",
+    "wait_ms",
+    "capacity",
+    "queued_bytes_on_arrival",
+}
 
 
 @dataclass(frozen=True)
@@ -42,6 +50,8 @@ class SmokeConfig:
     include_image: bool = False
     include_advertised: bool = False
     include_queue_burst: bool = False
+    telemetry_mongodb_uri: str = field(default="", repr=False)
+    telemetry_db_name: str = ""
 
 
 @dataclass(frozen=True)
@@ -60,6 +70,24 @@ class ModelInfo:
 
 class StreamContractError(ValueError):
     """Raised when a deployed stream does not satisfy Rocky's public subset."""
+
+
+def load_queue_evidence(
+    mongodb_uri: str,
+    database_name: str,
+    request_ids: list[str],
+) -> list[dict[str, Any]]:
+    from pymongo import MongoClient
+
+    client = MongoClient(mongodb_uri, serverSelectionTimeoutMS=5000, tz_aware=True)
+    try:
+        client.admin.command("ping")
+        return list(client[database_name]["telemetry_interactions"].find(
+            {"_id": {"$in": request_ids}},
+            {"_id": 1, "state": 1, "outcome": 1, "queue": 1},
+        ))
+    finally:
+        client.close()
 
 
 def normalize_base_url(value: str) -> str:
@@ -345,10 +373,12 @@ class DeploymentSmoke:
         config: SmokeConfig,
         session: requests.Session | None = None,
         burst_request=None,
+        queue_evidence_loader: Callable[[str, str, list[str]], list[dict[str, Any]]] | None = None,
     ):
         self.config = config
         self.session = session or requests.Session()
         self.burst_request = burst_request or requests.post
+        self.queue_evidence_loader = queue_evidence_loader or load_queue_evidence
         self.auth_headers = {"Authorization": f"Bearer {config.api_key}"}
 
     def request(self, method: str, path: str, **kwargs):
@@ -806,13 +836,23 @@ class DeploymentSmoke:
                 "request IDs: " + ", ".join(request_ids) + "."
             )
 
+        evidence_passed = False
+        evidence_detail = "Queue telemetry was not checked because the burst did not complete."
+        if completed == QUEUE_BURST_REQUESTS and unique_request_ids:
+            evidence_passed, evidence_detail = self.check_queue_evidence(request_ids)
+            detail += f" {evidence_detail}"
+
         rate_limit_failures = sum(
             not result["rate_limit_passed"] for result in results
         )
         return (
             SmokeCheck(
                 "queue burst",
-                completed == QUEUE_BURST_REQUESTS and bool(unique_request_ids),
+                (
+                    completed == QUEUE_BURST_REQUESTS
+                    and bool(unique_request_ids)
+                    and evidence_passed
+                ),
                 detail,
             ),
             SmokeCheck(
@@ -824,6 +864,65 @@ class DeploymentSmoke:
                     else f"{rate_limit_failures} response(s) had invalid request-limit headers."
                 ),
             ),
+        )
+
+    def check_queue_evidence(self, request_ids: list[str]) -> tuple[bool, str]:
+        try:
+            records = self.queue_evidence_loader(
+                self.config.telemetry_mongodb_uri,
+                self.config.telemetry_db_name,
+                request_ids,
+            )
+        except Exception as error:
+            return False, f"Queue telemetry lookup failed: {type(error).__name__}."
+
+        records_by_id = {
+            record.get("_id"): record
+            for record in records
+            if isinstance(record, dict) and isinstance(record.get("_id"), str)
+        }
+        if set(records_by_id) != set(request_ids):
+            return False, (
+                f"Found {len(set(records_by_id).intersection(request_ids))}/"
+                f"{QUEUE_BURST_REQUESTS} correlated telemetry records."
+            )
+
+        admitted = 0
+        immediate = 0
+        maximum_wait_ms = 0
+        for request_id in request_ids:
+            record = records_by_id[request_id]
+            queue = record.get("queue")
+            if record.get("state") != "terminal" or record.get("outcome") != "completed":
+                return False, "A correlated telemetry record was not a completed terminal request."
+            if not isinstance(queue, dict) or set(queue) != QUEUE_TELEMETRY_FIELDS:
+                return False, "A correlated record had an invalid queue telemetry schema."
+            numeric_fields = QUEUE_TELEMETRY_FIELDS - {"status"}
+            if any(
+                isinstance(queue.get(field), bool)
+                or not isinstance(queue.get(field), int)
+                or queue[field] < 0
+                for field in numeric_fields
+            ):
+                return False, "A correlated record had invalid queue telemetry values."
+            status = queue.get("status")
+            position = queue["initial_position"]
+            if status == "admitted" and 1 <= position <= queue["capacity"]:
+                admitted += 1
+            elif status == "not_queued" and position == 0:
+                immediate += 1
+            else:
+                return False, "A correlated record did not contain successful queue admission."
+            maximum_wait_ms = max(maximum_wait_ms, queue["wait_ms"])
+
+        if admitted < QUEUE_BURST_REQUESTS - 1 or immediate > 1:
+            return False, (
+                f"Telemetry showed {admitted} queued and {immediate} immediately admitted; "
+                f"expected at least {QUEUE_BURST_REQUESTS - 1} queued."
+            )
+        return True, (
+            f"Telemetry confirmed {admitted} queued and {immediate} immediately admitted; "
+            f"longest queue wait {maximum_wait_ms} ms."
         )
 
     @staticmethod
@@ -861,6 +960,14 @@ def build_config(args: argparse.Namespace) -> SmokeConfig:
     timeout_seconds = args.timeout
     if timeout_seconds <= 0:
         raise ValueError("--timeout must be greater than zero.")
+    telemetry_mongodb_uri = os.getenv("ROCKY_LIVE_MONGODB_URI", "").strip()
+    telemetry_db_name = os.getenv("ROCKY_LIVE_DB_NAME", "").strip()
+    if args.include_queue_burst and (
+        not telemetry_mongodb_uri or not telemetry_db_name
+    ):
+        raise ValueError(
+            "ROCKY_LIVE_MONGODB_URI and ROCKY_LIVE_DB_NAME are required for queue-burst evidence."
+        )
     return SmokeConfig(
         base_url=base_url,
         api_key=api_key,
@@ -871,6 +978,8 @@ def build_config(args: argparse.Namespace) -> SmokeConfig:
         include_image=args.include_image,
         include_advertised=args.include_advertised,
         include_queue_burst=args.include_queue_burst,
+        telemetry_mongodb_uri=telemetry_mongodb_uri,
+        telemetry_db_name=telemetry_db_name,
     )
 
 

@@ -15,7 +15,39 @@ import { ChatImageInputError, publicImageContentBlocks } from '$lib/server/chatI
 
 export const POST: RequestHandler = async ({ request, fetch, locals }) => {
 	const user = requireChatUser(locals);
-	const body = await request.json().catch(() => null);
+	let body;
+	try {
+		body = await request.json();
+	} catch (error) {
+		const status =
+			error && typeof error === 'object' && 'status' in error
+				? (error as { status?: unknown }).status
+				: null;
+		if (status === 413) {
+			return json(
+				{
+					error: {
+						message: 'Request body is too large.',
+						type: 'invalid_request_error',
+						param: null,
+						code: 'request_too_large'
+					}
+				},
+				{ status: 413 }
+			);
+		}
+		return json(
+			{
+				error: {
+					message: 'Request body must be valid JSON.',
+					type: 'invalid_request_error',
+					param: null,
+					code: 'invalid_json'
+				}
+			},
+			{ status: 400 }
+		);
+	}
 	const message = typeof body?.message === 'string' && body.message.trim() ? body.message : '';
 	const conversation_id =
 		typeof body?.conversation_id === 'string' ? body.conversation_id.trim() : '';

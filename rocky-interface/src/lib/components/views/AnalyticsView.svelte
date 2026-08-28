@@ -588,6 +588,13 @@
 	function outcomeLabel(value: string): string {
 		return value === 'timed_out' ? 'Timed out' : value.charAt(0).toUpperCase() + value.slice(1);
 	}
+
+	function queueStatusLabel(value: string): string {
+		return value
+			.split('_')
+			.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+			.join(' ');
+	}
 </script>
 
 <ViewShell title="Analytics">
@@ -1044,6 +1051,22 @@
 								<dt>Latency</dt>
 								<dd>{milliseconds(selectedRequest.performance?.request_latency_ms)}</dd>
 							</div>
+							{#if selectedRequest.queue}<div>
+									<dt>Queue status</dt>
+									<dd>{queueStatusLabel(selectedRequest.queue.status)}</dd>
+								</div>
+								<div>
+									<dt>Queue wait</dt>
+									<dd>{milliseconds(selectedRequest.queue.wait_ms)}</dd>
+								</div>
+								<div>
+									<dt>Queue arrival</dt>
+									<dd>
+										{selectedRequest.queue.initial_position === 0
+											? 'Immediate admission'
+											: `Position ${selectedRequest.queue.initial_position} of ${selectedRequest.queue.capacity}`}
+									</dd>
+								</div>{/if}
 							<div>
 								<dt>Request ID</dt>
 								<dd class="request-id">{selectedRequest.request_id}</dd>

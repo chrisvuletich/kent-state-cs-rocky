@@ -73,6 +73,15 @@ def granite_timeout_payload(api_module):
     return api_module.expected_granite_timeout_snapshot()
 
 
+def granite_queue_payload(api_module):
+    return {
+        "active_requests": 0,
+        "waiting_requests": 0,
+        "queued_bytes": 0,
+        **api_module.expected_granite_queue_limits(),
+    }
+
+
 def load_api_with_test_initialization_seam(environment_overrides=None):
     spec = importlib.util.spec_from_file_location(
         "api_rocky_route_contract",
@@ -1552,6 +1561,7 @@ class ApiRockyRouteContractTests(unittest.TestCase):
             "max_waiting_requests": 12,
             "max_queued_bytes": 67108864,
         })
+        self.assertTrue(response.get_json()["queue_configuration_matches"])
         self.assertEqual(response.get_json()["timeouts"], {
             "granite_client_seconds": self.api.GRANITE_TIMEOUT_SECONDS,
             "granite": granite_timeout_payload(self.api),
@@ -1660,6 +1670,38 @@ class ApiRockyRouteContractTests(unittest.TestCase):
             "configuration_matches": False,
         })
 
+    def test_readiness_rejects_queue_configuration_mismatch(self):
+        database = Mock()
+        mismatched_queue = {
+            "active_requests": 0,
+            "waiting_requests": 0,
+            "queued_bytes": 0,
+            "max_active_requests": 8,
+            "max_waiting_requests": 0,
+            "max_queued_bytes": 0,
+        }
+        granite_response = Mock(status_code=200)
+        granite_response.json.return_value = {
+            "ok": True,
+            "model": self.api.INFERENCE_MODEL,
+            "capabilities": {
+                "supports_streaming": False,
+                "supports_image_input": False,
+            },
+            "timeouts": granite_timeout_payload(self.api),
+            "queue": mismatched_queue,
+        }
+        with (
+            patch.object(self.api, "api_keys_col", database),
+            patch.object(self.api.requests, "get", return_value=granite_response),
+        ):
+            response = self.client.get("/ready")
+
+        self.assertEqual(response.status_code, 503)
+        self.assertFalse(response.get_json()["dependencies"]["granite"])
+        self.assertFalse(response.get_json()["queue_configuration_matches"])
+        self.assertEqual(response.get_json()["queue"], mismatched_queue)
+
     def test_readiness_requires_exact_image_limit_parity(self):
         database = Mock()
         mismatched_limits = self.api.image_limit_capabilities()
@@ -1674,6 +1716,7 @@ class ApiRockyRouteContractTests(unittest.TestCase):
                 "image_limits": mismatched_limits,
             },
             "timeouts": granite_timeout_payload(self.api),
+            "queue": granite_queue_payload(self.api),
         }
         with (
             patch.object(self.api, "api_keys_col", database),

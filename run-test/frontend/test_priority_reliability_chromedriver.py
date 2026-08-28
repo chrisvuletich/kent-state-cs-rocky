@@ -3,8 +3,10 @@ from __future__ import annotations
 import base64
 import os
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
+from mongita import MongitaClientDisk
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import Select
 from selenium.webdriver.support import expected_conditions as EC
@@ -558,6 +560,73 @@ class PriorityReliabilityE2ETests(FrontendBrowserTestCase):
             self.driver.find_element(By.XPATH, "//button[normalize-space()='Export CSV']").is_displayed()
         )
         self.capture_evidence("analytics-shareable-filters")
+
+    def test_analytics_request_detail_shows_queue_admission(self):
+        request_id = "req_queue_ui_evidence"
+        now = datetime.now(timezone.utc)
+        client = MongitaClientDisk(self._mongita_dir)
+        try:
+            client["rocky_db"]["telemetry_interactions"].insert_one({
+                "_id": request_id,
+                "request_id": request_id,
+                "schema_version": 3,
+                "state": "terminal",
+                "outcome": "completed",
+                "http_status": 200,
+                "received_at": now,
+                "terminal_at": now,
+                "source": "public_api",
+                "operation": "responses.create",
+                "actor": {
+                    "user_id": "queue-ui-student",
+                    "email": "queue-ui-student@kent.edu",
+                    "name": "Queue UI Student",
+                },
+                "model": {
+                    "public_model": "course-model",
+                    "actual_model": "course-model",
+                },
+                "usage": {
+                    "input_tokens": 4,
+                    "output_tokens": 2,
+                    "total_tokens": 6,
+                    "input_bytes": 20,
+                    "output_bytes": 10,
+                },
+                "performance": {"request_latency_ms": 1500},
+                "queue": {
+                    "status": "admitted",
+                    "initial_position": 2,
+                    "depth_on_arrival": 1,
+                    "wait_ms": 250,
+                    "capacity": 12,
+                    "queued_bytes_on_arrival": 100,
+                },
+                "request": {"input_text": "Queue UI test"},
+                "response": {"output_text": "Queue UI response"},
+                "content_available": True,
+                "expires_at": None,
+            })
+        finally:
+            client.close()
+
+        self._login_as_admin()
+        self.driver.get(f"{BASE_URL}/?frame=analytics&request={request_id}")
+        self._assert_title("Analytics")
+        detail = self.wait.until(
+            EC.visibility_of_element_located((By.CSS_SELECTOR, ".analytics-detail-panel.open")),
+            message="Expected the correlated request detail to open.",
+        )
+        self.wait.until(
+            EC.text_to_be_present_in_element(
+                (By.CSS_SELECTOR, ".analytics-detail-panel.open"),
+                "Position 2 of 12",
+            )
+        )
+        self.assertIn("Queue status\nAdmitted", detail.text)
+        self.assertIn("Queue wait\n250 ms", detail.text)
+        self.assertIn("Queue arrival\nPosition 2 of 12", detail.text)
+        self.capture_evidence("analytics-queue-admission-detail")
 
     def test_course_key_warning_and_admin_panels(self):
         self._login_as_admin()

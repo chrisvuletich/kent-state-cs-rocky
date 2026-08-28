@@ -169,10 +169,26 @@ export type AnalyticsRequests = {
 	requests: AnalyticsRequestSummary[];
 };
 
+export type AnalyticsQueueTelemetry = {
+	status:
+		| 'not_queued'
+		| 'admitted'
+		| 'queue_full'
+		| 'queue_memory_full'
+		| 'timed_out'
+		| 'cancelled';
+	initial_position: number;
+	depth_on_arrival: number;
+	wait_ms: number;
+	capacity: number;
+	queued_bytes_on_arrival: number;
+};
+
 export type AnalyticsRequestDetail = AnalyticsRequestSummary & {
 	request?: { input_text?: string | null; body?: unknown; [key: string]: unknown };
 	response?: { output_text?: string | null; body?: unknown; [key: string]: unknown };
 	client?: Record<string, unknown>;
+	queue?: AnalyticsQueueTelemetry | null;
 	[key: string]: unknown;
 };
 

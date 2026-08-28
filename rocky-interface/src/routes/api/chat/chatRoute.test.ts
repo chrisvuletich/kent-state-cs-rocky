@@ -23,16 +23,23 @@ vi.mock('$lib/server/chatProxy', () => ({
 
 import { POST } from './+server';
 
-function routeEvent(mockFetch: ReturnType<typeof vi.fn>, body: Record<string, unknown>) {
+function requestEvent(mockFetch: ReturnType<typeof vi.fn>, request: Request) {
 	return {
-		request: new Request('http://rocky.example.invalid/api/chat', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify(body)
-		}),
+		request,
 		fetch: mockFetch,
 		locals: { currentUser: syntheticUser }
 	} as unknown as Parameters<typeof POST>[0];
+}
+
+function routeEvent(mockFetch: ReturnType<typeof vi.fn>, body: Record<string, unknown>) {
+	return requestEvent(
+		mockFetch,
+		new Request('http://rocky.example.invalid/api/chat', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(body)
+		})
+	);
 }
 
 describe('streaming chat proxy route', () => {
@@ -128,6 +135,42 @@ describe('streaming chat proxy route', () => {
 		expect(rejected.status).toBe(400);
 		expect((await rejected.json()).error.code).toBe('invalid_image');
 		expect(rejectedFetch).not.toHaveBeenCalled();
+	});
+
+	it('keeps malformed JSON distinct from an empty chat request', async () => {
+		const mockFetch = vi.fn();
+		const response = await POST(
+			requestEvent(
+				mockFetch,
+				new Request('http://rocky.example.invalid/api/chat', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: '{'
+				})
+			)
+		);
+
+		expect(response.status).toBe(400);
+		expect((await response.json()).error.code).toBe('invalid_json');
+		expect(mockFetch).not.toHaveBeenCalled();
+	});
+
+	it('preserves the adapter payload-too-large status and error code', async () => {
+		const mockFetch = vi.fn();
+		const request = new Request('http://rocky.example.invalid/api/chat', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: '{}'
+		});
+		vi.spyOn(request, 'json').mockRejectedValue(
+			Object.assign(new Error('Payload Too Large'), { status: 413 })
+		);
+
+		const response = await POST(requestEvent(mockFetch, request));
+
+		expect(response.status).toBe(413);
+		expect((await response.json()).error.code).toBe('request_too_large');
+		expect(mockFetch).not.toHaveBeenCalled();
 	});
 
 	it('keeps pre-stream API failures as JSON with their real status', async () => {

@@ -246,11 +246,13 @@ python run-test/integration/deployment_smoke.py \
 
 The burst requires six available Responses requests in the key's current
 rate-limit window. It starts them together, requires six distinct request IDs
-and successful responses, validates every rate-limit header set, and prints the
-IDs for queue-telemetry review. Unset the key after all smoke checks:
+and successful responses, validates every rate-limit header set, then queries
+the permanent records by those IDs and requires at least five to have actually
+queued. Queue-burst mode therefore also requires `ROCKY_LIVE_MONGODB_URI` and
+`ROCKY_LIVE_DB_NAME`. Unset the secrets after all smoke checks:
 
 ```sh
-unset ROCKY_API_KEY
+unset ROCKY_API_KEY ROCKY_LIVE_API_KEY ROCKY_LIVE_MONGODB_URI ROCKY_LIVE_DB_NAME
 ```
 
 Use a dedicated instructor or deployment-test key and avoid running the command
@@ -263,7 +265,9 @@ After the public queue burst passes, run
 `integration/live_telemetry_smoke.py` once from the deployed revision with a
 dedicated test key and direct access to the production database. This submits
 one additional audited request and verifies that its exact permanent record has
-the completed response, aggregate counter deltas, and the bounded queue object.
+the completed response, aggregate counters advanced by at least that request's
+contribution, and the bounded queue object. The lower-bound comparison remains
+valid when students create concurrent traffic during the check.
 The queue check rejects missing fields, invalid positions, unsuccessful queue
 states, booleans in numeric fields, and unexpected fields that could contain
 request content.

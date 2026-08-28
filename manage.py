@@ -44,6 +44,40 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Run configuration checks without connecting to services.",
     )
+    doctor.add_argument(
+        "--deployment-files",
+        action="store_true",
+        help="Also validate installed deployment files for --deployment-host.",
+    )
+    doctor.add_argument(
+        "--deployment-files-only",
+        action="store_true",
+        help="Validate only installed deployment files (useful on the Granite host).",
+    )
+    doctor.add_argument(
+        "--deployment-host",
+        choices=("rocky", "granite", "all"),
+        default="rocky",
+        help="Installed files to validate (default: rocky).",
+    )
+    doctor.add_argument(
+        "--granite-unit",
+        type=Path,
+        default=Path("/etc/systemd/system/rocky-granite.service"),
+        help="Installed Granite systemd unit path.",
+    )
+    doctor.add_argument(
+        "--chat-unit",
+        type=Path,
+        default=Path("/etc/systemd/system/rocky-chat-api.service"),
+        help="Installed chat API systemd unit path.",
+    )
+    doctor.add_argument(
+        "--nginx-config",
+        type=Path,
+        default=Path("/etc/nginx/sites-enabled/rocky.cs.kent.edu.conf"),
+        help="Installed Rocky Nginx config path.",
+    )
     purge = commands.add_parser(
         "purge-requests",
         help="Find or delete telemetry requests older than an explicit date.",
@@ -101,10 +135,27 @@ def run_doctor(args: argparse.Namespace) -> int:
         print("FAIL  configuration: --timeout must be greater than zero.", file=sys.stderr)
         return 2
 
-    checks = RockyDoctor(
+    deployment_files = None
+    if args.deployment_files or args.deployment_files_only:
+        deployment_files = {}
+        if args.deployment_host in {"granite", "all"}:
+            deployment_files["granite"] = args.granite_unit
+        if args.deployment_host in {"rocky", "all"}:
+            deployment_files.update({
+                "chat": args.chat_unit,
+                "nginx": args.nginx_config,
+            })
+
+    doctor = RockyDoctor(
         timeout_seconds=args.timeout,
         include_network=not args.skip_network,
-    ).run()
+        deployment_files=deployment_files,
+    )
+    checks = (
+        doctor.deployment_file_checks()
+        if args.deployment_files_only
+        else doctor.run()
+    )
     for check in checks:
         print(f"{check.status:<4}  {check.name}: {check.detail}")
     return 1 if any(check.failed for check in checks) else 0

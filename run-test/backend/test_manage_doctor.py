@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from rocky_tools.doctor import RockyDoctor
@@ -47,10 +49,14 @@ def production_env():
         "ROCKY_GRANITE_TOKEN": "g" * 40,
         "ROCKY_RESPONSES_RATE_LIMIT_PER_MINUTE": "10",
         "ROCKY_MODELS_RATE_LIMIT_PER_MINUTE": "120",
+        "BODY_SIZE_LIMIT": "10M",
         "ROCKY_GRANITE_TIMEOUT_SECONDS": "315",
         "ROCKY_OLLAMA_TIMEOUT_SECONDS": "150",
         "ROCKY_GRANITE_QUEUE_WAIT_SECONDS": "120",
         "ROCKY_GRANITE_QUEUE_HEARTBEAT_SECONDS": "10",
+        "ROCKY_GRANITE_MAX_CONCURRENT": "1",
+        "ROCKY_GRANITE_QUEUE_CAPACITY": "12",
+        "ROCKY_GRANITE_QUEUE_MAX_BYTES": str(64 * 1024 * 1024),
         "PUBLIC_ENABLE_MICROSOFT_OAUTH": "true",
         "PUBLIC_MICROSOFT_CLIENT_ID": "client-id",
         "PUBLIC_MICROSOFT_TENANT_ID": "tenant-id",
@@ -102,6 +108,15 @@ def healthy_routes():
                     },
                     "configuration_matches": True,
                 },
+                "queue": {
+                    "active_requests": 0,
+                    "waiting_requests": 0,
+                    "queued_bytes": 0,
+                    "max_active_requests": 1,
+                    "max_waiting_requests": 12,
+                    "max_queued_bytes": 64 * 1024 * 1024,
+                },
+                "queue_configuration_matches": True,
             },
         ),
         "http://granite.example:5002/ready": FakeResponse(
@@ -115,12 +130,78 @@ def healthy_routes():
                     "queue_wait_seconds": 120,
                     "heartbeat_seconds": 10,
                 },
+                "queue": {
+                    "active_requests": 0,
+                    "waiting_requests": 0,
+                    "queued_bytes": 0,
+                    "max_active_requests": 1,
+                    "max_waiting_requests": 12,
+                    "max_queued_bytes": 64 * 1024 * 1024,
+                },
             },
         ),
     }
 
 
 class RockyDoctorTests(unittest.TestCase):
+    def test_installed_deployment_files_have_queue_and_timeout_headroom(self):
+        root = Path(__file__).resolve().parents[2]
+        deployment_files = {
+            "granite": root / "deploy/systemd/rocky-granite.service.example",
+            "chat": root / "deploy/systemd/rocky-chat-api.service.example",
+            "nginx": root / "deploy/nginx/rocky.cs.kent.edu.conf",
+        }
+        with patch.dict("os.environ", production_env(), clear=True):
+            checks = RockyDoctor(
+                include_network=False,
+                deployment_files=deployment_files,
+            ).run()
+
+        installed = [check for check in checks if check.name.startswith("installed ")]
+        self.assertEqual(len(installed), 3)
+        self.assertFalse(any(check.failed for check in installed))
+
+    def test_installed_deployment_files_reject_outdated_capacity(self):
+        root = Path(__file__).resolve().parents[2]
+        with TemporaryDirectory() as temporary_directory:
+            temporary = Path(temporary_directory)
+            granite = temporary / "rocky-granite.service"
+            chat = temporary / "rocky-chat-api.service"
+            nginx = temporary / "rocky.conf"
+            granite.write_text(
+                "ExecStart=/app/gunicorn --worker-class gthread --workers 1 "
+                "--threads 4 --timeout 165 app.main:app\n",
+                encoding="utf-8",
+            )
+            chat.write_text(
+                "ExecStart=/app/gunicorn --worker-class gthread --workers 2 "
+                "--threads 4 --timeout 330 api:app\n",
+                encoding="utf-8",
+            )
+            nginx.write_text(
+                "location = /v1/responses { proxy_read_timeout 190s; "
+                "proxy_send_timeout 190s; }\n"
+                "location / { proxy_read_timeout 190s; proxy_send_timeout 190s; }\n",
+                encoding="utf-8",
+            )
+            with patch.dict("os.environ", production_env(), clear=True):
+                checks = RockyDoctor(
+                    include_network=False,
+                    deployment_files={
+                        "granite": granite,
+                        "chat": chat,
+                        "nginx": nginx,
+                    },
+                ).run()
+
+        failures = {check.name: check.detail for check in checks if check.failed}
+        self.assertIn("installed Granite systemd unit", failures)
+        self.assertIn("installed chat API systemd unit", failures)
+        self.assertIn("installed Nginx config", failures)
+        self.assertIn("--threads must be at least 15", failures["installed Granite systemd unit"])
+        self.assertIn("workers times threads must be at least 15", failures["installed chat API systemd unit"])
+        self.assertIn("must exceed 330s", failures["installed Nginx config"])
+
     def test_image_input_rollout_body_budgets_are_accepted(self):
         values = production_env()
         values.update({
@@ -138,6 +219,44 @@ class RockyDoctorTests(unittest.TestCase):
             check for check in checks if check.name == "runtime settings"
         )
         self.assertEqual(runtime_check.status, "PASS")
+
+    def test_production_requires_the_bounded_frontend_body_limit(self):
+        values = production_env()
+        values.pop("BODY_SIZE_LIMIT")
+        with patch.dict("os.environ", values, clear=True):
+            checks = RockyDoctor(
+                include_network=False,
+                mongo_pinger=lambda _uri, _database: None,
+            ).run()
+
+        runtime_check = next(
+            check for check in checks if check.name == "runtime settings"
+        )
+        self.assertEqual(runtime_check.status, "FAIL")
+        self.assertIn("BODY_SIZE_LIMIT must be 10M in production", runtime_check.detail)
+
+    def test_image_input_rejects_an_undersized_frontend_body_limit(self):
+        values = production_env()
+        values.update({
+            "BODY_SIZE_LIMIT": "512K",
+            "ROCKY_ENABLE_IMAGE_INPUT": "true",
+            "ROCKY_MAX_REQUEST_BYTES": str(9 * 1024 * 1024),
+            "ROCKY_GRANITE_MAX_REQUEST_BYTES": str(10 * 1024 * 1024),
+        })
+        with patch.dict("os.environ", values, clear=True):
+            checks = RockyDoctor(
+                include_network=False,
+                mongo_pinger=lambda _uri, _database: None,
+            ).run()
+
+        runtime_check = next(
+            check for check in checks if check.name == "runtime settings"
+        )
+        self.assertEqual(runtime_check.status, "FAIL")
+        self.assertIn(
+            "BODY_SIZE_LIMIT is too small for the configured image-input budget",
+            runtime_check.detail,
+        )
 
     def test_image_input_budgets_must_fit_the_deployed_ingress_and_chat_proxy(self):
         values = production_env()
@@ -225,6 +344,30 @@ class RockyDoctorTests(unittest.TestCase):
         self.assertIn("Granite readiness", failures)
         self.assertIn("timeout", failures["chat API readiness"])
         self.assertIn("timeout", failures["Granite readiness"])
+
+    def test_readiness_rejects_queue_configuration_drift(self):
+        routes = healthy_routes()
+        routes["http://127.0.0.1:5003/ready"]._payload["queue"][
+            "max_active_requests"
+        ] = 8
+        routes["http://127.0.0.1:5003/ready"]._payload[
+            "queue_configuration_matches"
+        ] = False
+        routes["http://granite.example:5002/ready"]._payload["queue"][
+            "max_active_requests"
+        ] = 8
+
+        with patch.dict("os.environ", production_env(), clear=True):
+            checks = RockyDoctor(
+                session=FakeSession(routes),
+                mongo_pinger=lambda _uri, _database: None,
+            ).run()
+
+        failures = {check.name: check.detail for check in checks if check.failed}
+        self.assertIn("chat API readiness", failures)
+        self.assertIn("Granite readiness", failures)
+        self.assertIn("queue", failures["chat API readiness"])
+        self.assertIn("queue", failures["Granite readiness"])
 
     def test_readiness_rejects_a_frontend_and_service_streaming_mismatch(self):
         values = production_env()
@@ -479,6 +622,7 @@ class RockyDoctorTests(unittest.TestCase):
                 "ROCKY_GRANITE_QUEUE_CAPACITY": "-1",
                 "ROCKY_GRANITE_QUEUE_MAX_BYTES": "unbounded",
                 "ROCKY_GRANITE_QUEUE_HEARTBEAT_SECONDS": "0.09",
+                "BODY_SIZE_LIMIT": "unbounded",
                 "ROCKY_RESPONSES_RATE_LIMIT_PER_MINUTE": "0",
                 "ROCKY_MODELS_RATE_LIMIT_PER_MINUTE": "not-an-integer",
                 "ROCKY_MAX_IMAGES_PER_REQUEST": "17",
@@ -506,6 +650,10 @@ class RockyDoctorTests(unittest.TestCase):
         self.assertIn("ROCKY_GRANITE_MAX_CONCURRENT must be at least 1", runtime_check.detail)
         self.assertIn("ROCKY_GRANITE_QUEUE_CAPACITY must be at least 0", runtime_check.detail)
         self.assertIn("ROCKY_GRANITE_QUEUE_MAX_BYTES must be an integer", runtime_check.detail)
+        self.assertIn(
+            "BODY_SIZE_LIMIT must be a positive byte size such as 10M",
+            runtime_check.detail,
+        )
         self.assertIn(
             "ROCKY_GRANITE_QUEUE_HEARTBEAT_SECONDS must be at least 0.1",
             runtime_check.detail,

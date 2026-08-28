@@ -213,7 +213,29 @@ class DeploymentSmokeTests(unittest.TestCase):
             include_image=include_image,
             include_advertised=include_advertised,
             include_queue_burst=include_queue_burst,
+            telemetry_mongodb_uri="mongodb://telemetry.example/rocky_db",
+            telemetry_db_name="rocky_db",
         )
+
+    @staticmethod
+    def queue_evidence(request_ids, *, all_immediate=False):
+        records = []
+        for index, request_id in enumerate(request_ids):
+            immediate = all_immediate or index == 0
+            records.append({
+                "_id": request_id,
+                "state": "terminal",
+                "outcome": "completed",
+                "queue": {
+                    "status": "not_queued" if immediate else "admitted",
+                    "initial_position": 0 if immediate else index,
+                    "depth_on_arrival": max(0, index - 1),
+                    "wait_ms": 0 if immediate else index * 10,
+                    "capacity": 12,
+                    "queued_bytes_on_arrival": index * 100,
+                },
+            })
+        return records
 
     def test_non_generating_smoke_checks_public_health_and_models(self):
         session = FakeSession(successful_routes())
@@ -461,6 +483,7 @@ class DeploymentSmokeTests(unittest.TestCase):
             self.config(include_queue_burst=True),
             session=FakeSession(successful_routes()),
             burst_request=burst_request,
+            queue_evidence_loader=lambda _uri, _db, ids: self.queue_evidence(ids),
         ).run()
 
         self.assertTrue(all(check.passed for check in checks))
@@ -477,6 +500,40 @@ class DeploymentSmokeTests(unittest.TestCase):
         ))
         self.assertIn("Completed 6/6", checks[-2].detail)
         self.assertIn("req_burst_1", checks[-2].detail)
+        self.assertIn("Telemetry confirmed 5 queued", checks[-2].detail)
+
+    def test_queue_burst_fails_when_telemetry_shows_no_queueing(self):
+        def burst_request(_url, **kwargs):
+            prompt = kwargs["json"]["input"]
+            index = int(prompt.split("Queue burst check ", 1)[1].split(".", 1)[0])
+            return FakeResponse(
+                200,
+                {
+                    "status": "completed",
+                    "model": "course-model",
+                    "output_text": f"Rocky {index}",
+                    "usage": {},
+                },
+                {
+                    "x-request-id": f"req_burst_{index}",
+                    "x-ratelimit-limit-requests": "10",
+                    "x-ratelimit-remaining-requests": "4",
+                    "x-ratelimit-reset-requests": "42s",
+                },
+            )
+
+        checks = smoke.DeploymentSmoke(
+            self.config(include_queue_burst=True),
+            session=FakeSession(successful_routes()),
+            burst_request=burst_request,
+            queue_evidence_loader=lambda _uri, _db, ids: self.queue_evidence(
+                ids, all_immediate=True
+            ),
+        ).run()
+
+        self.assertFalse(checks[-2].passed)
+        self.assertIn("0 queued and 6 immediately admitted", checks[-2].detail)
+        self.assertTrue(checks[-1].passed)
 
     def test_queue_burst_reports_model_busy_without_hiding_other_results(self):
         def burst_request(_url, **kwargs):
@@ -515,6 +572,7 @@ class DeploymentSmokeTests(unittest.TestCase):
             self.config(include_queue_burst=True),
             session=FakeSession(successful_routes()),
             burst_request=burst_request,
+            queue_evidence_loader=lambda _uri, _db, ids: self.queue_evidence(ids),
         ).run()
 
         self.assertFalse(checks[-2].passed)
@@ -706,7 +764,12 @@ class DeploymentSmokeTests(unittest.TestCase):
         )
         with patch.dict(
             os.environ,
-            {"ROCKY_API_KEY": "sk_kent_secret", "ROCKY_EXPECTED_MODEL": "course-model"},
+            {
+                "ROCKY_API_KEY": "sk_kent_secret",
+                "ROCKY_EXPECTED_MODEL": "course-model",
+                "ROCKY_LIVE_MONGODB_URI": "mongodb://telemetry.example/rocky_db",
+                "ROCKY_LIVE_DB_NAME": "rocky_db",
+            },
             clear=False,
         ):
             config = smoke.build_config(args)
@@ -718,6 +781,7 @@ class DeploymentSmokeTests(unittest.TestCase):
         self.assertTrue(config.include_advertised)
         self.assertTrue(config.include_queue_burst)
         self.assertNotIn("sk_kent_secret", repr(config))
+        self.assertNotIn("mongodb://telemetry.example", repr(config))
 
     def test_configuration_rejects_missing_key_and_invalid_url(self):
         with patch.dict(os.environ, {"ROCKY_API_KEY": ""}, clear=False):
@@ -726,6 +790,22 @@ class DeploymentSmokeTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "absolute"):
             smoke.normalize_base_url("rocky.example")
+
+        with patch.dict(
+            os.environ,
+            {
+                "ROCKY_API_KEY": "sk_kent_test_value",
+                "ROCKY_LIVE_MONGODB_URI": "",
+                "ROCKY_LIVE_DB_NAME": "",
+            },
+            clear=False,
+        ):
+            with self.assertRaisesRegex(ValueError, "queue-burst evidence"):
+                smoke.build_config(smoke.parse_args([
+                    "--base-url",
+                    "https://rocky.example",
+                    "--include-queue-burst",
+                ]))
 
         for value in (
             "https://rocky.example?tenant=one",
