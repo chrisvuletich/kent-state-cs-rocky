@@ -204,6 +204,10 @@ class ApiRockyRouteContractTests(unittest.TestCase):
     def test_phase_zero_feature_flags_default_off_with_bounded_image_limits(self):
         self.assertFalse(self.api.ENABLE_STREAMING)
         self.assertFalse(self.api.ENABLE_IMAGE_INPUT)
+        self.assertEqual(self.api.DEFAULT_REASONING_EFFORT, "medium")
+        self.assertEqual(self.api.MAX_OUTPUT_TOKENS, 8192)
+        self.assertEqual(self.api.MAX_IMAGE_OUTPUT_TOKENS, 12288)
+        self.assertEqual(self.api.MAX_CONTEXT_TOKENS, 65536)
         self.assertEqual(self.api.MAX_IMAGES_PER_REQUEST, 4)
         self.assertEqual(self.api.MAX_IMAGE_BYTES, 4 * 1024 * 1024)
         self.assertEqual(self.api.MAX_IMAGE_TOTAL_BYTES, 6 * 1024 * 1024)
@@ -220,6 +224,8 @@ class ApiRockyRouteContractTests(unittest.TestCase):
             ("ROCKY_MAX_IMAGE_TOTAL_BYTES", "0"),
             ("ROCKY_MAX_IMAGE_PIXELS", "0"),
             ("ROCKY_MAX_IMAGE_TOTAL_PIXELS", "0"),
+            ("ROCKY_MAX_CONTEXT_TOKENS", "65537"),
+            ("ROCKY_DEFAULT_REASONING_EFFORT", "maximum"),
         )
         for name, value in invalid_values:
             with self.subTest(name=name):
@@ -242,6 +248,22 @@ class ApiRockyRouteContractTests(unittest.TestCase):
             load_api_with_test_initialization_seam({
                 "ROCKY_MAX_IMAGE_PIXELS": "200",
                 "ROCKY_MAX_IMAGE_TOTAL_PIXELS": "100",
+            })
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "ROCKY_MAX_IMAGE_OUTPUT_TOKENS",
+        ):
+            load_api_with_test_initialization_seam({
+                "ROCKY_MAX_OUTPUT_TOKENS": "8192",
+                "ROCKY_MAX_IMAGE_OUTPUT_TOKENS": "4096",
+            })
+
+        with self.assertRaisesRegex(RuntimeError, "ROCKY_MAX_CONTEXT_TOKENS"):
+            load_api_with_test_initialization_seam({
+                "ROCKY_MAX_OUTPUT_TOKENS": "8192",
+                "ROCKY_MAX_IMAGE_OUTPUT_TOKENS": "65537",
+                "ROCKY_MAX_CONTEXT_TOKENS": "65536",
             })
 
         with self.assertRaisesRegex(RuntimeError, "ROCKY_MAX_REQUEST_BYTES"):
@@ -360,6 +382,7 @@ class ApiRockyRouteContractTests(unittest.TestCase):
         self.assertEqual(payload["model"], self.api.INFERENCE_MODEL)
         self.assertEqual(payload["input"][0]["role"], "system")
         self.assertEqual(payload["input"][1]["role"], "user")
+        self.assertEqual(payload["max_output_tokens"], self.api.MAX_OUTPUT_TOKENS)
 
     def test_unknown_public_model_is_rejected_before_generation(self):
         with (
@@ -1131,8 +1154,11 @@ class ApiRockyRouteContractTests(unittest.TestCase):
         self.assertEqual(
             response.get_json()["data"][0]["metadata"],
             {
+                "default_reasoning_effort": self.api.DEFAULT_REASONING_EFFORT,
                 "max_context_characters": self.api.MAX_CONTEXT_CHARS,
+                "max_context_tokens": self.api.MAX_CONTEXT_TOKENS,
                 "max_image_bytes": self.api.MAX_IMAGE_BYTES,
+                "max_image_output_tokens": self.api.MAX_IMAGE_OUTPUT_TOKENS,
                 "max_image_pixels": self.api.MAX_IMAGE_PIXELS,
                 "max_image_total_bytes": self.api.MAX_IMAGE_TOTAL_BYTES,
                 "max_image_total_pixels": self.api.MAX_IMAGE_TOTAL_PIXELS,
@@ -1505,6 +1531,7 @@ class ApiRockyRouteContractTests(unittest.TestCase):
             "capabilities": {
                 "supports_streaming": False,
                 "supports_image_input": False,
+                "generation": self.api.generation_policy_capabilities(),
             },
             "timeouts": granite_timeout_payload(self.api),
             "queue": {
@@ -1553,6 +1580,11 @@ class ApiRockyRouteContractTests(unittest.TestCase):
             "granite_limits": None,
         })
         self.assertEqual(response.get_json()["capabilities"], self.api.model_capabilities())
+        self.assertEqual(response.get_json()["generation"], {
+            "configuration_matches": True,
+            "rocky": self.api.generation_policy_capabilities(),
+            "granite": self.api.generation_policy_capabilities(),
+        })
         self.assertEqual(response.get_json()["queue"], {
             "active_requests": 1,
             "waiting_requests": 2,
@@ -1702,6 +1734,36 @@ class ApiRockyRouteContractTests(unittest.TestCase):
         self.assertFalse(response.get_json()["queue_configuration_matches"])
         self.assertEqual(response.get_json()["queue"], mismatched_queue)
 
+    def test_readiness_rejects_generation_policy_mismatch(self):
+        database = Mock()
+        mismatched_policy = self.api.generation_policy_capabilities()
+        mismatched_policy["max_output_tokens"] -= 1
+        granite_response = Mock(status_code=200)
+        granite_response.json.return_value = {
+            "ok": True,
+            "model": self.api.INFERENCE_MODEL,
+            "capabilities": {
+                "supports_streaming": False,
+                "supports_image_input": False,
+                "generation": mismatched_policy,
+            },
+            "timeouts": granite_timeout_payload(self.api),
+            "queue": granite_queue_payload(self.api),
+        }
+        with (
+            patch.object(self.api, "api_keys_col", database),
+            patch.object(self.api.requests, "get", return_value=granite_response),
+        ):
+            response = self.client.get("/ready")
+
+        self.assertEqual(response.status_code, 503)
+        self.assertFalse(response.get_json()["dependencies"]["granite"])
+        self.assertEqual(response.get_json()["generation"], {
+            "configuration_matches": False,
+            "rocky": self.api.generation_policy_capabilities(),
+            "granite": mismatched_policy,
+        })
+
     def test_readiness_requires_exact_image_limit_parity(self):
         database = Mock()
         mismatched_limits = self.api.image_limit_capabilities()
@@ -1713,6 +1775,7 @@ class ApiRockyRouteContractTests(unittest.TestCase):
             "capabilities": {
                 "supports_streaming": False,
                 "supports_image_input": True,
+                "generation": self.api.generation_policy_capabilities(),
                 "image_limits": mismatched_limits,
             },
             "timeouts": granite_timeout_payload(self.api),
@@ -2035,6 +2098,10 @@ class ApiRockyRouteContractTests(unittest.TestCase):
         self.assertEqual(image["mime_type"], "image/png")
         self.assertEqual((image["width"], image["height"]), (1, 1))
         self.assertNotIn("image_url", image)
+        self.assertEqual(
+            model_request["max_output_tokens"],
+            self.api.MAX_IMAGE_OUTPUT_TOKENS,
+        )
         model_input_record = enrich.call_args_list[-1].args[1]["request"]
         self.assertEqual(len(model_input_record["image_inputs"]), 1)
         self.assertEqual(
@@ -2044,6 +2111,54 @@ class ApiRockyRouteContractTests(unittest.TestCase):
             "[OMITTED: stored image payload]",
         )
         self.assertIn("data:image/png;base64,", str(model_input_record["body"]))
+
+    def test_image_requests_accept_the_larger_output_token_limit(self):
+        request_body = json.loads(IMAGE_INPUT_FIXTURE.read_text(encoding="utf-8"))
+        request_body["model"] = self.api.PUBLIC_MODEL
+        request_body["max_output_tokens"] = self.api.MAX_IMAGE_OUTPUT_TOKENS
+        with (
+            patch.object(self.api, "ENABLE_IMAGE_INPUT", True),
+            patch.object(self.api, "get_key_doc", return_value={"owner_id": "user"}),
+            patch.object(
+                self.api,
+                "request_ai",
+                return_value={
+                    "output_text": "A single pixel.",
+                    "model": self.api.INFERENCE_MODEL,
+                    "metadata": {},
+                },
+            ) as request_ai,
+        ):
+            response = self.client.post(
+                "/v1/responses",
+                json=request_body,
+                headers={"Authorization": "Bearer valid-key"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            request_ai.call_args.args[0]["max_output_tokens"],
+            self.api.MAX_IMAGE_OUTPUT_TOKENS,
+        )
+
+    def test_text_requests_reject_the_image_only_output_token_range(self):
+        with (
+            patch.object(self.api, "get_key_doc", return_value={"owner_id": "user"}),
+            patch.object(self.api, "request_ai") as request_ai,
+        ):
+            response = self.client.post(
+                "/v1/responses",
+                json={
+                    "model": self.api.PUBLIC_MODEL,
+                    "input": "Hello",
+                    "max_output_tokens": self.api.MAX_OUTPUT_TOKENS + 1,
+                },
+                headers={"Authorization": "Bearer valid-key"},
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.get_json()["error"]["param"], "max_output_tokens")
+        request_ai.assert_not_called()
 
     def test_interleaved_image_content_preserves_public_block_order(self):
         request_body = json.loads(IMAGE_INPUT_FIXTURE.read_text(encoding="utf-8"))

@@ -630,6 +630,10 @@ class RockyDoctorTests(unittest.TestCase):
                 "ROCKY_MAX_IMAGE_TOTAL_BYTES": "100",
                 "ROCKY_MAX_IMAGE_PIXELS": "200",
                 "ROCKY_MAX_IMAGE_TOTAL_PIXELS": "100",
+                "ROCKY_DEFAULT_REASONING_EFFORT": "maximum",
+                "ROCKY_MAX_OUTPUT_TOKENS": "8192",
+                "ROCKY_MAX_IMAGE_OUTPUT_TOKENS": "4096",
+                "ROCKY_MAX_CONTEXT_TOKENS": "65537",
                 "ROCKY_MAX_REQUEST_BYTES": "1000",
                 "ROCKY_GRANITE_MAX_REQUEST_BYTES": "1000",
             }
@@ -676,6 +680,18 @@ class RockyDoctorTests(unittest.TestCase):
         )
         self.assertIn(
             "ROCKY_MAX_IMAGE_TOTAL_PIXELS must be at least ROCKY_MAX_IMAGE_PIXELS",
+            runtime_check.detail,
+        )
+        self.assertIn(
+            "ROCKY_DEFAULT_REASONING_EFFORT must be low, medium, high, or max",
+            runtime_check.detail,
+        )
+        self.assertIn(
+            "ROCKY_MAX_IMAGE_OUTPUT_TOKENS must be at least ROCKY_MAX_OUTPUT_TOKENS",
+            runtime_check.detail,
+        )
+        self.assertIn(
+            "ROCKY_MAX_CONTEXT_TOKENS must be between 1 and 65536",
             runtime_check.detail,
         )
         self.assertIn(

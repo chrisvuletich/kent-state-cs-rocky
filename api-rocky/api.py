@@ -157,7 +157,7 @@ def _require_production_secret(name, value):
 
 APP_ENV = _env_choice("ROCKY_APP_ENV", "development", VALID_APP_ENVS)
 MAX_REQUEST_BYTES = _env_int(
-    "ROCKY_MAX_REQUEST_BYTES", 256 * 1024, minimum=1
+    "ROCKY_MAX_REQUEST_BYTES", 512 * 1024, minimum=1
 )
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = MAX_REQUEST_BYTES
@@ -214,8 +214,29 @@ GRANITE_READY_URL = _env_http_url(
 )
 GRANITE_AUTH_TOKEN = os.getenv("ROCKY_GRANITE_TOKEN", "").strip()
 INTERNAL_PROXY_SECRET = os.getenv("ROCKY_INTERNAL_PROXY_SECRET", "").strip()
-MAX_OUTPUT_TOKENS = _env_int("ROCKY_MAX_OUTPUT_TOKENS", 2048, minimum=1)
-MAX_CONTEXT_CHARS = _env_int("ROCKY_MAX_CONTEXT_CHARS", 60000, minimum=1)
+MAX_OUTPUT_TOKENS = _env_int("ROCKY_MAX_OUTPUT_TOKENS", 8192, minimum=1)
+MAX_IMAGE_OUTPUT_TOKENS = _env_int(
+    "ROCKY_MAX_IMAGE_OUTPUT_TOKENS", 12288, minimum=1
+)
+MAX_CONTEXT_TOKENS = _env_int(
+    "ROCKY_MAX_CONTEXT_TOKENS", 65536, minimum=1, maximum=65536
+)
+MAX_CONTEXT_CHARS = _env_int("ROCKY_MAX_CONTEXT_CHARS", 262144, minimum=1)
+DEFAULT_REASONING_EFFORT = _env_choice(
+    "ROCKY_DEFAULT_REASONING_EFFORT",
+    "medium",
+    {"low", "medium", "high", "max"},
+)
+if MAX_IMAGE_OUTPUT_TOKENS < MAX_OUTPUT_TOKENS:
+    raise RuntimeError(
+        "ROCKY_MAX_IMAGE_OUTPUT_TOKENS must be at least "
+        "ROCKY_MAX_OUTPUT_TOKENS."
+    )
+if MAX_IMAGE_OUTPUT_TOKENS > MAX_CONTEXT_TOKENS:
+    raise RuntimeError(
+        "ROCKY_MAX_IMAGE_OUTPUT_TOKENS must not exceed "
+        "ROCKY_MAX_CONTEXT_TOKENS."
+    )
 ENABLE_STREAMING = _env_bool("ROCKY_ENABLE_STREAMING", False)
 ENABLE_IMAGE_INPUT = _env_bool("ROCKY_ENABLE_IMAGE_INPUT", False)
 MAX_IMAGES_PER_REQUEST = _env_int(
@@ -930,10 +951,20 @@ def api_error(message, *, error_type="invalid_request_error", param=None, code=N
     return {"error": error}
 
 
+def generation_policy_capabilities():
+    """Return generation limits that must match the Granite bridge."""
+    return {
+        "default_reasoning_effort": DEFAULT_REASONING_EFFORT,
+        "max_context_tokens": MAX_CONTEXT_TOKENS,
+        "max_output_tokens": MAX_OUTPUT_TOKENS,
+        "max_image_output_tokens": MAX_IMAGE_OUTPUT_TOKENS,
+    }
+
+
 def model_capabilities():
     """Return the configured public model features advertised by Rocky."""
     return {
-        "max_output_tokens": MAX_OUTPUT_TOKENS,
+        **generation_policy_capabilities(),
         "max_context_characters": MAX_CONTEXT_CHARS,
         "max_images_per_request": MAX_IMAGES_PER_REQUEST,
         "max_image_bytes": MAX_IMAGE_BYTES,
@@ -1197,6 +1228,8 @@ def ready():
     granite_model = None
     granite_supports_streaming = False
     granite_supports_image_input = False
+    granite_generation_policy = None
+    granite_generation_policy_matches = False
     granite_image_limits = None
     granite_image_limits_match = False
     granite_queue = None
@@ -1245,6 +1278,12 @@ def ready():
                 and granite_capabilities.get("supports_image_input") is True
             )
             if isinstance(granite_capabilities, dict):
+                candidate_generation = granite_capabilities.get("generation")
+                if isinstance(candidate_generation, dict):
+                    granite_generation_policy = candidate_generation
+                    granite_generation_policy_matches = (
+                        candidate_generation == generation_policy_capabilities()
+                    )
                 candidate_limits = granite_capabilities.get("image_limits")
                 if isinstance(candidate_limits, dict):
                     granite_image_limits = candidate_limits
@@ -1260,6 +1299,7 @@ def ready():
             and granite_model == INFERENCE_MODEL
             and granite_queue_configuration_matches_expected
             and granite_timeouts_match
+            and granite_generation_policy_matches
             and (not ENABLE_STREAMING or granite_supports_streaming)
             and (
                 not ENABLE_IMAGE_INPUT
@@ -1293,6 +1333,11 @@ def ready():
             "limits_match": granite_image_limits_match,
             "rocky_limits": image_limit_capabilities(),
             "granite_limits": granite_image_limits,
+        },
+        "generation": {
+            "configuration_matches": granite_generation_policy_matches,
+            "rocky": generation_policy_capabilities(),
+            "granite": granite_generation_policy,
         },
         "queue": granite_queue,
         "queue_configuration_matches": granite_queue_configuration_matches_expected,
@@ -2290,6 +2335,7 @@ def validate_public_request(request_body, validated_images=None):
             "invalid_type",
         )
 
+    images = []
     if ENABLE_IMAGE_INPUT:
         try:
             images = validate_image_inputs(input_value, IMAGE_INPUT_LIMITS)
@@ -2368,9 +2414,13 @@ def validate_public_request(request_body, validated_images=None):
                 "max_output_tokens",
                 "invalid_type",
             )
-        if not 1 <= value <= MAX_OUTPUT_TOKENS:
+        output_token_limit = (
+            MAX_IMAGE_OUTPUT_TOKENS if images else MAX_OUTPUT_TOKENS
+        )
+        if not 1 <= value <= output_token_limit:
             return invalid(
-                f"max_output_tokens must be between 1 and {MAX_OUTPUT_TOKENS}.",
+                "max_output_tokens must be between 1 and "
+                f"{output_token_limit}.",
                 "max_output_tokens",
             )
 
@@ -2706,6 +2756,19 @@ def without_image_blocks(messages):
             continue
         sanitized.append({**message, "content": retained_content})
     return sanitized
+
+
+def messages_contain_images(messages):
+    """Return whether normalized model input contains an image block."""
+    return any(
+        isinstance(block, dict) and block.get("type") == "input_image"
+        for message in messages if isinstance(message, dict)
+        for block in (
+            message.get("content")
+            if isinstance(message.get("content"), list)
+            else []
+        )
+    )
 
 
 def bounded_history_messages(history_messages, current_messages, instructions=None):
@@ -3186,13 +3249,20 @@ def build_granite_payload_with_context(
     payload = {
         "model": INFERENCE_MODEL,
         "input": input_messages,
+        "max_output_tokens": request_body.get(
+            "max_output_tokens",
+            (
+                MAX_IMAGE_OUTPUT_TOKENS
+                if messages_contain_images(input_messages)
+                else MAX_OUTPUT_TOKENS
+            ),
+        ),
     }
 
     for option in (
         "frequency_penalty",
-        "max_output_tokens",
         "presence_penalty",
-                "temperature",
+        "temperature",
         "top_p",
     ):
         if option in request_body:

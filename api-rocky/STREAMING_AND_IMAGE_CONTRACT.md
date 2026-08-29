@@ -259,6 +259,11 @@ not embed multi-megabyte data URLs.
 ```dotenv
 ROCKY_ENABLE_STREAMING=false
 ROCKY_ENABLE_IMAGE_INPUT=false
+ROCKY_DEFAULT_REASONING_EFFORT=medium
+ROCKY_MAX_OUTPUT_TOKENS=8192
+ROCKY_MAX_IMAGE_OUTPUT_TOKENS=12288
+ROCKY_MAX_CONTEXT_TOKENS=65536
+ROCKY_MAX_CONTEXT_CHARS=262144
 ROCKY_MAX_IMAGES_PER_REQUEST=4
 ROCKY_MAX_IMAGE_BYTES=4194304
 ROCKY_MAX_IMAGE_TOTAL_BYTES=6291456
@@ -273,7 +278,14 @@ rollback at either layer. Image limits must be positive, at most 16 images may b
 configured, and the total decoded-byte limit cannot be lower than the per-image
 limit. The total pixel limit cannot be lower than the per-image pixel limit.
 
-`ROCKY_MAX_REQUEST_BYTES` remains 262144 while image input is disabled. Set it
+Omitted generation settings use medium reasoning and the applicable output
+ceiling: 8192 tokens for text-only model input or 12288 when model input contains
+an image. Explicit smaller output limits remain valid. Ollama receives a
+`num_ctx` value capped at 65536 tokens. The separate character limit bounds
+public input and stored conversation history without pretending to be an exact
+model-token count.
+
+`ROCKY_MAX_REQUEST_BYTES` remains 524288 while image input is disabled. Set it
 to 9437184 with the example image budgets before enabling image input. Granite uses
 `ROCKY_GRANITE_MAX_REQUEST_BYTES=10485760`. Startup and `manage.py doctor`
 reject either limit when it cannot carry the configured decoded image budget.

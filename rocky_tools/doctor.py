@@ -509,6 +509,14 @@ class RockyDoctor:
             if value not in {"true", "false"}:
                 errors.append(f"{name} must be exactly true or false")
 
+        reasoning_effort = env(
+            "ROCKY_DEFAULT_REASONING_EFFORT", "medium"
+        ).lower()
+        if reasoning_effort not in {"low", "medium", "high", "max"}:
+            errors.append(
+                "ROCKY_DEFAULT_REASONING_EFFORT must be low, medium, high, or max"
+            )
+
         if self.app_env == "production":
             if env("ROCKY_DEBUG", "false").lower() != "false":
                 errors.append("ROCKY_DEBUG must be false in production")
@@ -534,9 +542,11 @@ class RockyDoctor:
             "ROCKY_CHAT_API_PORT": (5003, 1, 65535),
             "ROCKY_GRANITE_PORT": (5002, 1, 65535),
             "ROCKY_HARDWARE_PORT": (5010, 1, 65535),
-            "ROCKY_MAX_REQUEST_BYTES": (256 * 1024, 1, None),
-            "ROCKY_MAX_OUTPUT_TOKENS": (2048, 1, None),
-            "ROCKY_MAX_CONTEXT_CHARS": (60000, 1, None),
+            "ROCKY_MAX_REQUEST_BYTES": (512 * 1024, 1, None),
+            "ROCKY_MAX_OUTPUT_TOKENS": (8192, 1, None),
+            "ROCKY_MAX_IMAGE_OUTPUT_TOKENS": (12288, 1, None),
+            "ROCKY_MAX_CONTEXT_TOKENS": (65536, 1, 65536),
+            "ROCKY_MAX_CONTEXT_CHARS": (262144, 1, None),
             "ROCKY_MAX_IMAGES_PER_REQUEST": (4, 1, 16),
             "ROCKY_MAX_IMAGE_BYTES": (4 * 1024 * 1024, 1, None),
             "ROCKY_MAX_IMAGE_TOTAL_BYTES": (6 * 1024 * 1024, 1, None),
@@ -553,6 +563,7 @@ class RockyDoctor:
             "ROCKY_HARDWARE_METRICS_TIMEOUT_SECONDS": (5, 1, None),
             "ROCKY_HARDWARE_RETENTION_DAYS": (90, 1, None),
         }
+        parsed_integers: dict[str, int] = {}
         for name, (default, minimum, maximum) in integer_settings.items():
             raw_value = env(name, str(default))
             try:
@@ -567,6 +578,29 @@ class RockyDoctor:
                     else f"at least {minimum}"
                 )
                 errors.append(f"{name} must be {range_text}")
+            else:
+                parsed_integers[name] = value
+
+        if (
+            "ROCKY_MAX_OUTPUT_TOKENS" in parsed_integers
+            and "ROCKY_MAX_IMAGE_OUTPUT_TOKENS" in parsed_integers
+            and parsed_integers["ROCKY_MAX_IMAGE_OUTPUT_TOKENS"]
+            < parsed_integers["ROCKY_MAX_OUTPUT_TOKENS"]
+        ):
+            errors.append(
+                "ROCKY_MAX_IMAGE_OUTPUT_TOKENS must be at least "
+                "ROCKY_MAX_OUTPUT_TOKENS"
+            )
+        if (
+            "ROCKY_MAX_IMAGE_OUTPUT_TOKENS" in parsed_integers
+            and "ROCKY_MAX_CONTEXT_TOKENS" in parsed_integers
+            and parsed_integers["ROCKY_MAX_IMAGE_OUTPUT_TOKENS"]
+            > parsed_integers["ROCKY_MAX_CONTEXT_TOKENS"]
+        ):
+            errors.append(
+                "ROCKY_MAX_IMAGE_OUTPUT_TOKENS must not exceed "
+                "ROCKY_MAX_CONTEXT_TOKENS"
+            )
 
         try:
             max_image_bytes = int(env("ROCKY_MAX_IMAGE_BYTES", str(4 * 1024 * 1024)))
@@ -596,10 +630,10 @@ class RockyDoctor:
                         env("ROCKY_MAX_IMAGES_PER_REQUEST", "4")
                     )
                     max_request_bytes = int(
-                        env("ROCKY_MAX_REQUEST_BYTES", str(256 * 1024))
+                        env("ROCKY_MAX_REQUEST_BYTES", str(512 * 1024))
                     )
                     max_context_chars = int(
-                        env("ROCKY_MAX_CONTEXT_CHARS", "60000")
+                        env("ROCKY_MAX_CONTEXT_CHARS", "262144")
                     )
                     granite_max_request_bytes = int(env(
                         "ROCKY_GRANITE_MAX_REQUEST_BYTES",

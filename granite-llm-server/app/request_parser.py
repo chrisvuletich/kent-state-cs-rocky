@@ -1,12 +1,18 @@
 import os
 import math
 
-from app.config import env_int
+from app.config import env_choice, env_int
 from app.image_input import validate_internal_image_block
 
 # Default model for when no model is provided by the request/env
 DEFAULT_MODEL_NAME = "gemma4:latest"
-MAX_OUTPUT_TOKENS = env_int("ROCKY_MAX_OUTPUT_TOKENS", 2048, minimum=1)
+MAX_OUTPUT_TOKENS = env_int("ROCKY_MAX_OUTPUT_TOKENS", 8192, minimum=1)
+MAX_IMAGE_OUTPUT_TOKENS = env_int(
+    "ROCKY_MAX_IMAGE_OUTPUT_TOKENS", 12288, minimum=1
+)
+MAX_CONTEXT_TOKENS = env_int(
+    "ROCKY_MAX_CONTEXT_TOKENS", 65536, minimum=1, maximum=65536
+)
 MAX_IMAGES_PER_REQUEST = env_int(
     "ROCKY_MAX_IMAGES_PER_REQUEST", 4, minimum=1, maximum=16
 )
@@ -37,6 +43,21 @@ ALLOWED_REASONING_EFFORTS = {
     "high",
     "max",
 }
+DEFAULT_REASONING_EFFORT = env_choice(
+    "ROCKY_DEFAULT_REASONING_EFFORT",
+    "medium",
+    ALLOWED_REASONING_EFFORTS,
+)
+if MAX_IMAGE_OUTPUT_TOKENS < MAX_OUTPUT_TOKENS:
+    raise RuntimeError(
+        "ROCKY_MAX_IMAGE_OUTPUT_TOKENS must be at least "
+        "ROCKY_MAX_OUTPUT_TOKENS."
+    )
+if MAX_IMAGE_OUTPUT_TOKENS > MAX_CONTEXT_TOKENS:
+    raise RuntimeError(
+        "ROCKY_MAX_IMAGE_OUTPUT_TOKENS must not exceed "
+        "ROCKY_MAX_CONTEXT_TOKENS."
+    )
 
 # Reads the configured Ollama model from the environment so local dev and Granite can use different models without changing cod
 def get_default_model():
@@ -159,16 +180,19 @@ def extract_messages(payload, *, allow_images=False):
     return messages
 
 # Extracts model generation settings from the Rocky request and maps them to Ollama-compatible option names.
-def extract_generation_options(payload):
+def extract_generation_options(payload, *, max_output_tokens=MAX_OUTPUT_TOKENS):
     options = {}
 
     if "max_output_tokens" in payload:
         mot_value = payload["max_output_tokens"]
         if type(mot_value) is int:
-            if 1 <= mot_value <= MAX_OUTPUT_TOKENS:
+            if 1 <= mot_value <= max_output_tokens:
                 options["num_predict"] = mot_value
             else:
-                raise ValueError(f"max_output_tokens is not within the approved range of 1-{MAX_OUTPUT_TOKENS}.")
+                raise ValueError(
+                    "max_output_tokens is not within the approved range of "
+                    f"1-{max_output_tokens}."
+                )
         else: 
             raise ValueError("max_output_tokens must be of type int.")
         

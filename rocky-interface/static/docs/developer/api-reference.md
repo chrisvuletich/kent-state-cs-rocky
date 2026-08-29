@@ -31,8 +31,11 @@ object describing the currently configured capabilities:
       "created": 0,
       "owned_by": "kent-state",
       "metadata": {
-        "max_output_tokens": 2048,
-        "max_context_characters": 60000,
+        "default_reasoning_effort": "medium",
+        "max_output_tokens": 8192,
+        "max_image_output_tokens": 12288,
+        "max_context_tokens": 65536,
+        "max_context_characters": 262144,
         "supports_streaming": true,
         "supports_image_input": true,
         "max_images_per_request": 4,
@@ -67,7 +70,7 @@ object does not change the required model-list fields.
 | `instructions` | string | No | System-level instructions applied before the input. | None |
 | `temperature` | number | No | Sampling temperature from 0 through 2. | Model default |
 | `top_p` | number | No | Nucleus sampling value from 0 through 1. | Model default |
-| `max_output_tokens` | integer | No | Maximum generated tokens from 1 through the selected model's advertised `metadata.max_output_tokens`. | Model default |
+| `max_output_tokens` | integer | No | Maximum generated tokens. The text ceiling is `metadata.max_output_tokens`; requests containing an image may use `metadata.max_image_output_tokens`. | Applicable advertised ceiling |
 | `frequency_penalty` | number | No | Frequency penalty from -2 through 2; its effect depends on the deployed model and Ollama runtime. | Model default |
 | `presence_penalty` | number | No | Presence penalty from -2 through 2; its effect depends on the deployed model and Ollama runtime. | Model default |
 | `metadata` | object | No | Application metadata returned with the response. | `{}` |
@@ -80,6 +83,12 @@ but some Ollama models may ignore one or both. Clients should not depend on a
 specific penalty behavior unless it has been verified with the model currently
 returned by `GET /v1/models`. The model metadata identifies these fields under
 `model_dependent_parameters`.
+
+When the built-in chat does not specify a reasoning level, Rocky uses the
+advertised `default_reasoning_effort` (`medium` by default). The Ollama context
+window is capped by `max_context_tokens`. `max_context_characters` is a separate
+application-level request and conversation-history guard, not a tokenizer
+count.
 
 The simplest request uses a string:
 

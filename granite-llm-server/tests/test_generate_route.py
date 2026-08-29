@@ -620,8 +620,11 @@ class TestGenerateRoute(unittest.TestCase):
                 "content": "Describe it.",
                 "images": [TINY_PNG_BASE64],
             }],
-            {},
-            None,
+            {
+                "num_predict": granite_main.MAX_IMAGE_OUTPUT_TOKENS,
+                "num_ctx": granite_main.MAX_CONTEXT_TOKENS,
+            },
+            granite_main.DEFAULT_REASONING_EFFORT,
         )
 
     def test_image_input_reaches_ollama_for_streaming_generation(self):
@@ -715,12 +718,16 @@ class TestGenerateRoute(unittest.TestCase):
             "source": "ollama",
             "reasoning_requested": False,
             "reasoning_applied": False,
+            "reasoning_effort": granite_main.DEFAULT_REASONING_EFFORT,
         })
         call_stream.assert_called_once_with(
             "gemma4:latest",
             [{"role": "user", "content": "Hello"}],
-            {"num_predict": 40},
-            None,
+            {
+                "num_predict": 40,
+                "num_ctx": granite_main.MAX_CONTEXT_TOKENS,
+            },
+            granite_main.DEFAULT_REASONING_EFFORT,
         )
         queue.request_slot.assert_called_once()
         ticket.wait.assert_called_once_with(poll_seconds=0)
@@ -1179,6 +1186,12 @@ class TestGenerateRoute(unittest.TestCase):
         self.assertEqual(response.get_json()["capabilities"], {
             "supports_streaming": True,
             "supports_image_input": True,
+            "generation": {
+                "default_reasoning_effort": granite_main.DEFAULT_REASONING_EFFORT,
+                "max_output_tokens": granite_main.MAX_OUTPUT_TOKENS,
+                "max_image_output_tokens": granite_main.MAX_IMAGE_OUTPUT_TOKENS,
+                "max_context_tokens": granite_main.MAX_CONTEXT_TOKENS,
+            },
             "image_limits": {
                 "max_images": granite_main.MAX_IMAGES_PER_REQUEST,
                 "max_image_bytes": granite_main.MAX_IMAGE_BYTES,
@@ -1308,6 +1321,7 @@ class TestGenerateRoute(unittest.TestCase):
             "stream": False,
             "options": {
                 "num_predict": 500,
+                "num_ctx": granite_main.MAX_CONTEXT_TOKENS,
                 "temperature": 0.7,
                 "top_p": 0.9,
                 "frequency_penalty": 0.5,
@@ -1409,7 +1423,7 @@ class TestGenerateRoute(unittest.TestCase):
         )
 
     @patch("app.ollama_client.requests.post")
-    def test_generate_omits_options_and_think_when_not_provided(
+    def test_generate_applies_safe_defaults_when_options_are_not_provided(
         self,
         mock_post
     ):
@@ -1443,7 +1457,12 @@ class TestGenerateRoute(unittest.TestCase):
                     "content": "Hello"
                 }
             ],
-            "stream": False
+            "stream": False,
+            "options": {
+                "num_predict": granite_main.MAX_OUTPUT_TOKENS,
+                "num_ctx": granite_main.MAX_CONTEXT_TOKENS,
+            },
+            "think": granite_main.DEFAULT_REASONING_EFFORT,
         }
 
         response = self.client.post(
@@ -1461,6 +1480,10 @@ class TestGenerateRoute(unittest.TestCase):
         self.assertFalse(
             response_data["metadata"]["reasoning_applied"]
         )
+        self.assertEqual(
+            response_data["metadata"]["reasoning_effort"],
+            granite_main.DEFAULT_REASONING_EFFORT,
+        )
 
         mock_post.assert_called_once()
 
@@ -1471,8 +1494,6 @@ class TestGenerateRoute(unittest.TestCase):
             actual_ollama_payload,
             expected_ollama_payload
         )
-        self.assertNotIn("options", actual_ollama_payload)
-        self.assertNotIn("think", actual_ollama_payload)
 
     @patch("app.ollama_client.requests.post")
     def test_generate_returns_400_and_does_not_call_ollama_when_option_validation_fails(

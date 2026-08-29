@@ -42,11 +42,15 @@ from app.inference_queue import (
 )
 from app.runtime_state import begin_inference, end_inference
 from app.request_parser import (
+    DEFAULT_REASONING_EFFORT,
+    MAX_CONTEXT_TOKENS,
     MAX_IMAGE_BYTES,
+    MAX_IMAGE_OUTPUT_TOKENS,
     MAX_IMAGE_PIXELS,
     MAX_IMAGE_TOTAL_BYTES,
     MAX_IMAGE_TOTAL_PIXELS,
     MAX_IMAGES_PER_REQUEST,
+    MAX_OUTPUT_TOKENS,
     extract_generation_options,
     extract_messages,
     extract_model,
@@ -139,10 +143,14 @@ def generation_metadata(reasoning, thinking_present):
     metadata = {
         "source": "ollama",
         "reasoning_requested": reasoning is not None,
-        "reasoning_applied": reasoning is not None and thinking_present,
+        "reasoning_applied": thinking_present,
+        "reasoning_effort": (
+            reasoning["effort"]
+            if reasoning is not None
+            else DEFAULT_REASONING_EFFORT
+        ),
     }
     if reasoning is not None:
-        metadata["reasoning_effort"] = reasoning["effort"]
         metadata["reasoning_summary_requested"] = reasoning["summary"]
     return metadata
 
@@ -522,6 +530,12 @@ def ready():
         "capabilities": {
             "supports_streaming": ENABLE_STREAMING,
             "supports_image_input": ENABLE_IMAGE_INPUT,
+            "generation": {
+                "default_reasoning_effort": DEFAULT_REASONING_EFFORT,
+                "max_output_tokens": MAX_OUTPUT_TOKENS,
+                "max_image_output_tokens": MAX_IMAGE_OUTPUT_TOKENS,
+                "max_context_tokens": MAX_CONTEXT_TOKENS,
+            },
             "image_limits": {
                 "max_images": MAX_IMAGES_PER_REQUEST,
                 "max_image_bytes": MAX_IMAGE_BYTES,
@@ -569,7 +583,16 @@ def generate():
     try:
         model = extract_model(payload)
         messages = extract_messages(payload, allow_images=ENABLE_IMAGE_INPUT)
-        options = extract_generation_options(payload)
+        has_images = any(message.get("images") for message in messages)
+        output_token_limit = (
+            MAX_IMAGE_OUTPUT_TOKENS if has_images else MAX_OUTPUT_TOKENS
+        )
+        options = extract_generation_options(
+            payload,
+            max_output_tokens=output_token_limit,
+        )
+        options.setdefault("num_predict", output_token_limit)
+        options["num_ctx"] = MAX_CONTEXT_TOKENS
         reasoning = extract_reasoning(payload)
         stream = extract_stream(payload)
     except ValueError as error:
@@ -588,7 +611,11 @@ def generate():
             }
         }), 400
 
-    think = reasoning["effort"] if reasoning is not None else None
+    think = (
+        reasoning["effort"]
+        if reasoning is not None
+        else DEFAULT_REASONING_EFFORT
+    )
 
     ticket = INFERENCE_QUEUE.request_slot(len(raw_request_body))
     admission_status = ticket.wait(poll_seconds=0) if stream else ticket.wait()

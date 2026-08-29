@@ -1,5 +1,6 @@
 import unittest
 from app.request_parser import (
+    MAX_IMAGE_OUTPUT_TOKENS,
     MAX_OUTPUT_TOKENS,
     extract_generation_options,
     extract_reasoning,
@@ -72,6 +73,14 @@ class TestGenerationOptions(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "max_output_tokens"):
             extract_generation_options(payload)
+
+    def test_accepts_the_larger_image_output_token_limit_when_selected(self):
+        result = extract_generation_options(
+            {"max_output_tokens": MAX_IMAGE_OUTPUT_TOKENS},
+            max_output_tokens=MAX_IMAGE_OUTPUT_TOKENS,
+        )
+
+        self.assertEqual(result, {"num_predict": MAX_IMAGE_OUTPUT_TOKENS})
 
     def test_returns_max_output_tokens_at_minimum(self):
         payload = {
