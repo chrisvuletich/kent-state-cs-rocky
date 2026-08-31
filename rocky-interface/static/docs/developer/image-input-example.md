@@ -31,11 +31,22 @@ if media_type is None:
 encoded = base64.b64encode(image_path.read_bytes()).decode("ascii")
 image_url = f"data:{media_type};base64,{encoded}"
 
+headers = {"Authorization": f"Bearer {os.environ['ROCKY_API_KEY']}"}
+models_response = requests.get(
+    "https://rocky.cs.kent.edu/v1/models",
+    headers=headers,
+    timeout=30,
+)
+models_response.raise_for_status()
+model = models_response.json()["data"][0]
+if model.get("metadata", {}).get("supports_image_input") is not True:
+    raise RuntimeError("The active Rocky model does not support image input.")
+
 response = requests.post(
     "https://rocky.cs.kent.edu/v1/responses",
-    headers={"Authorization": f"Bearer {os.environ['ROCKY_API_KEY']}"},
+    headers=headers,
     json={
-        "model": os.environ["ROCKY_MODEL"],
+        "model": model["id"],
         "input": [
             {
                 "role": "user",
@@ -76,14 +87,28 @@ if (!mediaType) throw new Error("Use a JPEG, PNG, or static WebP image");
 
 const encoded = (await readFile(imagePath)).toString("base64");
 const imageUrl = `data:${mediaType};base64,${encoded}`;
+const apiKey = process.env.ROCKY_API_KEY;
+if (!apiKey) throw new Error("Set ROCKY_API_KEY before running this script.");
+
+const modelsResponse = await fetch("https://rocky.cs.kent.edu/v1/models", {
+	headers: { "Authorization": `Bearer ${apiKey}` }
+});
+if (!modelsResponse.ok) throw new Error(await modelsResponse.text());
+
+const model = (await modelsResponse.json()).data?.[0];
+if (!model) throw new Error("Rocky did not return an available model.");
+if (model.metadata?.supports_image_input !== true) {
+	throw new Error("The active Rocky model does not support image input.");
+}
+
 const response = await fetch("https://rocky.cs.kent.edu/v1/responses", {
 	method: "POST",
 	headers: {
-		"Authorization": `Bearer ${process.env.ROCKY_API_KEY}`,
+		"Authorization": `Bearer ${apiKey}`,
 		"Content-Type": "application/json"
 	},
 	body: JSON.stringify({
-		model: process.env.ROCKY_MODEL,
+		model: model.id,
 		input: [{
 			role: "user",
 			content: [

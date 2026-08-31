@@ -111,6 +111,48 @@ class StudentApiDocumentationTests(unittest.TestCase):
         self.assertIn("ingress-level `413` or `429`", reference)
         self.assertIn("ingress-level `413` or `429`", errors)
 
+    def test_examples_discover_models_and_never_use_service_name_as_model(self):
+        discovery_examples = (
+            "python-example.md",
+            "javascript-example.md",
+            "curl-example.md",
+            "streaming-example.md",
+            "image-input-example.md",
+            "email-scam-detector.md",
+            "errors.md",
+        )
+
+        for filename in discovery_examples:
+            with self.subTest(filename=filename):
+                document = self.read_doc(filename)
+                self.assertTrue(
+                    "/v1/models" in document or "client.models.list()" in document,
+                    f"{filename} must discover the active model",
+                )
+
+        for path in sorted(DEVELOPER_DOCS.glob("*.md")):
+            fenced_code = "\n".join(re.findall(
+                r"```[^\n]*\n(.*?)```",
+                path.read_text(encoding="utf-8"),
+                flags=re.DOTALL,
+            ))
+            with self.subTest(filename=path.name):
+                self.assertNotRegex(
+                    fenced_code.lower(),
+                    r"[\"']model[\"']\s*[:=]\s*[\"'](?:rocky|gemma)",
+                )
+                self.assertNotRegex(
+                    fenced_code.lower(),
+                    r"rocky_model\s*=\s*[\"'](?:rocky|gemma)",
+                )
+
+    def test_request_examples_allow_for_queue_and_generation_time(self):
+        errors = self.read_doc("errors.md")
+
+        self.assertIn("timeout=390", errors)
+        self.assertNotIn("timeout=60", errors)
+        self.assertIn("ingress_rate_limit_exceeded", errors)
+
     def test_python_examples_are_syntactically_valid(self):
         for path in sorted(DEVELOPER_DOCS.glob("*.md")):
             examples = re.findall(

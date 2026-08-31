@@ -21,7 +21,12 @@ Recent Audit Logs shows a preview with time, user, action, and course. Select **
 
 ## 3. Understand system status
 
-The dashboard checks Backend API, Granite Bridge, Chat API, and Ollama / Model live when the page opens. A service is shown as Healthy only when its latest probe succeeds; otherwise it is shown as Unavailable or Unknown. Use **Try again** to repeat a failed health check, and investigate persistent failures through the relevant service logs.
+The dashboard checks Backend API, Granite Bridge, Chat API, and Ollama / Model
+when the page opens. A service is shown as Healthy only when its latest probe
+succeeds; otherwise it is shown as Unavailable or Unknown. **Try again** appears
+when the status report itself cannot be loaded. Reload the dashboard to rerun
+individual service probes, and investigate persistent failures through the
+relevant service logs.
 
 ## 4. Compare active courses
 

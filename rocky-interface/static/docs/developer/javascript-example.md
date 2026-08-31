@@ -16,15 +16,25 @@ Keep your API key private. Anyone with access to your key can make requests on y
 
 ## Example Request
 
-The example below sends a simple chat request from Node.js using the built-in `fetch()` function. A browser application must send requests through its own server so the API key is never shipped to or exposed in browser code.
+The example below discovers the active model and sends a request from Node.js
+using the built-in `fetch()` function. A browser application must send requests
+through its own server so the API key is never shipped to or exposed in browser
+code.
 
 ```javascript
 const apiKey = process.env.ROCKY_API_KEY;
-const model = process.env.ROCKY_MODEL;
 
-if (!apiKey || !model) {
-	throw new Error("Set ROCKY_API_KEY and ROCKY_MODEL before running this script.");
+if (!apiKey) {
+	throw new Error("Set ROCKY_API_KEY before running this script.");
 }
+
+const modelsResponse = await fetch("https://rocky.cs.kent.edu/v1/models", {
+	headers: { "Authorization": `Bearer ${apiKey}` }
+});
+if (!modelsResponse.ok) throw new Error(await modelsResponse.text());
+
+const model = (await modelsResponse.json()).data?.[0]?.id;
+if (!model) throw new Error("Rocky did not return an available model.");
 
 const response = await fetch(
     "https://rocky.cs.kent.edu/v1/responses",
@@ -51,7 +61,8 @@ const data = await response.json();
 console.log(data.output_text);
 ```
 
-Run `GET /v1/models` and set `ROCKY_MODEL` to the identifier it returns.
+The model-list request prevents the example from depending on a model name that
+may change between semesters.
 
 ## Example Response
 

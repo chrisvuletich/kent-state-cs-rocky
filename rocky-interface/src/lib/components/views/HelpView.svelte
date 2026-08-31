@@ -253,9 +253,11 @@
 				<article class="release-note-card">
 					<h3>Current release</h3>
 					<ul>
-						<li>Responses and model-list endpoints for student projects.</li>
+						<li>Responses and runtime model-discovery endpoints for student projects.</li>
 						<li>Incremental streaming for the API and built-in chat.</li>
 						<li>Bounded JPEG, PNG, and WebP input for supported vision models.</li>
+						<li>Admission queuing for short bursts of simultaneous class traffic.</li>
+						<li>Medium default reasoning with expanded text, image, and context limits.</li>
 						<li>Course-scoped API key creation and management.</li>
 						<li>Built-in chat, administrative analytics, and audit history.</li>
 					</ul>

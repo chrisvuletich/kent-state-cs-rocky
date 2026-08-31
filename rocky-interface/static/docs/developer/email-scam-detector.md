@@ -31,15 +31,25 @@ pip install requests
 
 ## Python Example
 
-Set `ROCKY_API_KEY` and `ROCKY_MODEL` in your environment before running the
-example. Do not share or commit your key.
+Set `ROCKY_API_KEY` in your environment before running the example. The script
+discovers the active model, so it does not need a hard-coded model name. Do not
+share or commit your key.
 
 ```python
 import os
 import requests
 
 API_KEY = os.environ["ROCKY_API_KEY"]
-MODEL = os.environ["ROCKY_MODEL"]
+HEADERS = {"Authorization": f"Bearer {API_KEY}"}
+
+models_response = requests.get(
+    "https://rocky.cs.kent.edu/v1/models",
+    headers=HEADERS,
+    timeout=30,
+)
+models_response.raise_for_status()
+MODEL = models_response.json()["data"][0]["id"]
+
 EMAIL_TEXT = """Subject: Your Account Has Been Suspended
 
 Dear Customer,
@@ -57,7 +67,7 @@ whether it is likely phishing:\n\n{EMAIL_TEXT}"""
 
 response = requests.post(
     "https://rocky.cs.kent.edu/v1/responses",
-    headers={"Authorization": f"Bearer {API_KEY}"},
+    headers=HEADERS,
     json={"model": MODEL, "input": prompt, "store": False},
     timeout=390,
 )
@@ -78,5 +88,5 @@ the request through the organization’s official website instead of using the l
 
 1. The email text is sent to the API.
 2. The LLM analyzes the content for phishing signals.
-3. The model returns its reasoning.
+3. The model returns a classification and explanation.
 4. The application prints the response.

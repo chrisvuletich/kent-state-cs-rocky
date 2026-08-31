@@ -37,7 +37,10 @@ _Row color supports the visible status badge rather than replacing it._
 
 ## 5. Change key status
 
-Use **Deactivate** or **Reactivate** for one key and confirm the prompt. Prefer deactivation over permanent deletion when historical records may still refer to the key.
+Use **Deactivate** or **Reactivate** for one key and confirm the prompt. The
+administrative page intentionally does not expose a permanent-delete action.
+Deactivation immediately prevents use while preserving the key's audit and
+course history.
 
 ## 6. Use bulk actions
 

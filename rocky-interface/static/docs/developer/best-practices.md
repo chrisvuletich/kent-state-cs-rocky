@@ -50,6 +50,11 @@ streaming or image input. These features can be disabled during rollout or when
 the installed course model does not support them. Read image count, byte, and
 pixel limits from the same metadata instead of copying example values.
 
+Discover the model once when your application starts and reuse its identifier
+and metadata for later requests. Do not call `/v1/models` inside a tight
+generation loop. Refresh the model information when the application restarts or
+after a `model_not_found` response.
+
 ## Protect Sensitive Information
 
 Only request the information your application needs, and avoid storing sensitive data unless absolutely necessary.

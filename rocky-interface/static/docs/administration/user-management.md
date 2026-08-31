@@ -7,7 +7,11 @@ User Management helps administrators find accounts, review identity and status, 
 
 ## 1. Choose an account source
 
-Use **Kent accounts** to work with accounts using Kent email addresses. Use **Whitelist accounts** to review the separate approved-account list and add a whitelist entry when needed. Choose the new account's Student, Instructor, or Admin role when adding it; that role is applied on the account's first Microsoft login.
+Use **Kent accounts** to work with accounts using Kent email addresses. Use
+**Whitelist accounts** to review and approve non-`@kent.edu` Microsoft accounts;
+Kent addresses cannot be added to this separate list. Choose the new account's
+Student, Instructor, or Admin role when adding it; that role is applied on the
+account's first Microsoft login.
 
 ![Kent accounts and Whitelist accounts tabs on the User Management page](/UM-1.Acc-Source.png)
 
@@ -35,7 +39,13 @@ _Confirm the correct account before changing permissions._
 
 ## 5. Activate, deactivate, and use bulk actions
 
-**Active** accounts can use Rocky; **Inactive** accounts cannot. Deactivation also suspends API keys owned by that account. Use the row action to deactivate or reactivate one account. For several accounts, select rows, use the bulk toolbar, and confirm the change. Rocky reports updated accounts and any selected accounts that could not be found.
+**Active** accounts can use Rocky; **Inactive** accounts cannot. Deactivation
+also suspends API keys owned by that account. Reactivating the account does not
+automatically reactivate those keys; review them separately on the API Keys
+page. Administrators cannot deactivate or demote their own account. Use the row
+action to deactivate or reactivate one account. For several accounts, select
+rows, use the bulk toolbar, and confirm the change. Rocky reports updated
+accounts and any selected accounts that could not be found.
 
 ![Selected user accounts and bulk activation controls on the User Management page](/UM-5.Bulk-Activate.png)
 

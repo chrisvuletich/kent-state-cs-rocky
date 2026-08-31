@@ -40,7 +40,7 @@ request ID.
 | `429` | `rate_limit_exceeded`, `ingress_rate_limit_exceeded` | The API key exhausted its minute limit, or unusually heavy traffic arrived from the same network address. | Wait at least the number of seconds in `Retry-After`, then retry with a small random delay. |
 | `500` | `internal_error` | An unexpected Rocky error occurred. | Record the request ID and retry once after a short delay. Report repeated failures. |
 | `502` | `model_service_unavailable`, `invalid_model_response`, `model_error` | Granite or Ollama could not be reached or returned an unusable response. | Retry once after a short delay. Report repeated failures with the request ID. |
-| `503` | `model_busy`, `request_logging_unavailable`, `rate_limit_unavailable`, `rate_limit_identity_unavailable` | The model is busy or a required internal service is unavailable. | For `model_busy`, honor the `Retry-After` header. Otherwise wait for the service to recover. |
+| `503` | `model_busy`, `request_logging_unavailable`, `rate_limit_unavailable`, `rate_limit_identity_unavailable` | The finite model queue was full or its wait expired, or a required internal service is unavailable. | For `model_busy`, honor the `Retry-After` header. Otherwise wait for the service to recover. |
 | `504` | `model_timeout` | Model generation exceeded the configured time limit. | Retry once, preferably with shorter input or a smaller `max_output_tokens`. |
 
 After Rocky authenticates and counts a request, the response includes
@@ -94,15 +94,25 @@ import os
 import time
 import requests
 
+headers = {"Authorization": f"Bearer {os.environ['ROCKY_API_KEY']}"}
+models_response = requests.get(
+    "https://rocky.cs.kent.edu/v1/models",
+    headers=headers,
+    timeout=30,
+)
+models_response.raise_for_status()
+model = models_response.json()["data"][0]["id"]
+
 response = requests.post(
     "https://rocky.cs.kent.edu/v1/responses",
-    headers={"Authorization": f"Bearer {os.environ['ROCKY_API_KEY']}"},
+    headers=headers,
     json={
-        "model": os.environ["ROCKY_MODEL"],
+        "model": model,
         "input": "Explain recursion in two sentences.",
         "store": False,
     },
-    timeout=60,
+    # Covers admission-queue wait time as well as model generation.
+    timeout=390,
 )
 
 if response.ok:
@@ -117,7 +127,11 @@ else:
     print(f"{response.status_code} {error.get('code')}: {error.get('message')}")
     print(f"Request ID: {request_id}")
 
-    if error.get("code") in {"model_busy", "rate_limit_exceeded"}:
+    if error.get("code") in {
+        "model_busy",
+        "rate_limit_exceeded",
+        "ingress_rate_limit_exceeded",
+    }:
         time.sleep(int(response.headers.get("Retry-After", "2")))
 ```
 

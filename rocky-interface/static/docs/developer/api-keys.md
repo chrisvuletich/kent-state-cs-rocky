@@ -15,7 +15,8 @@ Generate your API key from an enrolled course.
 1. Open the **Courses** view and select an enrolled course.
 2. Select **Home**.
 3. Click **Generate Key**.
-4. Copy and securely store your new API key.
+4. Copy and securely store your new API key immediately. Its complete value is
+   shown only once; Rocky displays only a masked preview later.
 
 ## Using Your API Key
 
@@ -31,6 +32,9 @@ Do not put the key in the JSON request body or in a URL.
 
 Click **Regenerate Key** for the same key slot. Confirm the warning before
 continuing; regeneration invalidates the old key immediately.
+
+Use **Remove Key** when the key should no longer exist. Applications using a
+regenerated or removed key immediately lose access.
 
 ## Security Best Practices
 

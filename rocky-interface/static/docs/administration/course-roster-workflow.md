@@ -26,8 +26,16 @@ To add the full class at once, select **Import Canvas CSV** and upload the roste
 
 ![The current Edit Roster page with the Import Canvas CSV control above the roster](/class_doc_2.png)
 
-## 5. Confirm the roster
+## 5. Set student key allowances
 
-Added students appear in the roster table with their name, email, role, and API key limit.
+The **Keys** column controls how many individual API-key slots each student may
+use in this course. Enter the allowed number and select **Save**. The value
+cannot exceed the course-wide student limit. A closed course is read-only, so
+reopen it before changing a roster or key allowance.
+
+## 6. Confirm the roster
+
+Added students appear in the roster table with their name, email, role, key
+allowance, and available actions.
 
 ![An added student displayed in the course roster table](/class_doc_1.png)

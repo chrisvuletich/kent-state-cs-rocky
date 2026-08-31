@@ -21,8 +21,19 @@ headers = {
     "Authorization": f"Bearer {os.environ['ROCKY_API_KEY']}",
     "Accept": "text/event-stream",
 }
+
+models_response = requests.get(
+    "https://rocky.cs.kent.edu/v1/models",
+    headers={"Authorization": headers["Authorization"]},
+    timeout=30,
+)
+models_response.raise_for_status()
+model = models_response.json()["data"][0]
+if model.get("metadata", {}).get("supports_streaming") is not True:
+    raise RuntimeError("The active Rocky model does not support streaming.")
+
 payload = {
-    "model": os.environ["ROCKY_MODEL"],
+    "model": model["id"],
     "input": "Explain recursion in one paragraph.",
     "stream": True,
     "store": False,
@@ -78,7 +89,18 @@ blank SSE line.
 
 ```javascript
 const apiKey = process.env.ROCKY_API_KEY;
-const model = process.env.ROCKY_MODEL;
+if (!apiKey) throw new Error("Set ROCKY_API_KEY before running this script.");
+
+const modelsResponse = await fetch("https://rocky.cs.kent.edu/v1/models", {
+	headers: { "Authorization": `Bearer ${apiKey}` }
+});
+if (!modelsResponse.ok) throw new Error(await modelsResponse.text());
+
+const model = (await modelsResponse.json()).data?.[0];
+if (!model) throw new Error("Rocky did not return an available model.");
+if (model.metadata?.supports_streaming !== true) {
+	throw new Error("The active Rocky model does not support streaming.");
+}
 
 const response = await fetch("https://rocky.cs.kent.edu/v1/responses", {
 	method: "POST",
@@ -88,7 +110,7 @@ const response = await fetch("https://rocky.cs.kent.edu/v1/responses", {
 		"Accept": "text/event-stream"
 	},
 	body: JSON.stringify({
-		model,
+		model: model.id,
 		input: "Explain recursion in one paragraph.",
 		stream: true,
 		store: false

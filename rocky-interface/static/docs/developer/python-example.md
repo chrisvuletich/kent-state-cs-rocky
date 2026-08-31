@@ -24,18 +24,27 @@ Keep your API key private. Anyone with access to your key can make requests on y
 
 ## Example Request
 
-The example below sends a simple chat request to the Rocky API. Store your key in the `ROCKY_API_KEY` environment variable before running the script.
+The example below discovers the active model and sends a request to the Rocky
+API. Store only your key in the `ROCKY_API_KEY` environment variable before
+running the script.
 
 ```python
 import os
 import requests
 
 url = "https://rocky.cs.kent.edu/v1/responses"
-model = os.environ["ROCKY_MODEL"]
-
 headers = {
     "Authorization": f"Bearer {os.environ['ROCKY_API_KEY']}"
 }
+
+models_response = requests.get(
+    "https://rocky.cs.kent.edu/v1/models",
+    headers=headers,
+    timeout=30,
+)
+models_response.raise_for_status()
+model = models_response.json()["data"][0]["id"]
+
 payload = {
     "model": model,
     "input": "Hello Rocky!",
@@ -49,7 +58,8 @@ response.raise_for_status()
 print(response.json()["output_text"])
 ```
 
-Run `GET /v1/models` and set `ROCKY_MODEL` to the identifier it returns.
+The model-list request prevents the example from depending on a model name that
+may change between semesters.
 
 ## Example Response
 
@@ -89,7 +99,7 @@ client = OpenAI(
     base_url="https://rocky.cs.kent.edu/v1",
 )
 
-model = os.environ["ROCKY_MODEL"]
+model = client.models.list().data[0].id
 
 response = client.responses.create(
     model=model,

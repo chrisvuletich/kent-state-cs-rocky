@@ -10,7 +10,6 @@ or in shell history. Keep it out of code and screenshots.
 ## Send a request
 
 ```bash
-export ROCKY_MODEL='paste-the-id-returned-by-v1-models'
 printf 'Rocky API key: '
 IFS= read -r -s ROCKY_API_KEY
 printf '\n'
@@ -19,16 +18,22 @@ export ROCKY_API_KEY
 curl --request GET https://rocky.cs.kent.edu/v1/models \
   --header "Authorization: Bearer $ROCKY_API_KEY"
 
+printf 'Copy data[0].id from above and enter it here: '
+IFS= read -r ROCKY_MODEL
+export ROCKY_MODEL
+
 curl --request POST https://rocky.cs.kent.edu/v1/responses \
   --header "Authorization: Bearer $ROCKY_API_KEY" \
   --header 'Content-Type: application/json' \
   --data "{\"model\":\"$ROCKY_MODEL\",\"input\":\"Explain recursion in one paragraph.\",\"store\":false}"
 
 unset ROCKY_API_KEY
+unset ROCKY_MODEL
 ```
 
-`https://rocky.cs.kent.edu/v1/responses` is Rocky’s public Chat API endpoint.
-Set `ROCKY_MODEL` to the identifier returned by the model-list request.
+`https://rocky.cs.kent.edu/v1/responses` is Rocky’s public Responses API endpoint.
+`ROCKY_MODEL` must contain the exact identifier returned by the model-list
+request. Do not enter `rocky`; that is the service name, not a model name.
 
 ## Stream a response
 
@@ -41,6 +46,13 @@ IFS= read -r -s ROCKY_API_KEY
 printf '\n'
 export ROCKY_API_KEY
 
+curl --request GET https://rocky.cs.kent.edu/v1/models \
+  --header "Authorization: Bearer $ROCKY_API_KEY"
+
+printf 'Copy data[0].id from above and enter it here: '
+IFS= read -r ROCKY_MODEL
+export ROCKY_MODEL
+
 curl --no-buffer --request POST https://rocky.cs.kent.edu/v1/responses \
   --header "Authorization: Bearer $ROCKY_API_KEY" \
   --header 'Content-Type: application/json' \
@@ -48,6 +60,7 @@ curl --no-buffer --request POST https://rocky.cs.kent.edu/v1/responses \
   --data "{\"model\":\"$ROCKY_MODEL\",\"input\":\"Explain recursion in one paragraph.\",\"stream\":true,\"store\":false}"
 
 unset ROCKY_API_KEY
+unset ROCKY_MODEL
 ```
 
 The final success event is `response.completed`; Rocky does not send `[DONE]`.

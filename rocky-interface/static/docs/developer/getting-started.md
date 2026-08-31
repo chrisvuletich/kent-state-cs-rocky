@@ -34,6 +34,8 @@ The Rocky API sends and receives information using JSON (JavaScript Object Notat
 ```
 
 Before building an application, call `GET /v1/models` with your API key and use the returned model identifier.
+Rocky is the service name, not a model identifier, so do not send
+`"model": "rocky"`. The installed model may change between semesters.
 
 ## HTTP Methods
 
@@ -43,6 +45,10 @@ APIs use different HTTP methods depending on the action being performed.
 - **POST** — Send new data.
 - **PUT** — Update existing data.
 - **DELETE** — Remove data.
+
+Rocky's current public student API uses `GET` for `/v1/models` and `POST` for
+`/v1/responses`. The other methods above are common API concepts, not additional
+Rocky endpoints.
 
 ## Course API keys
 

@@ -18,6 +18,10 @@ The request body must be valid JSON. API keys placed in the JSON body or URL are
 
 Call `GET /v1/models` before sending a response request and use the identifier from its `data` array. The installed model can change between semesters, so examples intentionally use a placeholder instead of assuming a model name.
 
+Rocky is the service name, not a model identifier. A request such as
+`"model": "rocky"` is invalid; copy the exact `data[0].id` value returned by
+your authenticated model-list request.
+
 Rocky keeps the standard model fields and adds a Rocky-specific `metadata`
 object describing the currently configured capabilities:
 
@@ -66,14 +70,14 @@ object does not change the required model-list fields.
 | Field | Type | Required | Description | Default |
 | --- | --- | --- | --- | --- |
 | `model` | string | Yes | Model identifier returned by `GET /v1/models`. | None |
-| `input` | string or array | Yes | A prompt string or an array of message objects containing text and, when advertised, image blocks. | None |
+| `input` | string or array | Yes | A prompt string or an array of `user`, `assistant`, `system`, or `developer` message objects containing text and, when advertised, image blocks. At least one user message is required. | None |
 | `instructions` | string | No | System-level instructions applied before the input. | None |
 | `temperature` | number | No | Sampling temperature from 0 through 2. | Model default |
 | `top_p` | number | No | Nucleus sampling value from 0 through 1. | Model default |
 | `max_output_tokens` | integer | No | Maximum generated tokens. The text ceiling is `metadata.max_output_tokens`; requests containing an image may use `metadata.max_image_output_tokens`. | Applicable advertised ceiling |
 | `frequency_penalty` | number | No | Frequency penalty from -2 through 2; its effect depends on the deployed model and Ollama runtime. | Model default |
 | `presence_penalty` | number | No | Presence penalty from -2 through 2; its effect depends on the deployed model and Ollama runtime. | Model default |
-| `metadata` | object | No | Application metadata returned with the response. | `{}` |
+| `metadata` | object | No | Application metadata returned with the response, up to 16 KiB when encoded as JSON. | `{}` |
 | `store` | boolean | No | Allow the response to be used for later continuation. Institutional audit logging is independent of this field. | `true` |
 | `previous_response_id` | string | No | Continue from a previously stored response created by the same credential. | None |
 | `stream` | boolean | No | Return SSE lifecycle and text-delta events when streaming is advertised. | `false` |
@@ -85,10 +89,12 @@ returned by `GET /v1/models`. The model metadata identifies these fields under
 `model_dependent_parameters`.
 
 When the built-in chat does not specify a reasoning level, Rocky uses the
-advertised `default_reasoning_effort` (`medium` by default). The Ollama context
-window is capped by `max_context_tokens`. `max_context_characters` is a separate
-application-level request and conversation-history guard, not a tokenizer
-count.
+advertised `default_reasoning_effort` (`medium` by default). This value is
+informational for public API clients: `reasoning` and `reasoning_effort` are not
+accepted request fields. The Ollama context window is capped by
+`max_context_tokens`, which is also server-managed rather than a request field.
+`max_context_characters` is a separate application-level request and
+conversation-history guard, not a tokenizer count.
 
 The simplest request uses a string:
 
@@ -264,5 +270,5 @@ when a retry is appropriate, and includes a Python `requests` example.
 | 413 | The request body is too large. |
 | 429 | The API key exhausted its request limit, or the ingress network-address limit was reached. |
 | 502 | Rocky could not reach the model service or received an unusable response. |
-| 503 | The model is busy or a required internal service is unavailable. |
+| 503 | The finite model queue was full or its wait expired, or a required internal service is unavailable. |
 | 504 | Model generation timed out. |
