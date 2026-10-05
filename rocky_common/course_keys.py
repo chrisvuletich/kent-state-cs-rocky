@@ -86,6 +86,10 @@ def key_is_active(key, courses=None, users=None, *, course=None):
         return False
     owner_type = _identifier(key.get("owner_type")) or "person"
     owner_id = _identifier(key.get("owner_id"))
+    if owner_type == "group":
+        group = next((g for g in course.get("groups", []) if _identifier(g.get("id")) == owner_id), None)
+        if group is None or group.get("is_active", True) is not True:
+            return False
     owner = None
     if owner_type == "person" and users is not None:
         owner = users.find_one({"id": owner_id}) or users.find_one({"email": owner_id})

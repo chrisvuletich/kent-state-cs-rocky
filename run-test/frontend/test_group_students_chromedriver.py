@@ -19,7 +19,7 @@ class GroupStudentsE2ETests(FrontendBrowserTestCase):
         self._wait_for_post_login_navigation()
         self.driver.get(f"{BASE_URL}/?frame=courses&course=1")
         self._assert_title("Courses")
-        self._click_element(By.XPATH, "//button[normalize-space()='Edit Groups']")
+        self._click_element(By.XPATH, "//button[normalize-space()='Groups']")
 
     def _request(self, path, method="GET", body=None):
         return self.driver.execute_async_script(
@@ -54,7 +54,7 @@ class GroupStudentsE2ETests(FrontendBrowserTestCase):
         self.assertEqual(added["status"], 200, added)
         self.driver.refresh()
         self._assert_title("Courses")
-        self._click_element(By.XPATH, "//button[normalize-space()='Edit Groups']")
+        self._click_element(By.XPATH, "//button[normalize-space()='Groups']")
         self._open_dialog()
         self.assertNotIn("instructor.local@kent.edu", self.driver.find_element(By.CSS_SELECTOR, self.dialog).text)
         existing = self.driver.find_element(By.CSS_SELECTOR, ".student-row input[value='student.local@kent.edu']")
@@ -111,8 +111,6 @@ class GroupStudentsE2ETests(FrontendBrowserTestCase):
         self.driver.execute_script("window.releaseGroupAdd();")
         self.wait.until(EC.invisibility_of_element_located((By.CSS_SELECTOR, self.dialog)))
         self.wait.until(EC.text_to_be_present_in_element((By.CSS_SELECTOR, ".feedback-success"), "Added 2 students to Team Alpha"))
-        self.assertIn("bulk.one@kent.edu", self.driver.find_element(By.CSS_SELECTOR, ".group-table").text)
-        self.assertIn("bulk.two@kent.edu", self.driver.find_element(By.CSS_SELECTOR, ".group-table").text)
         self.wait.until(lambda driver: driver.execute_script("return document.activeElement === document.querySelector(arguments[0]);", self.opener))
         self.assertEqual(self.driver.execute_script("return window.groupAddRequests"), [
             {"memberIds": ["bulk.two@kent.edu", "bulk.one@kent.edu"]},
@@ -122,6 +120,9 @@ class GroupStudentsE2ETests(FrontendBrowserTestCase):
         group = next(group for group in saved["groups"] if group["id"] == "group-se3010-a")
         self.assertEqual(group["memberIds"].count("bulk.one@kent.edu"), 1)
         self.assertEqual(group["memberIds"].count("bulk.two@kent.edu"), 1)
+        self._click_element(By.CSS_SELECTOR, "button[aria-label='View Team Alpha']")
+        self.assertIn("bulk.one@kent.edu", self.driver.find_element(By.CSS_SELECTOR, ".group-members").text)
+        self.assertIn("bulk.two@kent.edu", self.driver.find_element(By.CSS_SELECTOR, ".group-members").text)
         self._open_dialog()
         self._search("bulk.")
         self.wait.until(lambda driver: len(driver.find_elements(By.CSS_SELECTOR, ".student-row input:disabled")) == 2)
@@ -177,7 +178,7 @@ class GroupStudentsE2ETests(FrontendBrowserTestCase):
         self.assertEqual(group_result["status"], 200, group_result)
         self.driver.get(f"{BASE_URL}/?frame=courses&course=909")
         self._assert_title("Courses")
-        self._click_element(By.XPATH, "//button[normalize-space()='Edit Groups']")
+        self._click_element(By.XPATH, "//button[normalize-space()='Groups']")
         self._click_element(By.CSS_SELECTOR, "button[aria-label='Add students to Empty Team']")
         self.wait.until(EC.text_to_be_present_in_element((By.CSS_SELECTOR, ".empty-students"), "No students are on this course roster yet"))
         self.assertFalse(self._button("Select all matching").is_enabled())
@@ -198,7 +199,7 @@ class GroupStudentsE2ETests(FrontendBrowserTestCase):
         self.assertEqual(created["status"], 201, created)
         self.driver.get(f"{BASE_URL}/?frame=courses&course=910")
         self._assert_title("Courses")
-        self._click_element(By.XPATH, "//button[normalize-space()='Edit Groups']")
+        self._click_element(By.XPATH, "//button[normalize-space()='Groups']")
         self._click_element(By.CSS_SELECTOR, "button[aria-label='Add students to Large Team']")
         self.wait.until(EC.visibility_of_element_located((By.ID, "group-students-search")))
         self._search("BATCH.")

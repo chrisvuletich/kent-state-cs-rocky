@@ -39,8 +39,12 @@ class CourseActionsUnitTests(unittest.TestCase):
         updated = create_course_group(course, "Team A")
 
         new_group = updated["groups"][-1]
-        self.assertEqual(new_group["id"], "team-a-2")
+        self.assertRegex(new_group["id"], r"^group-[0-9a-f]{32}$")
+        self.assertNotEqual(new_group["id"], "team-a-1")
         self.assertEqual(new_group["name"], "Team A")
+        original_id = new_group["id"]
+        course["groups"] = []
+        self.assertNotEqual(create_course_group(course, "Team A")["groups"][0]["id"], original_id)
 
     def test_regenerate_course_api_key_upserts_same_owner_key(self):
         collection = FakeCollection()

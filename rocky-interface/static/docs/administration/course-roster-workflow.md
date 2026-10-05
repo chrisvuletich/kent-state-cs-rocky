@@ -65,7 +65,7 @@ allowance, and available actions.
 
 ## 7. Assign students to groups
 
-Open **Edit Groups**, create a group if needed, then select its **Add students**
+Open **Groups**, create a group if needed, then select its **Add students**
 button. Search by name or email and check the students you want to add.
 **Select all matching** selects the eligible students in the current search;
 selections stay checked when you change the search. **Clear selection** clears
@@ -89,8 +89,8 @@ does not turn on self-joining; use the separate setting below.
 
 ## 8. Let students join groups themselves
 
-Self-joining is **off by default**, including for existing groups. In **Edit
-Groups**, select a group's **Joining settings**, enable **Allow students to join
+Self-joining is **off by default**, including for existing groups. In **Groups**,
+select a group's **Settings**, enable **Allow students to join
 themselves**, and select **Save settings**. Instructors, course teaching
 assistants, and admins can manage this setting.
 
@@ -101,7 +101,7 @@ membership before saving so they cannot both take the last seat.
 
 Enrolled students can open **Courses → their course → Groups** and select
 **Join group** for an open group. They cannot enroll themselves in the course,
-join on behalf of someone else, or join a full group or a closed course. Joining
+join on behalf of someone else, or join a full or paused group or a closed course. Joining
 is recorded durably with the membership change. If the audit log is temporarily
 unavailable, its entry is delivered on a later group request or audit-log read
 without duplicating the join. Students may belong to multiple groups.
@@ -116,3 +116,32 @@ If settings change while someone has the page open, use **Refresh groups** or
 refresh the course. Failed saves show an error instead of overwriting a newer
 membership update. Joining never generates, regenerates, or reveals a shared
 API key; instructors still manage and distribute those keys.
+
+## 9. Manage existing groups
+
+The single **Groups** tab contains membership, settings, and shared-key management.
+Select **View group** for a group's members, shared API keys,
+and settings. Students see **Your groups** first and can view their group's key
+status in the same tab; only staff can generate, disable, or remove shared keys.
+
+- **Group settings** changes the name, self-joining option, maximum students,
+  and shared-key allowance. Renaming preserves the group's identity, memberships,
+  and existing keys. The key allowance cannot exceed the course maximum.
+- **Close joining** stops new student self-joins without changing memberships
+  or shared-key access. Staff can still add students. **Open joining** enables
+  self-joining subject to capacity, group pause, and course status.
+- **Pause group** temporarily disables shared group keys and prevents new
+  self-joins. Staff can still edit the group. **Resume group** restores access
+  within the current key allowance, but never restores separately disabled or
+  revoked keys. The saved self-joining setting is preserved.
+- **Remove** asks for confirmation before removing a student. All the group's
+  shared keys are revoked because the removed student may have copied them.
+  Generate and distribute new keys to the remaining members afterward.
+- **Delete group** works even when the group has members. It permanently removes
+  the group and invalidates all its shared keys. Students remain enrolled in the
+  course; audit and usage history are retained. Creating another group with the
+  same name does not restore the deleted group's keys or memberships.
+
+Group pause and deletion do not disable personal keys, accounts, or normal chat.
+Closed courses remain read-only until reopened by an admin. If a save conflicts
+with another change, use **Refresh groups**, review the latest state, and retry.

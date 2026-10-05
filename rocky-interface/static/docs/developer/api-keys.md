@@ -24,14 +24,18 @@ Generate your API key from an enrolled course.
 
 Open **Courses**, choose your course, then select **Groups**. If your instructor
 has enabled self-joining, select **Join group** beside an open group. Full groups
-and instructor-assigned groups cannot be joined yourself. Use **Refresh groups**
+and instructor-assigned or paused groups cannot be joined yourself. Use **Refresh groups**
 to update availability. Only students already on the course roster can join.
 
-After joining, select **View group** or its named tab to see the group's key
+After joining, select **View group** within **Groups** to see the group's key
 slots. Joining does not create a new key or reveal an existing key's complete
 value; your instructor or teaching assistant manages and distributes shared
 group keys. Contact them to leave or switch groups. You may belong to more than
 one group, and your personal key slots remain available on **Home**.
+
+A paused group temporarily disables its shared keys. Deleted groups permanently
+lose shared-key access. Neither action disables your personal keys or normal
+chat. Ask your instructor about group access or replacement shared keys.
 
 ### Sending a request
 

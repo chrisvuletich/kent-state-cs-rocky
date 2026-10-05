@@ -663,6 +663,11 @@ def add_group_members_route(course_id, group_id):
     return course_handlers.add_group_members_route(_route_deps(), course_id, group_id)
 
 
+@app.route("/courses/<course_id>/groups/<group_id>", methods=["PATCH", "DELETE"])
+def manage_course_group_route(course_id, group_id):
+    return course_handlers.manage_course_group_route(_route_deps(), course_id, group_id)
+
+
 @app.route("/courses/<course_id>/groups/<group_id>/members", methods=["DELETE"])
 def remove_group_member_route(course_id, group_id):
     return course_handlers.remove_group_member_route(_route_deps(), course_id, group_id)

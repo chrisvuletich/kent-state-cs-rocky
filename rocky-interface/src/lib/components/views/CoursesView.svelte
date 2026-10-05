@@ -5,7 +5,8 @@
 		addCourseMembers,
 		addGroupMembers as addCourseGroupMembers,
 		joinCourseGroup,
-		updateGroupJoinSettings,
+		updateCourseGroup,
+		deleteCourseGroup,
 		fetchCourseWorkspace,
 		createCourseGroup as createCourseGroupRequest,
 		deleteCourseApiKey,
@@ -16,7 +17,6 @@
 		regenerateCourseApiKey,
 		updateCourseActiveStatus,
 		updateCourseApiKeyStatus,
-		updateCourseGroupKeyLimit,
 		updateCourseInstructorKeyLimit,
 		updateCourseInstructorHandoutLimit,
 		updateCourseMemberKeyLimit,
@@ -30,7 +30,9 @@
 	import { handleTabListKeydown } from '$lib/accessibility/tabs';
 	import ViewShell from '$lib/components/ViewShell.svelte';
 	import GroupStudentsDialog from '$lib/components/GroupStudentsDialog.svelte';
-	import GroupJoinSettingsDialog from '$lib/components/GroupJoinSettingsDialog.svelte';
+	import GroupSettingsDialog from '$lib/components/GroupSettingsDialog.svelte';
+	import GroupActionDialog from '$lib/components/GroupActionDialog.svelte';
+	import ManageGroups from '$lib/components/ManageGroups.svelte';
 	import StudentGroups from '$lib/components/StudentGroups.svelte';
 	import CourseEditorCard from '$lib/components/cards/CourseEditorCard.svelte';
 	import CourseKeySlotCard from '$lib/components/cards/CourseKeySlotCard.svelte';
@@ -46,18 +48,11 @@
 	import type {
 		CourseApiHistoryEntry,
 		CourseApiKeySummaryResponse,
-		GroupJoinSettings
+		GroupSettings
 	} from '$lib/api/courses';
 	import '$lib/styles/components/modules/popup.css';
 
-	type CourseTab =
-		| 'home'
-		| 'students'
-		| 'groups'
-		| 'edit-roster'
-		| 'edit-groups'
-		| 'course-settings'
-		| `group:${string}`;
+	type CourseTab = 'home' | 'students' | 'groups' | 'edit-roster' | 'course-settings';
 	type KeySlot = {
 		slotIndex: number;
 		baseKeyName: string;
@@ -108,9 +103,18 @@
 		instructorId: '',
 		taIds: [] as string[]
 	};
-	let newGroupName = '';
+	let selectedStudentGroupId = '';
+	let groupActionTarget: {
+		courseId: number;
+		group: CourseGroup;
+		kind: 'pause' | 'joining' | 'delete' | 'remove';
+		memberId?: string;
+		title: string;
+		description: string;
+		confirmLabel: string;
+	} | null = null;
 	let groupStudentsTarget: { courseId: number; group: CourseGroup } | null = null;
-	let groupJoinSettingsTarget: { courseId: number; group: CourseGroup } | null = null;
+	let groupSettingsTarget: { courseId: number; group: CourseGroup } | null = null;
 	let joiningGroupId: string | null = null;
 	let groupJoinError: string | null = null;
 	let refreshingGroups = false;
@@ -135,7 +139,6 @@
 	let pendingMemberKeyLimitById: Record<string, number> = {};
 	let pendingInstructorKeyLimit = 2;
 	let pendingInstructorHandoutLimit = 2;
-	let pendingGroupKeyLimitById: Record<string, number> = {};
 	let editedSlotKeyNamesById: Record<string, string> = {};
 	let selectedInstructorStudentId = '';
 	let selectedInstructorGroupId = '';
@@ -409,14 +412,6 @@
 		});
 	}
 
-	function isGroupTab(tab: CourseTab): tab is `group:${string}` {
-		return tab.startsWith('group:');
-	}
-
-	function getGroupIdFromTab(tab: `group:${string}`): string {
-		return tab.slice('group:'.length);
-	}
-
 	function getTabLabel(tab: CourseTab): string {
 		if (tab === 'home') {
 			return 'Home';
@@ -430,29 +425,15 @@
 		if (tab === 'edit-roster') {
 			return 'Edit Roster';
 		}
-		if (tab === 'edit-groups') {
-			return 'Edit Groups';
-		}
 		if (tab === 'course-settings') {
 			return 'Course Settings';
 		}
 
-		const groupId = getGroupIdFromTab(tab);
-		const group = selectedGroups.find((candidate) => candidate.id === groupId);
-		return group?.name || 'Group';
+		return 'Groups';
 	}
 
 	function getCourseTabId(tab: CourseTab): string {
-		return `course-tab-${tab.replace(':', '-')}`;
-	}
-
-	function resolveActiveStudentGroup(tab: CourseTab): CourseGroup | null {
-		if (!isGroupTab(tab)) {
-			return null;
-		}
-
-		const groupId = getGroupIdFromTab(tab);
-		return studentVisibleGroups.find((group) => group.id === groupId) || null;
+		return `course-tab-${tab}`;
 	}
 
 	function buildKeySlots(limit: number, keys: CourseApiKeySummary[]): KeySlot[] {
@@ -770,7 +751,7 @@
 	onDestroy(() => {
 		clearSensitiveKeyState();
 		groupStudentsTarget = null;
-		groupJoinSettingsTarget = null;
+		groupSettingsTarget = null;
 		groupRequestRevision += 1;
 	});
 
@@ -913,10 +894,11 @@
 	) {
 		selectedInstructorStudentId = getMemberIdentifier(instructorVisibleStudents[0]);
 	}
-	$: if (selectedGroups.length === 0) {
+	$: if (
+		selectedInstructorGroupId &&
+		!selectedGroups.some((group) => group.id === selectedInstructorGroupId)
+	) {
 		selectedInstructorGroupId = '';
-	} else if (!selectedGroups.some((group) => group.id === selectedInstructorGroupId)) {
-		selectedInstructorGroupId = selectedGroups[0].id;
 	}
 	$: selectedInstructorStudent =
 		instructorVisibleStudents.find(
@@ -951,8 +933,8 @@
 		? Math.max(0, selectedCourse?.instructorKeyLimit ?? 2)
 		: (currentUserMember?.keyLimit ?? 0);
 	$: personalKeySlots = buildKeySlots(personalKeyLimit, personalOwnedKeys);
-	$: studentGroupTabs = studentVisibleGroups.map((group) => `group:${group.id}` as CourseTab);
-	$: activeStudentGroup = resolveActiveStudentGroup(activeTab);
+	$: activeStudentGroup =
+		studentVisibleGroups.find((group) => group.id === selectedStudentGroupId) || null;
 	$: activeStudentGroupKeySlots = activeStudentGroup
 		? buildKeySlots(
 				activeStudentGroup.keyLimit,
@@ -992,7 +974,7 @@
 		(selectedCourse?.id !== groupStudentsTarget.courseId ||
 			!canEditPeopleAndGroups ||
 			isSelectedCourseClosed ||
-			activeTab !== 'edit-groups')
+			activeTab !== 'groups')
 	) {
 		groupStudentsTarget = null;
 	}
@@ -1002,18 +984,25 @@
 				'students',
 				'groups',
 				'edit-roster',
-				'edit-groups',
 				...(canEditCourse ? (['course-settings'] as CourseTab[]) : [])
 			] as CourseTab[])
-		: (['home', 'groups', ...studentGroupTabs] as CourseTab[]);
+		: (['home', 'groups'] as CourseTab[]);
 	$: if (
-		groupJoinSettingsTarget &&
-		(selectedCourse?.id !== groupJoinSettingsTarget.courseId ||
+		groupSettingsTarget &&
+		(selectedCourse?.id !== groupSettingsTarget.courseId ||
 			!canEditPeopleAndGroups ||
 			isSelectedCourseClosed ||
-			activeTab !== 'edit-groups')
+			activeTab !== 'groups')
 	)
-		groupJoinSettingsTarget = null;
+		groupSettingsTarget = null;
+	$: if (
+		groupActionTarget &&
+		(selectedCourse?.id !== groupActionTarget.courseId ||
+			!canEditPeopleAndGroups ||
+			isSelectedCourseClosed ||
+			activeTab !== 'groups')
+	)
+		groupActionTarget = null;
 	$: if (!availableTabs.includes(activeTab)) {
 		activeTab = 'home';
 	}
@@ -1074,7 +1063,8 @@
 		pendingMemberKeyLimitById = {};
 		pendingInstructorKeyLimit = 2;
 		pendingInstructorHandoutLimit = 2;
-		pendingGroupKeyLimitById = {};
+		selectedInstructorGroupId = '';
+		selectedStudentGroupId = '';
 	}
 	$: isSelectedCourseClosed = selectedCourse?.isActive === false;
 	$: {
@@ -1392,26 +1382,17 @@
 		}
 	}
 
-	async function createGroup() {
-		if (!ensureCourseIsEditable()) {
-			return;
-		}
-		if (!selectedCourse) {
-			return;
-		}
-
-		const trimmedName = newGroupName.trim();
-		if (!trimmedName) {
-			return;
-		}
-
-		try {
-			await createCourseGroupRequest(selectedCourse.id, trimmedName);
-			await refreshAfterWrite();
-			newGroupName = '';
-		} catch {
-			// API layer already shows user-facing feedback.
-		}
+	async function createGroup(name: string) {
+		if (!selectedCourse || !canEditPeopleAndGroups || !ensureCourseIsEditable())
+			throw new Error('Course is no longer editable.');
+		const courseId = selectedCourse.id;
+		const raw = await createCourseGroupRequest(courseId, name);
+		if (selectedCourse?.id !== courseId) return;
+		groupsByCourseId = {
+			...groupsByCourseId,
+			[courseId]: (raw.groups || []).map((group) => normalizeCourseGroup({ ...group, courseId }))
+		};
+		loadedCourseApiHistoryForId = null;
 	}
 
 	function openGroupStudentsDialog(group: CourseGroup) {
@@ -1428,26 +1409,27 @@
 		};
 	}
 
-	function openGroupJoinSettings(group: CourseGroup) {
+	function openGroupSettings(group: CourseGroup) {
 		if (!selectedCourse || !canEditPeopleAndGroups || !ensureCourseIsEditable()) return;
-		groupJoinSettingsTarget = { courseId: selectedCourse.id, group };
+		groupSettingsTarget = { courseId: selectedCourse.id, group };
 	}
 
-	async function saveGroupJoinSettings(settings: GroupJoinSettings) {
-		const target = groupJoinSettingsTarget;
+	async function saveGroupSettings(settings: GroupSettings) {
+		const target = groupSettingsTarget;
 		if (!target || !canEditPeopleAndGroups || !ensureCourseIsEditable()) return;
-		const result = await updateGroupJoinSettings(target.courseId, target.group.id, settings);
-		if (groupJoinSettingsTarget !== target) return;
+		const result = await updateCourseGroup(target.courseId, target.group.id, settings);
+		if (groupSettingsTarget !== target) return;
 		setSavedGroup(
 			target.courseId,
 			normalizeCourseGroup({ ...result.group, courseId: target.courseId })
 		);
-		groupJoinSettingsTarget = null;
+		groupSettingsTarget = null;
 		loadedCourseApiHistoryForId = null;
-		showSuccessFeedback(`Joining settings saved for ${target.group.name}.`);
+		void loadCourseApiKeys(target.courseId);
+		showSuccessFeedback(`Settings saved for ${result.group.name}.`);
 	}
 
-	async function refreshStudentGroups() {
+	async function refreshGroups() {
 		if (!selectedCourse || joiningGroupId || refreshingGroups) return;
 		const courseId = selectedCourse.id;
 		const revision = ++groupRequestRevision;
@@ -1509,13 +1491,16 @@
 	}
 
 	async function openStudentGroup(group: CourseGroup) {
-		const courseId = selectedCourse?.id;
-		const tab: CourseTab = `group:${group.id}`;
-		activeTab = tab;
+		selectedStudentGroupId = group.id;
 		await tick();
-		if (selectedCourse?.id === courseId && activeTab === tab) {
-			document.getElementById(getCourseTabId(tab))?.focus();
-		}
+		document.getElementById('student-group-detail-title')?.focus();
+	}
+
+	async function backToStudentGroups() {
+		const id = selectedStudentGroupId;
+		selectedStudentGroupId = '';
+		await tick();
+		document.getElementById(`student-view-group-${id}`)?.focus();
 	}
 
 	async function addGroupStudents(memberIds: string[]) {
@@ -1545,19 +1530,104 @@
 		);
 	}
 
-	async function removeGroupMember(groupId: string, id: string) {
-		if (!ensureCourseIsEditable()) {
-			return;
+	function openGroupAction(
+		group: CourseGroup,
+		kind: 'pause' | 'joining' | 'delete' | 'remove',
+		memberId: string | undefined = undefined
+	) {
+		if (!selectedCourse || !canEditPeopleAndGroups || !ensureCourseIsEditable()) return;
+		const keyCount = getGroupOwnedKeys(group.id, groupOwnedKeys).length;
+		let title = '',
+			description = '',
+			confirmLabel = '';
+		if (kind === 'delete') {
+			title = `Delete ${group.name}?`;
+			confirmLabel = 'Delete group';
+			const keys =
+				courseApiKeysLoading || courseApiKeysError
+					? 'All shared keys'
+					: `All ${keyCount} shared ${keyCount === 1 ? 'key' : 'keys'}`;
+			description = `Remove this group and its ${group.memberIds.length} ${group.memberIds.length === 1 ? 'membership' : 'memberships'} permanently. ${keys} will stop working. Students stay enrolled in the course, and usage and audit history are retained. This cannot be undone.`;
+		} else if (kind === 'remove') {
+			const member = resolveMemberByIdentifier(memberId || '');
+			title = `Remove ${member ? getMemberDisplayName(member) : memberId}?`;
+			confirmLabel = 'Remove student';
+			description = `Remove this student from ${group.name}, not from the course. All of this group's shared keys will be revoked because the student may have copied them. Generate and distribute new keys to the remaining members afterward.`;
+		} else if (kind === 'pause') {
+			title = `${group.isActive ? 'Pause' : 'Resume'} ${group.name}?`;
+			confirmLabel = group.isActive ? 'Pause group' : 'Resume group';
+			description = group.isActive
+				? 'Shared group keys will stop working and students cannot join. Memberships, individual key settings, personal keys, and normal chat are unchanged. Staff can still manage the group.'
+				: 'Shared keys become usable again within the course allowance, except keys separately disabled or revoked. Self-joining follows the group’s saved joining setting.';
+		} else {
+			title = `${group.selfJoinEnabled ? 'Close' : 'Open'} joining for ${group.name}?`;
+			confirmLabel = group.selfJoinEnabled ? 'Close joining' : 'Open joining';
+			description = group.selfJoinEnabled
+				? 'Students will no longer be able to join themselves. Existing memberships and shared keys are unchanged. Staff can still add students.'
+				: 'Enrolled students can join themselves up to the size limit. A paused group or closed course still prevents joining.';
 		}
-		if (!selectedCourse) {
-			return;
-		}
+		groupActionTarget = {
+			courseId: selectedCourse.id,
+			group,
+			kind,
+			memberId,
+			title,
+			description,
+			confirmLabel
+		};
+	}
 
-		try {
-			await removeCourseGroupMember(selectedCourse.id, groupId, id);
-			await refreshAfterWrite();
-		} catch {
-			// API layer already shows user-facing feedback.
+	async function confirmGroupAction() {
+		const target = groupActionTarget;
+		if (
+			!target ||
+			selectedCourse?.id !== target.courseId ||
+			!canEditPeopleAndGroups ||
+			!ensureCourseIsEditable()
+		)
+			throw new Error('Course is no longer editable.');
+		if (target.kind === 'delete') {
+			await deleteCourseGroup(target.courseId, target.group.id);
+			groupsByCourseId = {
+				...groupsByCourseId,
+				[target.courseId]: (groupsByCourseId[target.courseId] || []).filter(
+					(group) => group.id !== target.group.id
+				)
+			};
+		} else if (target.kind === 'remove') {
+			const raw = await removeCourseGroupMember(target.courseId, target.group.id, target.memberId!);
+			groupsByCourseId = {
+				...groupsByCourseId,
+				[target.courseId]: (raw.groups || []).map((group) =>
+					normalizeCourseGroup({ ...group, courseId: target.courseId })
+				)
+			};
+		} else {
+			const result = await updateCourseGroup(
+				target.courseId,
+				target.group.id,
+				target.kind === 'pause'
+					? { isActive: !target.group.isActive }
+					: { selfJoinEnabled: !target.group.selfJoinEnabled }
+			);
+			setSavedGroup(
+				target.courseId,
+				normalizeCourseGroup({ ...result.group, courseId: target.courseId })
+			);
+		}
+		if (groupActionTarget !== target) return;
+		groupActionTarget = null;
+		clearSensitiveKeyState();
+		void loadCourseApiKeys(target.courseId);
+		loadedCourseApiHistoryForId = null;
+		showSuccessFeedback(
+			target.kind === 'delete' ? 'Group deleted. Course enrollment is unchanged.' : 'Group updated.'
+		);
+		if (target.kind === 'delete' || target.kind === 'remove') {
+			await tick();
+			document
+				.getElementById(target.kind === 'delete' ? 'group-list-summary' : 'group-detail-title')
+				?.focus();
 		}
 	}
 
@@ -1701,34 +1771,6 @@
 		}
 		try {
 			await updateCourseInstructorKeyLimit(selectedCourse.id, instructorKeyLimit);
-			await refreshAfterWrite();
-		} catch {
-			// API layer already shows user-facing feedback.
-		}
-	}
-
-	async function saveGroupKeyLimit(groupId: string) {
-		if (!ensureCourseIsEditable()) {
-			return;
-		}
-		if (!selectedCourse) {
-			return;
-		}
-		const keyLimit = pendingGroupKeyLimitById[groupId];
-		if (!Number.isInteger(keyLimit) || keyLimit < 0) {
-			return;
-		}
-		const courseKeyLimit = Math.max(0, selectedCourse.instructorHandoutLimit ?? 2);
-		if (keyLimit > courseKeyLimit) {
-			showErrorFeedback(`Group key limit cannot exceed the course key limit (${courseKeyLimit}).`);
-			pendingGroupKeyLimitById = {
-				...pendingGroupKeyLimitById,
-				[groupId]: courseKeyLimit
-			};
-			return;
-		}
-		try {
-			await updateCourseGroupKeyLimit(selectedCourse.id, groupId, keyLimit);
 			await refreshAfterWrite();
 		} catch {
 			// API layer already shows user-facing feedback.
@@ -2072,117 +2114,149 @@
 					</div>
 				{:else if activeTab === 'groups' && !canEditPeopleAndGroups}
 					<div class="section-content">
-						<StudentGroups
-							groups={selectedGroups}
-							{joinedGroupIds}
-							courseClosed={isSelectedCourseClosed}
-							pendingGroupId={joiningGroupId}
-							refreshing={refreshingGroups}
-							error={groupJoinError}
-							onJoin={joinStudentGroup}
-							onOpen={openStudentGroup}
-							onRefresh={refreshStudentGroups}
-						/>
-					</div>
-				{:else if activeTab === 'groups'}
-					<div class="section-content home-panel-stack">
-						{#if selectedGroups.length === 0}
-							<p class="section-text">No groups are available for this course yet.</p>
-						{:else}
-							<div class="course-group-create-row">
-								<select
-									class="text-input"
-									value={selectedInstructorGroupId}
-									aria-label="Select group"
-									onchange={(event) => {
-										const target = event.currentTarget as HTMLSelectElement;
-										selectedInstructorGroupId = target.value;
-									}}
-								>
-									{#each selectedGroups as group}
-										<option value={group.id}>{group.name}</option>
-									{/each}
-								</select>
-							</div>
+						{#if activeStudentGroup}
+							<button type="button" class="view-btn" onclick={backToStudentGroups}
+								>Back to groups</button
+							>
+							<h3 id="student-group-detail-title" tabindex="-1">{activeStudentGroup.name}</h3>
+							<p>
+								{activeStudentGroup.memberIds.length} students · {isSelectedCourseClosed
+									? 'Course closed'
+									: activeStudentGroup.isActive
+										? 'Active'
+										: 'Paused — shared keys disabled'}
+							</p>
+							{#if !activeStudentGroup.isActive}<p>
+									This group is paused. Contact your instructor. Personal keys and normal chat are
+									unaffected.
+								</p>{/if}
+							<h4>Shared API keys</h4>
+							{#if !activeStudentGroupKeySlots.length}<p>
+									No shared key slots are allocated. Contact your instructor if you need access.
+								</p>{/if}
 							{#if courseApiKeysLoading}
 								<p>Loading key slots...</p>
 							{:else if courseApiKeysError}
 								<p><strong>Error:</strong> {courseApiKeysError}</p>
 							{:else}
-								{#each instructorGroupKeySlots as slot (getSlotStateId('group', selectedInstructorGroupId, slot.slotIndex))}
+								{#each activeStudentGroupKeySlots as slot (getSlotStateId('group', activeStudentGroup.id, slot.slotIndex))}
 									{@const slotStateId = getSlotStateId(
 										'group',
-										selectedInstructorGroupId,
+										activeStudentGroup.id,
 										slot.slotIndex
 									)}
 									<CourseKeySlotCard
-										title={`${selectedInstructorGroup ? selectedInstructorGroup.name : 'Group'} Key ${slot.slotIndex + 1}`}
+										title={`${activeStudentGroup.name} Key ${slot.slotIndex + 1}`}
 										keyName={getSlotKeyName(slotStateId, slot.baseKeyName)}
 										hasExistingKey={slot.hasExistingKey}
 										maskedPreview={slot.hasExistingKey ? buildMaskedApiKeyPreview(30) : ''}
 										placeholderText="No key exists for this slot yet."
 										slotIdentity={slotStateId}
-										readOnly={isSelectedCourseClosed}
-										generateDisabled={isSelectedCourseClosed}
-										onKeyNameChange={(nextName) => setSlotKeyName(slotStateId, nextName)}
-										onGenerate={() =>
-											generateKeyForSlot(
-												'group',
-												selectedInstructorGroupId,
-												slot.slotIndex,
-												slot.baseKeyName
-											)}
-										removeDisabled={!slot.hasExistingKey || isSelectedCourseClosed}
-										onRemove={() =>
-											removeKeyForSlot(
-												'group',
-												selectedInstructorGroupId,
-												slot.slotIndex,
-												slot.baseKeyName
-											)}
-										showToggleActive={true}
-										isKeyActive={slot.isActive}
-										toggleActiveDisabled={!slot.hasExistingKey || isSelectedCourseClosed}
-										onToggleActive={() =>
-											setSlotActiveState(
-												'group',
-												selectedInstructorGroupId,
-												slot.slotIndex,
-												slot.baseKeyName,
-												!slot.isActive
-											)}
+										readOnly={true}
+										readOnlyMessage="Group keys are managed by your course instructor or teaching assistant."
+										showToggleActive={false}
+										isKeyActive={slot.isActive && activeStudentGroup.isActive}
 									/>
 								{/each}
 							{/if}
+						{:else}
+							<StudentGroups
+								groups={selectedGroups}
+								{joinedGroupIds}
+								courseClosed={isSelectedCourseClosed}
+								pendingGroupId={joiningGroupId}
+								refreshing={refreshingGroups}
+								error={groupJoinError}
+								onJoin={joinStudentGroup}
+								onOpen={openStudentGroup}
+								onRefresh={refreshGroups}
+							/>
 						{/if}
 					</div>
-				{:else if isGroupTab(activeTab) && !canEditPeopleAndGroups && activeStudentGroup}
-					<div class="section-content home-panel-stack">
-						{#if courseApiKeysLoading}
-							<p>Loading key slots...</p>
-						{:else if courseApiKeysError}
-							<p><strong>Error:</strong> {courseApiKeysError}</p>
-						{:else}
-							{#each activeStudentGroupKeySlots as slot (getSlotStateId('group', activeStudentGroup.id, slot.slotIndex))}
-								{@const slotStateId = getSlotStateId(
-									'group',
-									activeStudentGroup.id,
-									slot.slotIndex
-								)}
-								<CourseKeySlotCard
-									title={`${activeStudentGroup.name} Key ${slot.slotIndex + 1}`}
-									keyName={getSlotKeyName(slotStateId, slot.baseKeyName)}
-									hasExistingKey={slot.hasExistingKey}
-									maskedPreview={slot.hasExistingKey ? buildMaskedApiKeyPreview(30) : ''}
-									placeholderText="No key exists for this slot yet."
-									slotIdentity={slotStateId}
-									readOnly={true}
-									readOnlyMessage="Group keys are managed by your course instructor or teaching assistant."
-									showToggleActive={false}
-									isKeyActive={slot.isActive}
-								/>
-							{/each}
-						{/if}
+				{:else if activeTab === 'groups'}
+					<div class="section-content">
+						{#key selectedCourse.id}
+							<ManageGroups
+								groups={selectedGroups}
+								members={studentMembers}
+								courseClosed={isSelectedCourseClosed}
+								bind:selectedGroupId={selectedInstructorGroupId}
+								refreshing={refreshingGroups}
+								refreshError={groupJoinError}
+								onRefresh={refreshGroups}
+								onCreate={createGroup}
+								onSettings={openGroupSettings}
+								onAdd={openGroupStudentsDialog}
+								onJoining={(group) => openGroupAction(group, 'joining')}
+								onPause={(group) => openGroupAction(group, 'pause')}
+								onDelete={(group) => openGroupAction(group, 'delete')}
+								onRemove={(group, id) => openGroupAction(group, 'remove', id)}
+							>
+								{#if selectedInstructorGroup && !selectedInstructorGroup.isActive}<p>
+										Resume the group to generate or enable shared keys. Existing keys can still be
+										removed.
+									</p>{/if}
+								<p>
+									Key allowance: {selectedInstructorGroup?.keyLimit ?? 0}. Slots above this
+									allowance stay disabled. Change the allowance in Group settings.
+								</p>
+								{#if courseApiKeysLoading}
+									<p>Loading key slots...</p>
+								{:else if courseApiKeysError}
+									<p><strong>Error:</strong> {courseApiKeysError}</p>
+								{:else}
+									{#each instructorGroupKeySlots as slot (getSlotStateId('group', selectedInstructorGroupId, slot.slotIndex))}
+										{@const slotStateId = getSlotStateId(
+											'group',
+											selectedInstructorGroupId,
+											slot.slotIndex
+										)}
+										<CourseKeySlotCard
+											title={`${selectedInstructorGroup ? selectedInstructorGroup.name : 'Group'} Key ${slot.slotIndex + 1}`}
+											keyName={getSlotKeyName(slotStateId, slot.baseKeyName)}
+											hasExistingKey={slot.hasExistingKey}
+											maskedPreview={slot.hasExistingKey ? buildMaskedApiKeyPreview(30) : ''}
+											placeholderText="No key exists for this slot yet."
+											slotIdentity={slotStateId}
+											readOnly={isSelectedCourseClosed}
+											generateDisabled={isSelectedCourseClosed ||
+												selectedInstructorGroup?.isActive === false ||
+												slot.slotIndex >= (selectedInstructorGroup?.keyLimit ?? 0)}
+											onKeyNameChange={(nextName) => setSlotKeyName(slotStateId, nextName)}
+											onGenerate={() =>
+												generateKeyForSlot(
+													'group',
+													selectedInstructorGroupId,
+													slot.slotIndex,
+													slot.baseKeyName
+												)}
+											removeDisabled={!slot.hasExistingKey || isSelectedCourseClosed}
+											onRemove={() =>
+												removeKeyForSlot(
+													'group',
+													selectedInstructorGroupId,
+													slot.slotIndex,
+													slot.baseKeyName
+												)}
+											showToggleActive={true}
+											isKeyActive={slot.isActive && selectedInstructorGroup?.isActive !== false}
+											toggleActiveDisabled={!slot.hasExistingKey ||
+												isSelectedCourseClosed ||
+												selectedInstructorGroup?.isActive === false ||
+												slot.slotIndex >= (selectedInstructorGroup?.keyLimit ?? 0)}
+											onToggleActive={() =>
+												setSlotActiveState(
+													'group',
+													selectedInstructorGroupId,
+													slot.slotIndex,
+													slot.baseKeyName,
+													!slot.isActive
+												)}
+										/>
+									{/each}
+								{/if}
+							</ManageGroups>
+						{/key}
 					</div>
 				{:else if activeTab === 'edit-roster' && canEditPeopleAndGroups}
 					<div class="section-content">
@@ -2360,141 +2434,6 @@
 							</table>
 						</div>
 					</div>
-				{:else if activeTab === 'edit-groups' && canEditPeopleAndGroups}
-					<div class="section-content">
-						<div class="course-people-actions">
-							<div class="course-group-create-row">
-								{#if isSelectedCourseClosed}
-									<div class="text-input course-locked-field">
-										{newGroupName || 'New group name'}
-									</div>
-								{:else}
-									<input
-										class="text-input"
-										type="text"
-										bind:value={newGroupName}
-										placeholder="New group name"
-										aria-label="New group name"
-									/>
-								{/if}
-								{#if !isSelectedCourseClosed}
-									<button type="button" class="view-btn" onclick={createGroup}>Create Group</button>
-								{/if}
-							</div>
-						</div>
-						<div class="table-container">
-							<table class="data-table group-table">
-								<colgroup>
-									<col class="group-col-name" />
-									<col class="group-col-members" />
-									<col class="group-col-add" />
-									<col class="group-col-add" />
-								</colgroup>
-								<thead>
-									<tr>
-										<th>Group Name</th>
-										<th>Members</th>
-										<th>Keys</th>
-										<th>Membership</th>
-									</tr>
-								</thead>
-								<tbody>
-									{#if selectedGroups.length}
-										{#each selectedGroups as group (group.id)}
-											<tr>
-												<td>{group.name}</td>
-												<td>
-													{#if group.memberIds.length}
-														<ul class="course-inline-list">
-															{#each group.memberIds as memberId}
-																{@const member = resolveMemberByIdentifier(memberId)}
-																<li>
-																	<span class="course-group-member-label">
-																		{member ? getMemberDisplayName(member) : memberId}
-																		{#if member?.email}<small>{member.email}</small>{/if}
-																	</span>
-																	{#if !isSelectedCourseClosed}
-																		<button
-																			type="button"
-																			class="list-go-btn"
-																			onclick={() => removeGroupMember(group.id, memberId)}
-																			>Remove</button
-																		>
-																	{/if}
-																</li>
-															{/each}
-														</ul>
-													{:else}
-														No members assigned.
-													{/if}
-												</td>
-												<td>
-													<div class="course-group-add-row">
-														{#if isSelectedCourseClosed}
-															<div class="text-input course-locked-field">
-																{pendingGroupKeyLimitById[group.id] ?? group.keyLimit}
-															</div>
-														{:else}
-															<input
-																class="text-input"
-																type="number"
-																min="0"
-																max={courseStudentKeyLimit}
-																aria-label={`Maximum keys for ${group.name}`}
-																value={pendingGroupKeyLimitById[group.id] ?? group.keyLimit}
-																onchange={(event) => {
-																	const target = event.currentTarget as HTMLInputElement;
-																	pendingGroupKeyLimitById = {
-																		...pendingGroupKeyLimitById,
-																		[group.id]: Number.isFinite(Number(target.value))
-																			? Math.max(0, Number(target.value))
-																			: 0
-																	};
-																}}
-															/>
-														{/if}
-														{#if !isSelectedCourseClosed}
-															<button
-																type="button"
-																class="list-go-btn"
-																onclick={() => saveGroupKeyLimit(group.id)}>Save</button
-															>
-														{/if}
-													</div>
-												</td>
-												<td>
-													<button
-														type="button"
-														class="list-go-btn"
-														aria-label={`Add students to ${group.name}`}
-														disabled={isSelectedCourseClosed}
-														onclick={() => openGroupStudentsDialog(group)}>Add students</button
-													>
-													<p class="course-group-join-summary">
-														Self-join {group.selfJoinEnabled ? 'on' : 'off'} · {group.maxMembers ===
-														null
-															? 'No size limit'
-															: `Limit: ${group.maxMembers}`}
-													</p>
-													<button
-														type="button"
-														class="list-go-btn"
-														aria-label={`Joining settings for ${group.name}`}
-														disabled={isSelectedCourseClosed}
-														onclick={() => openGroupJoinSettings(group)}>Joining settings</button
-													>
-												</td>
-											</tr>
-										{/each}
-									{:else}
-										<tr>
-											<td colspan="4">No groups found for this course yet.</td>
-										</tr>
-									{/if}
-								</tbody>
-							</table>
-						</div>
-					</div>
 				{:else if activeTab === 'course-settings' && canEditCourse}
 					<div class="section-content">
 						<CourseEditorCard
@@ -2560,11 +2499,21 @@
 			</div>
 		</section>
 	{/if}
-	{#if groupJoinSettingsTarget}
-		<GroupJoinSettingsDialog
-			group={groupJoinSettingsTarget.group}
-			onSave={saveGroupJoinSettings}
-			onClose={() => (groupJoinSettingsTarget = null)}
+	{#if groupSettingsTarget}
+		<GroupSettingsDialog
+			group={groupSettingsTarget.group}
+			keyLimitMaximum={courseStudentKeyLimit}
+			onSave={saveGroupSettings}
+			onClose={() => (groupSettingsTarget = null)}
+		/>
+	{/if}
+	{#if groupActionTarget}
+		<GroupActionDialog
+			title={groupActionTarget.title}
+			description={groupActionTarget.description}
+			confirmLabel={groupActionTarget.confirmLabel}
+			onConfirm={confirmGroupAction}
+			onClose={() => (groupActionTarget = null)}
 		/>
 	{/if}
 	{#if groupStudentsTarget}

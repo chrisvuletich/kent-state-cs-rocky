@@ -5,6 +5,7 @@ describe('group joining settings', () => {
 	it('keeps existing groups closed to self-joining with no size limit', () => {
 		const group = normalizeCourseGroup({ id: 'group-a', memberIds: ['student@kent.edu'] });
 		expect(group.selfJoinEnabled).toBe(false);
+		expect(group.isActive).toBe(true);
 		expect(group.maxMembers).toBe(null);
 		expect(group.memberIds).toEqual(['student@kent.edu']);
 	});
@@ -12,6 +13,11 @@ describe('group joining settings', () => {
 		const group = normalizeCourseGroup({ self_join_enabled: true, max_members: 4 });
 		expect(group.selfJoinEnabled).toBe(true);
 		expect(group.maxMembers).toBe(4);
+	});
+	it('preserves paused group state independently of self-joining', () => {
+		const group = normalizeCourseGroup({ is_active: false, self_join_enabled: true });
+		expect(group.isActive).toBe(false);
+		expect(group.selfJoinEnabled).toBe(true);
 	});
 	it('does not coerce strings into an enabled self-join policy', () => {
 		expect(

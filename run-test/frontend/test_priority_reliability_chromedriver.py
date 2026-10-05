@@ -646,6 +646,7 @@ class PriorityReliabilityE2ETests(FrontendBrowserTestCase):
         self._assert_title("Courses")
 
         self._click_element(By.XPATH, "//button[normalize-space()='Groups']")
+        self._click_element(By.CSS_SELECTOR, "button[aria-label='View Team Alpha']")
         regenerate_button = self.wait.until(
             EC.element_to_be_clickable(
                 (By.XPATH, "//button[normalize-space()='Regenerate Key']")

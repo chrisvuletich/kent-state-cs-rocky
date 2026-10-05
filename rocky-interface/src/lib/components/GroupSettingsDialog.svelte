@@ -1,12 +1,15 @@
 <script lang="ts">
 	import { focusScope } from '$lib/actions/focusScope';
 	import type { CourseGroup } from '$lib/types/course';
-	import type { GroupJoinSettings } from '$lib/api/courses';
+	import type { GroupSettings } from '$lib/api/courses';
 	import '$lib/styles/components/modules/popup.css';
 
 	export let group: CourseGroup;
-	export let onSave: (settings: GroupJoinSettings) => Promise<void>;
+	export let keyLimitMaximum: number;
+	export let onSave: (settings: GroupSettings) => Promise<void>;
 	export let onClose: () => void;
+	let name = group.name;
+	let keyLimit: number | undefined = group.keyLimit;
 	let enabled = group.selfJoinEnabled;
 	let maxMembers: number | undefined = group.maxMembers ?? undefined;
 	let busy = false;
@@ -18,6 +21,19 @@
 	async function save(event: SubmitEvent) {
 		event.preventDefault();
 		if (busy) return;
+		if (!name.trim() || name.trim().length > 120) {
+			error = 'Enter a group name of 1 to 120 characters.';
+			return;
+		}
+		if (
+			keyLimit === undefined ||
+			!Number.isSafeInteger(keyLimit) ||
+			keyLimit < 0 ||
+			keyLimit > keyLimitMaximum
+		) {
+			error = `Enter a whole number of keys between 0 and ${keyLimitMaximum}.`;
+			return;
+		}
 		const limit = maxMembers ?? null;
 		if (limit !== null && (!Number.isSafeInteger(limit) || limit < 1)) {
 			error = 'Enter a positive whole number, or leave the size limit blank.';
@@ -26,7 +42,7 @@
 		busy = true;
 		error = null;
 		try {
-			await onSave({ selfJoinEnabled: enabled, maxMembers: limit });
+			await onSave({ name: name.trim(), keyLimit, selfJoinEnabled: enabled, maxMembers: limit });
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Unable to save group settings.';
 		} finally {
@@ -48,10 +64,21 @@
 		aria-modal="true"
 		aria-labelledby="join-settings-title"
 		tabindex="-1"
-		use:focusScope={{ initialFocus: '#group-self-join', onEscape: close }}
+		use:focusScope={{ initialFocus: '#group-name', onEscape: close }}
 	>
-		<h3 id="join-settings-title">Joining settings: {group.name}</h3>
+		<h3 id="join-settings-title">Group settings: {group.name}</h3>
 		<form onsubmit={save}>
+			<label for="group-name">Group name</label>
+			<input
+				id="group-name"
+				class="text-input"
+				type="text"
+				bind:value={name}
+				maxlength="120"
+				required
+				readonly={busy}
+			/>
+			<p>Renaming preserves memberships and existing keys.</p>
 			<label class="join-toggle"
 				><input id="group-self-join" type="checkbox" bind:checked={enabled} disabled={busy} /> Allow students
 				to join themselves</label
@@ -75,6 +102,22 @@
 			<p id="group-size-help">
 				Leave blank for no limit. The limit also applies when staff add students. Current members: {group
 					.memberIds.length}.
+			</p>
+			<label for="group-key-limit">Shared key allowance</label>
+			<input
+				id="group-key-limit"
+				class="text-input"
+				type="number"
+				min="0"
+				max={keyLimitMaximum}
+				step="1"
+				bind:value={keyLimit}
+				required
+				readonly={busy}
+			/>
+			<p>
+				Course maximum: {keyLimitMaximum}. Lowering this disables keys in excess slots; raising it
+				can restore them unless separately disabled or revoked.
 			</p>
 			{#if error}<p class="popup-error" role="alert">{error}</p>{/if}
 			<span class="save-status" role="status">{busy ? 'Saving settings…' : ''}</span>

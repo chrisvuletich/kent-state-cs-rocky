@@ -4,8 +4,11 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any
 
-from flask import jsonify, request
-from backend.course_actions import save_course_changes, update_group_join_settings
+from flask import current_app, jsonify, request
+from backend.course_actions import (
+    save_course_changes, update_group_join_settings, update_course_group_key_limit,
+    validate_group_name,
+)
 from backend.route_handlers.audit import (
     AuditBacklogFull, PENDING_COURSE_AUDIT, build_audit_event,
     flush_course_audit, stage_course_audit,
@@ -555,7 +558,7 @@ def create_course_group_route(deps: dict[str, Any], course_id: str):
     if not isinstance(data, dict):
         return _bad_request("Request body must be a JSON object.")
 
-    course = get_course_record(courses, course_id)
+    course = _group_course_record(deps, course_id)
     if not course:
         return jsonify({"error": "Course not found"}), 404
 
@@ -566,28 +569,13 @@ def create_course_group_route(deps: dict[str, Any], course_id: str):
     if not can_manage_people(course, requester_id or email, is_admin):
         return jsonify({"error": "Instructor or admin access is required."}), 403
 
-    global_group_ids = {
-        normalize_str(group.get("id"))
-        for candidate_course in courses.find()
-        for group in candidate_course.get("groups", [])
-        if isinstance(group, dict)
-    }
-    current_course_group_ids = {
-        normalize_str(group.get("id"))
-        for group in course.get("groups", [])
-        if isinstance(group, dict)
-    }
-    global_group_ids -= current_course_group_ids
-
     try:
-        updated = create_course_group(deepcopy(course), data.get("name", ""), global_group_ids)
+        updated = create_course_group(deepcopy(course), data.get("name", ""))
     except ValueError as exc:
-        return _bad_request("Unable to create course group.")
+        return _bad_request(str(exc))
 
-    if not save_course_changes(courses, course, updated):
-        return _course_write_conflict()
     created_group = updated.get("groups", [])[-1] if updated.get("groups") else {}
-    deps["record_audit_event"](
+    event = build_audit_event(
         deps,
         "course-group-created",
         course=updated,
@@ -595,7 +583,77 @@ def create_course_group_route(deps: dict[str, Any], course_id: str):
         target_id=created_group.get("id"),
         changes={"name": created_group.get("name")},
     )
+    stage_course_audit(course, updated, [event])
+    if not save_course_changes(courses, course, updated):
+        return _course_write_conflict()
+    flush_course_audit(deps, course["_id"])
     return jsonify(_serialize_value(updated))
+
+
+def manage_course_group_route(deps: dict[str, Any], course_id: str, group_id: str):
+    """One atomic edit for group settings; deletion never removes course enrollment/history."""
+    identity = deps["require_requester_identity"]()
+    if identity[0] is None:
+        return jsonify({"error": "Authentication headers are required."}), 401
+    email, is_admin = identity
+    requester_id = deps["_resolve_requester_user_id"](email)
+    course = _group_course_record(deps, course_id)
+    if not course:
+        return jsonify({"error": "Course not found."}), 404
+    if not any(deps["can_manage_people"](course, alias, is_admin) for alias in (requester_id, email)):
+        return jsonify({"error": "Instructor, teaching assistant, or admin access is required."}), 403
+    closed = _reject_if_course_closed(course)
+    if closed is not None:
+        return closed
+    updated = deepcopy(course)
+    group = next((g for g in updated.get("groups", []) if g.get("id") == group_id), None)
+    if group is None:
+        return jsonify({"error": "Group not found. Refresh groups and try again."}), 404
+    deleting = request.method == "DELETE"
+    if deleting:
+        updated["groups"] = [g for g in updated["groups"] if g["id"] != group_id]
+        changes = {"name": group.get("name"), "member_count": len(group.get("memberIds", []))}
+    else:
+        data = request.get_json(silent=True)
+        allowed = {"name", "self_join_enabled", "max_members", "key_limit", "is_active"}
+        if not isinstance(data, dict) or not data or set(data) - allowed:
+            return deps["_bad_request"]("Provide only name, self_join_enabled, max_members, key_limit, or is_active.")
+        before_group = deepcopy(group)
+        try:
+            if "name" in data:
+                group["name"] = validate_group_name(data["name"])
+            if "is_active" in data:
+                if type(data["is_active"]) is not bool:
+                    raise ValueError("is_active must be a boolean.")
+                group["is_active"] = data["is_active"]
+            if "self_join_enabled" in data or "max_members" in data:
+                update_group_join_settings(updated, group_id,
+                    data.get("self_join_enabled", group.get("self_join_enabled", False)),
+                    data.get("max_members", group.get("max_members")))
+            if "key_limit" in data:
+                if type(data["key_limit"]) is not int:
+                    raise ValueError("key_limit must be a whole number.")
+                update_course_group_key_limit(updated, group_id, data["key_limit"])
+        except ValueError as exc:
+            return deps["_bad_request"](str(exc))
+        changes = {key: group[key] for key in data if group[key] != before_group.get(key)}
+    events = [build_audit_event(
+        deps, "course-group-deleted" if deleting else "course-group-updated", course=updated,
+        target_type="group", target_id=group_id, changes=changes,
+    )] if changes else []
+    stage_course_audit(course, updated, events)
+    if not save_course_changes(deps["courses"], course, updated):
+        return _course_write_conflict()
+    if deleting:
+        # Authorization already fails closed on a missing group, including keys
+        # generated by an in-flight request. IDs are never reused. Hash cleanup
+        # is supplementary, not the security boundary or a reason to undo deletion.
+        try:
+            _revoke_course_owner_keys(course, deps["api_keys"], "group", {group_id}, deps["normalize_str"])
+        except Exception:
+            current_app.logger.exception("Deleted group key cleanup failed; keys remain denied by course policy")
+    flush_course_audit(deps, course["_id"])
+    return jsonify({"deleted": True, "group_id": group_id} if deleting else deps["_serialize_value"]({"group": group}))
 
 
 def add_group_members_route(deps: dict[str, Any], course_id: str, group_id: str):
@@ -734,6 +792,8 @@ def join_course_group_route(deps: dict[str, Any], course_id: str, group_id: str)
         existing = {normalize_str(value).lower() for value in group.get("memberIds", [])}
         already_joined = not aliases.isdisjoint(existing)
         if not already_joined:
+            if group.get("is_active", True) is not True:
+                return jsonify({"error": "This group is paused. Contact your instructor."}), 403
             if group.get("self_join_enabled") is not True:
                 return jsonify({"error": "This group is not open for self-joining."}), 403
             limit = group.get("max_members")
@@ -1222,6 +1282,10 @@ def regenerate_course_api_key_route(deps: dict[str, Any], course_id: str):
             return _bad_request(str(exc))
     owner_type = resolved_owner["owner_type"]
     owner_id = resolved_owner["owner_id"]
+    if owner_type == "group":
+        group = next((g for g in course.get("groups", []) if g.get("id") == owner_id), None)
+        if group is None or group.get("is_active", True) is not True:
+            return jsonify({"error": "Resume the group before generating shared keys."}), 403
 
     if owner_type == "person":
         owner_record = _resolve_user_record(owner_id, owner_id)
@@ -1317,6 +1381,17 @@ def regenerate_course_api_key_route(deps: dict[str, Any], course_id: str):
             "slot_index": slot_index,
         },
     )
+
+    if owner_type == "group":
+        current_course = get_course_record(courses, course_id)
+        current_group = next((g for g in (current_course or {}).get("groups", []) if g.get("id") == owner_id), None)
+        if (not current_course or not _course_is_active(current_course) or current_group is None
+                or current_group.get("is_active", True) is not True
+                or slot_index > _get_owner_key_limit(current_course, owner_type, owner_id)
+                or not can_manage_people(current_course, requester_id or email, is_admin)):
+            # Never hand back a credential using only the stale policy and
+            # permissions snapshot from before generation.
+            return jsonify({"error": "The group changed while generating a key. Refresh groups and check its settings before retrying."}), 409
 
     return jsonify(_serialize_value(key_doc))
 
@@ -1504,6 +1579,10 @@ def update_course_api_key_status_route(deps: dict[str, Any], course_id: str):
     if not isinstance(raw_is_active, bool):
         return _bad_request("isActive must be a boolean.")
     if raw_is_active:
+        if owner_type == "group":
+            group = next((g for g in course.get("groups", []) if g.get("id") == owner_id), None)
+            if group is None or group.get("is_active", True) is not True:
+                return jsonify({"error": "Resume the group before enabling shared keys."}), 403
         owner_limit = deps["_get_owner_key_limit"](course, owner_type, owner_id)
         if slot_index > owner_limit:
             return _bad_request(

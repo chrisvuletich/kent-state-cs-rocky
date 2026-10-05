@@ -101,7 +101,8 @@ class RoleJourneyE2ETests(FrontendBrowserTestCase):
     def test_2_student_group_keys_are_read_only(self):
         self._login_as("student.local@kent.edu")
         self._open_course_from_sidebar("Software Engineering I")
-        self._click_element(By.XPATH, "//button[normalize-space()='Team Alpha']")
+        self._click_element(By.XPATH, "//button[normalize-space()='Groups']")
+        self._click_element(By.CSS_SELECTOR, "button[aria-label='View Team Alpha']")
 
         group_panel = self.wait.until(
             EC.visibility_of_element_located(
@@ -187,6 +188,7 @@ class RoleJourneyE2ETests(FrontendBrowserTestCase):
         )
 
         self._click_element(By.XPATH, "//button[normalize-space()='Groups']")
+        self._click_element(By.CSS_SELECTOR, "button[aria-label='View Team Alpha']")
         group_panel = self.wait.until(
             EC.visibility_of_element_located(
                 (

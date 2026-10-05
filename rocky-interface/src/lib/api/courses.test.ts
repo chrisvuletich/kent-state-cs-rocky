@@ -4,11 +4,73 @@ import {
 	addGroupMembers,
 	fetchCourseApiHistory,
 	joinCourseGroup,
+	updateCourseGroup,
+	deleteCourseGroup,
+	removeGroupMember,
 	updateGroupJoinSettings
 } from './courses';
 
 afterEach(() => {
 	vi.unstubAllGlobals();
+});
+
+describe('group management', () => {
+	it('returns the saved membership after removal without a second fetch', async () => {
+		const result = { id: 1, groups: [{ id: 'group-a', memberIds: [] }] };
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValue({ ok: true, text: async () => JSON.stringify(result) });
+		vi.stubGlobal('fetch', fetchMock);
+		await expect(removeGroupMember(1, 'group-a', 'student@kent.edu')).resolves.toEqual(result);
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		expect(fetchMock).toHaveBeenCalledWith(
+			'/api/backend/courses/1/groups/group-a/members',
+			expect.objectContaining({
+				method: 'DELETE',
+				body: JSON.stringify({ id: 'student@kent.edu' })
+			})
+		);
+	});
+	it('sends only the supplied settings and encodes group identifiers', async () => {
+		const fetchMock = vi.fn().mockResolvedValue({
+			ok: true,
+			text: async () => JSON.stringify({ group: { id: 'a/b', is_active: false } })
+		});
+		vi.stubGlobal('fetch', fetchMock);
+		await updateCourseGroup(1, 'a/b', { isActive: false });
+		expect(fetchMock).toHaveBeenCalledWith(
+			'/api/backend/courses/1/groups/a%2Fb',
+			expect.objectContaining({ method: 'PATCH', body: '{"is_active":false}' })
+		);
+		await updateCourseGroup(1, 'a/b', {
+			name: 'Project',
+			keyLimit: 0,
+			maxMembers: null,
+			selfJoinEnabled: false
+		});
+		expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({
+			name: 'Project',
+			key_limit: 0,
+			max_members: null,
+			self_join_enabled: false
+		});
+	});
+	it('deletes only the requested group and leaves failures available for inline display', async () => {
+		const fetchMock = vi.fn().mockResolvedValue({
+			ok: false,
+			status: 409,
+			text: async () => JSON.stringify({ error: 'The course changed while saving.' })
+		});
+		vi.stubGlobal('fetch', fetchMock);
+		await expect(deleteCourseGroup(1, 'group-a')).rejects.toThrow(
+			'The course changed while saving.'
+		);
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		expect(fetchMock).toHaveBeenCalledWith(
+			'/api/backend/courses/1/groups/group-a',
+			expect.objectContaining({ method: 'DELETE' })
+		);
+	});
 });
 
 describe('addGroupMembers', () => {

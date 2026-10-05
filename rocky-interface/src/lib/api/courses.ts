@@ -266,15 +266,19 @@ export async function removeCourseMember(courseId: string | number, id: string):
 	}
 }
 
-export async function createCourseGroup(courseId: string | number, name: string): Promise<void> {
+export async function createCourseGroup(
+	courseId: string | number,
+	name: string
+): Promise<ApiCourse> {
 	try {
-		await fetchJson<ApiCourse>(`/api/backend/courses/${courseId}/groups`, {
+		const course = await fetchJson<ApiCourse>(`/api/backend/courses/${courseId}/groups`, {
 			method: 'POST',
 			headers: jsonHeaders(),
 			body: JSON.stringify({ name })
 		});
 
 		showSuccessFeedback('Group created successfully.');
+		return course;
 	} catch (err) {
 		const message = getErrorMessage(err, 'Unable to create group.');
 		showErrorFeedback(message);
@@ -304,15 +308,19 @@ export async function removeGroupMember(
 	courseId: string | number,
 	groupId: string,
 	id: string
-): Promise<void> {
+): Promise<ApiCourse> {
 	try {
-		await fetchJson<ApiCourse>(`/api/backend/courses/${courseId}/groups/${groupId}/members`, {
-			method: 'DELETE',
-			headers: jsonHeaders(),
-			body: JSON.stringify({ id })
-		});
+		const updated = await fetchJson<ApiCourse>(
+			`/api/backend/courses/${courseId}/groups/${encodeURIComponent(groupId)}/members`,
+			{
+				method: 'DELETE',
+				headers: jsonHeaders(),
+				body: JSON.stringify({ id })
+			}
+		);
 
 		showSuccessFeedback('Group member removed successfully.');
+		return updated;
 	} catch (err) {
 		const message = getErrorMessage(err, 'Unable to remove group member.');
 		showErrorFeedback(message);
@@ -321,6 +329,36 @@ export async function removeGroupMember(
 }
 
 export type GroupJoinSettings = { selfJoinEnabled: boolean; maxMembers: number | null };
+
+export type GroupSettings = GroupJoinSettings & { name: string; keyLimit: number };
+
+export function updateCourseGroup(
+	courseId: number,
+	groupId: string,
+	settings: Partial<GroupSettings & { isActive: boolean }>
+): Promise<{ group: ApiCourseGroup }> {
+	return fetchJson(`/api/backend/courses/${courseId}/groups/${encodeURIComponent(groupId)}`, {
+		method: 'PATCH',
+		headers: jsonHeaders(),
+		body: JSON.stringify({
+			name: settings.name,
+			key_limit: settings.keyLimit,
+			self_join_enabled: settings.selfJoinEnabled,
+			max_members: settings.maxMembers,
+			is_active: settings.isActive
+		})
+	});
+}
+
+export function deleteCourseGroup(
+	courseId: number,
+	groupId: string
+): Promise<{ deleted: boolean }> {
+	return fetchJson(`/api/backend/courses/${courseId}/groups/${encodeURIComponent(groupId)}`, {
+		method: 'DELETE',
+		headers: jsonHeaders()
+	});
+}
 
 export function updateGroupJoinSettings(
 	courseId: number,

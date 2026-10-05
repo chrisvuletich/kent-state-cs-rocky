@@ -92,15 +92,15 @@ Health check: `GET /health`
 ## Course key access and membership audit recovery
 
 `rocky_common/course_keys.py` is the shared policy used by this backend and
-`api-rocky`. Course open/closed state and owner key-slot limits are read from the
-course document, not copied into every key. API-key summaries report effective
+`api-rocky`. Course open/closed state, group pause state, and owner key-slot limits
+are read from the course document, not copied into every key. API-key summaries report effective
 access; the stored key's `is_active` flag describes manual/account disabling.
 Revoked, deleted, expired, manually disabled, and suspended keys remain denied.
 Existing `course`/`limit` disable markers are evaluated against current policy,
 so this change needs no key migration. Default web-chat and service keys are not
 course-scoped. Keep the repository-root `rocky_common` package with both services.
 
-Bulk group assignments, student self-joins, and joining settings save their
+Group creation, settings, deletion, bulk assignments, and student self-joins save their
 audit events in the same compare-and-set as the course update. These private
 `_pending_audit_events` retain the original actor, timestamp, and unique event
 ID until copied to `api_history`. They are never returned in course responses.
@@ -115,6 +115,33 @@ delivery succeeds. Course deletion is blocked while events remain undelivered.
 Do not manually clear the pending field: it is the durable audit record during
 an audit-storage outage. The normal membership `409` response still means a
 concurrent course edit won; reload and retry.
+
+## Group management
+
+Groups remain embedded in their course document. Instructors, assigned teaching
+assistants, and admins can manage them while the course is open. Browser clients
+use the same paths below under `/api/backend` with their signed-in session.
+
+- `POST /courses/<course_id>/groups`: create a group using `{ "name": "Team A" }`.
+- `PATCH /courses/<course_id>/groups/<group_id>`: update any nonempty subset of
+  `name`, `self_join_enabled`, `max_members`, `key_limit`, and `is_active` in one
+  atomic edit. Names contain 1–120 characters, capacities are positive integers
+  or `null`, and key allowances are nonnegative integers within the course cap.
+- `DELETE /courses/<course_id>/groups/<group_id>`: delete the group, including
+  memberships, without deleting course enrollment or usage/audit history.
+
+Closing joining (`self_join_enabled: false`) leaves shared keys usable. Pausing
+(`is_active: false`) denies shared-key access and new self-joins but leaves the
+group editable by staff. Missing `is_active` means active for existing groups.
+Resuming does not clear manual disable or revocation flags on individual keys.
+None of these group controls changes personal keys or normal web-chat access.
+
+New groups use random UUID-based IDs; renaming does not change their identity,
+and deleting/recreating a name never revives its old keys. Deletion denies keys
+through live policy before best-effort removal of their stored hashes, so a
+cleanup failure or an overlapping key-generation request cannot restore access.
+Concurrent course changes return `409`, and invalid settings return `400` without
+partially changing the group. See `deploy/RELEASE_CHECKLIST.md` before rollout.
 
 ## Telemetry analytics
 

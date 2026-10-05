@@ -25,6 +25,8 @@ ALLOWED_AUDIT_EVENTS = {
     "course-created",
     "course-deleted",
     "course-group-created",
+    "course-group-updated",
+    "course-group-deleted",
     "course-group-key-limit-updated",
     "course-group-member-added",
     "course-group-members-added",

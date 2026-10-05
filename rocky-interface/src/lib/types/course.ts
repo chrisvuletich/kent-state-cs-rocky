@@ -79,6 +79,7 @@ export type ApiCourseGroup = Partial<{
 	memberIds: string[];
 	key_limit: number;
 	self_join_enabled: boolean;
+	is_active: boolean;
 	max_members: number | null;
 }>;
 
@@ -94,6 +95,7 @@ export type CourseGroup = {
 	memberIds: string[];
 	keyLimit: number;
 	selfJoinEnabled: boolean;
+	isActive: boolean;
 	maxMembers: number | null;
 };
 
@@ -235,6 +237,7 @@ export function normalizeCourseGroup(raw: ApiCourseGroup, index = 0): CourseGrou
 				? Math.floor(raw.key_limit)
 				: 1,
 		selfJoinEnabled: raw.self_join_enabled === true,
+		isActive: raw.is_active !== false,
 		maxMembers:
 			typeof raw.max_members === 'number' &&
 			Number.isSafeInteger(raw.max_members) &&

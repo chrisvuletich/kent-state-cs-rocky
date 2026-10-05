@@ -378,59 +378,6 @@
 	margin: 0;
 }
 
-.group-table {
-	table-layout: fixed;
-}
-
-.group-col-name {
-	width: 22%;
-}
-
-.group-col-members {
-	width: 46%;
-}
-
-.group-col-add {
-	width: 32%;
-}
-
-.group-table .course-inline-list {
-	padding-left: var(--space-md);
-}
-
-.course-group-member-label {
-	display: flex;
-	flex-direction: column;
-	min-width: 0;
-	overflow-wrap: anywhere;
-}
-
-.course-group-member-label small {
-	color: var(--color-text-secondary);
-}
-
-.course-group-join-summary {
-	font-size: var(--font-size-sm);
-	color: var(--color-text-secondary);
-	margin: var(--space-sm) 0;
-}
-
-.group-table .course-inline-list li {
-	display: flex;
-	justify-content: space-between;
-	align-items: center;
-	gap: var(--space-sm);
-}
-
-.group-table .course-group-add-row .text-input {
-	min-width: 0;
-	width: 100%;
-}
-
-.group-table .course-group-add-row {
-	justify-content: flex-end;
-}
-
 @media (max-width: 900px) {
 	.home-panel-stack > .course-panel {
 		display: block;
@@ -504,8 +451,7 @@
 		overflow: auto;
 	}
 
-	.course-people-table,
-	.group-table {
+	.course-people-table {
 		min-width: 680px;
 	}
 }

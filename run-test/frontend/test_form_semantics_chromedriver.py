@@ -117,7 +117,6 @@ class FormSemanticsE2ETests(FrontendBrowserTestCase):
             "course-tab-students",
             "course-tab-groups",
             "course-tab-edit-roster",
-            "course-tab-edit-groups",
             "course-tab-course-settings",
         ):
             with self.subTest(tab=tab_id):

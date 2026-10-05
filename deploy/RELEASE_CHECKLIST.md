@@ -63,6 +63,15 @@ serving API traffic; merely rolling back both binaries is not sufficient.
 Likewise, drain any `_pending_audit_events` through the current Audit Logs
 endpoint before reverting to a version without audit recovery.
 
+Group pause/resume also uses the shared live course policy: restart the chat API
+with the version that understands `groups[].is_active` **before** exposing the
+new group controls. Existing groups default to active; no migration is needed.
+Do not roll back to a version that ignores group pause while paused groups
+exist, unless their shared keys have first been explicitly disabled/revoked.
+Group deletion retains usage/audit records and permanently invalidates keys by
+removing their owner; new groups use unique IDs rather than recycling name-based
+IDs. Restart the frontend too for the unified Groups tab.
+
 For streaming, enable Granite first, then Rocky, then the frontend. For image
 input, enable Granite first and Rocky second. Run the full doctor after the
 flags are aligned; it fails when rollout state or image limits differ.

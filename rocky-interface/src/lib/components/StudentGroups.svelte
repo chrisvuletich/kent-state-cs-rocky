@@ -30,45 +30,55 @@
 	{#if courseClosed}<p role="status">This course is closed. Joining is unavailable.</p>{/if}
 	{#if error}<p class="join-error" role="alert">{error}</p>{/if}
 	{#if !groups.length}<p>No groups are available for this course yet.</p>{/if}
-	<ul class="joinable-groups">
-		{#each groups as group (group.id)}
-			{@const joined = joinedGroupIds.has(group.id)}
-			{@const full = group.maxMembers !== null && group.memberIds.length >= group.maxMembers}
-			<li>
-				<div class="group-description">
-					<strong>{group.name}</strong>
-					<span
-						>{group.memberIds.length}{group.maxMembers !== null ? ` / ${group.maxMembers}` : ''} students</span
-					>
-				</div>
-				<span class="join-status"
-					>{joined
-						? 'You are a member'
-						: courseClosed
-							? 'Course closed'
-							: !group.selfJoinEnabled
-								? 'Instructor-assigned'
-								: full
-									? 'Full'
-									: 'Open to join'}</span
-				>
-				<button
-					type="button"
-					class="view-btn"
-					aria-label={joined ? `View ${group.name}` : `Join ${group.name}`}
-					disabled={!joined &&
-						(courseClosed ||
-							!group.selfJoinEnabled ||
-							full ||
-							pendingGroupId !== null ||
-							refreshing)}
-					onclick={() => (joined ? onOpen(group) : onJoin(group))}
-				>
-					{joined ? 'View group' : pendingGroupId === group.id ? 'Joining…' : 'Join group'}
-				</button>
-			</li>
-		{/each}
-	</ul>
+	{#each [true, false] as memberships}
+		{@const sectionGroups = groups.filter((group) => joinedGroupIds.has(group.id) === memberships)}
+		{#if sectionGroups.length}
+			<h4>{memberships ? 'Your groups' : 'Other course groups'}</h4>
+			<ul class="joinable-groups">
+				{#each sectionGroups as group (group.id)}
+					{@const joined = joinedGroupIds.has(group.id)}
+					{@const full = group.maxMembers !== null && group.memberIds.length >= group.maxMembers}
+					<li>
+						<div class="group-description">
+							<strong>{group.name}</strong>
+							<span
+								>{group.memberIds.length}{group.maxMembers !== null ? ` / ${group.maxMembers}` : ''} students</span
+							>
+						</div>
+						<span class="join-status"
+							>{joined
+								? `You are a member${courseClosed ? ' · Course closed' : !group.isActive ? ' · Paused' : ''}`
+								: courseClosed
+									? 'Course closed'
+									: !group.isActive
+										? 'Paused'
+										: !group.selfJoinEnabled
+											? 'Instructor-assigned'
+											: full
+												? 'Full'
+												: 'Open to join'}</span
+						>
+						<button
+							id={`student-view-group-${group.id}`}
+							type="button"
+							class="view-btn"
+							aria-label={joined ? `View ${group.name}` : `Join ${group.name}`}
+							disabled={!joined &&
+								(courseClosed ||
+									!group.isActive ||
+									!group.selfJoinEnabled ||
+									full ||
+									pendingGroupId !== null ||
+									refreshing)}
+							onclick={() => (joined ? onOpen(group) : onJoin(group))}
+						>
+							{joined ? 'View group' : pendingGroupId === group.id ? 'Joining…' : 'Join group'}
+						</button>
+					</li>
+				{/each}
+			</ul>
+		{/if}
+	{/each}
 	<span role="status">{pendingGroupId ? 'Joining group…' : ''}</span>
 </div>
 

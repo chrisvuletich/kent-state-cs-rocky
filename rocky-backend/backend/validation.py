@@ -155,6 +155,9 @@ def normalize_course_groups(value: Any):
             return None, "group key_limit must be an integer >= 0."
 
         enabled = entry.get("self_join_enabled", False)
+        is_active = entry.get("is_active", True)
+        if type(is_active) is not bool:
+            return None, "group is_active must be a boolean."
         max_members = entry.get("max_members")
         try:
             validate_group_join_settings(enabled, max_members)
@@ -164,7 +167,7 @@ def normalize_course_groups(value: Any):
             return None, "Group size limit cannot be smaller than its current membership."
         groups.append({
             "id": group_id, "name": name, "memberIds": normalized_ids, "key_limit": key_limit,
-            "self_join_enabled": enabled, "max_members": max_members,
+            "self_join_enabled": enabled, "max_members": max_members, "is_active": is_active,
         })
 
     return groups, None

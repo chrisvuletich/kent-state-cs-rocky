@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import re
 from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any
+from uuid import uuid4
 
 from bson import ObjectId
 from bson.errors import InvalidId
@@ -11,8 +11,6 @@ from pymongo.errors import DuplicateKeyError
 
 from backend.api_key_generator import generate_api_key_id, generate_api_key_pair
 from backend.validation import is_valid_email, normalize_str, parse_semester, validate_group_join_settings
-
-GROUP_ID_RE = re.compile(r"[^a-z0-9]+")
 
 
 def save_course_changes(courses_collection, before: dict[str, Any], after: dict[str, Any]) -> bool:
@@ -496,29 +494,26 @@ def remove_course_member(course: dict[str, Any], member_id: str, requester_is_ad
     return course
 
 
-def create_course_group(course: dict[str, Any], name: str, global_existing_ids: set[str] | None = None) -> dict[str, Any]:
-    group_name = normalize_str(name)
-    if not group_name:
-        raise ValueError("group name is required.")
+def validate_group_name(name: Any) -> str:
+    if not isinstance(name, str) or not name.strip() or len(name.strip()) > 120:
+        raise ValueError("Group name must contain 1 to 120 characters.")
+    return name.strip()
 
-    safe_slug = GROUP_ID_RE.sub("-", group_name.lower()).strip("-") or "group"
-    existing_ids = {
-        normalize_str(group.get("id"))
-        for group in course.get("groups", [])
-        if isinstance(group, dict)
-    }
-    if isinstance(global_existing_ids, set):
-        existing_ids = existing_ids | {normalize_str(value) for value in global_existing_ids}
-    suffix = 1
-    group_id = f"{safe_slug}-{suffix}"
-    while group_id in existing_ids:
-        suffix += 1
-        group_id = f"{safe_slug}-{suffix}"
+
+def create_course_group(course: dict[str, Any], name: str) -> dict[str, Any]:
+    group_name = validate_group_name(name)
+    # Identity is independent of the name and never recycled after deletion.
+    # Old keys must not become valid for a new group with the same display name.
+    group_id = f"group-{uuid4().hex}"
+    key_limit = course.get("instructor_handout_limit")
+    if type(key_limit) is not int or key_limit < 0:
+        key_limit = 2
 
     course.setdefault("groups", [])
     course["groups"].append({
-        "id": group_id, "name": group_name, "memberIds": [], "key_limit": 1,
-        "self_join_enabled": False, "max_members": None,
+        "id": group_id, "name": group_name, "memberIds": [],
+        "key_limit": min(1, key_limit),
+        "self_join_enabled": False, "max_members": None, "is_active": True,
     })
     return course
 
@@ -696,11 +691,14 @@ def remove_group_member(course: dict[str, Any], group_id: str, member_id: str) -
         None,
     )
     target_email = _member_email(target_member) if isinstance(target_member, dict) else normalized_member_id
+    target_aliases = {normalized_member_id, target_email}
+    if target_member:
+        target_aliases.add(_member_identifier(target_member))
 
     group["memberIds"] = [
         group_member_id
         for group_member_id in group.get("memberIds", [])
-        if normalize_str(group_member_id).lower() != target_email
+        if normalize_str(group_member_id).lower() not in target_aliases
     ]
     return course
 
