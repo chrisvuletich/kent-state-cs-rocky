@@ -712,10 +712,10 @@ def regenerate_course_api_key(
     ownership: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     course_code = normalize_str(course.get("code"))
-    if not course_code:
-        raise ValueError("Course code is required for API key management.")
-
     course_numeric_id = course.get("id") if isinstance(course.get("id"), int) else None
+    # Course codes are optional display metadata; numeric IDs scope current keys.
+    if course_numeric_id is None and not course_code:
+        raise ValueError("Course ID or code is required for API key management.")
 
     normalized_requester = normalize_str(requester_identifier).lower()
     ownership_payload = ownership if isinstance(ownership, dict) else {}
@@ -823,18 +823,17 @@ def regenerate_course_api_key(
 
 def delete_course_api_keys(course: dict[str, Any], api_keys_collection) -> int:
     course_code = normalize_str(course.get("code"))
-    if not course_code:
-        raise ValueError("Course code is required for API key management.")
-
-    deleted_count = 0
     course_numeric_id = course.get("id") if isinstance(course.get("id"), int) else None
-    if course_numeric_id is not None:
-        deleted_by_course_id = api_keys_collection.delete_many({"course_id": course_numeric_id})
-        deleted_count += int(getattr(deleted_by_course_id, "deleted_count", 0))
+    if course_numeric_id is None and not course_code:
+        raise ValueError("Course ID or code is required for API key management.")
 
-    deleted_by_course_code = api_keys_collection.delete_many({"c_id": course_code})
-    deleted_count += int(getattr(deleted_by_course_code, "deleted_count", 0))
-    return deleted_count
+    # Never broaden an ID-scoped deletion to another course sharing its code.
+    if course_numeric_id is not None:
+        query = {"course_id": course_numeric_id}
+    else:
+        query = {"c_id": course_code}
+    deleted = api_keys_collection.delete_many(query)
+    return int(getattr(deleted, "deleted_count", 0))
 
 
 

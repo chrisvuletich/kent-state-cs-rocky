@@ -1566,7 +1566,14 @@ def get_course_api_history(deps: dict[str, Any], course_id: str):
         return jsonify({"error": "Not found"}), 404
 
     flush_course_audit(deps, course["_id"])
-    query = {"c_id": normalize_str(course.get("code"))}
+    course_numeric_id = course.get("id") if isinstance(course.get("id"), int) else None
+    if course_numeric_id is not None:
+        query = {"course_id": course_numeric_id}
+    else:
+        course_code = normalize_str(course.get("code"))
+        if not course_code:
+            return jsonify([])
+        query = {"c_id": course_code}
     if not can_manage_people(course, requester_id or email, is_admin):
         query["u_id"] = _resolve_requester_user_id(email)
 
