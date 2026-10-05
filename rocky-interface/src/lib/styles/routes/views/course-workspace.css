@@ -398,6 +398,23 @@
 	padding-left: var(--space-md);
 }
 
+.course-group-member-label {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+
+.course-group-member-label small {
+	color: var(--color-text-secondary);
+}
+
+.course-group-join-summary {
+	font-size: var(--font-size-sm);
+	color: var(--color-text-secondary);
+	margin: var(--space-sm) 0;
+}
+
 .group-table .course-inline-list li {
 	display: flex;
 	justify-content: space-between;

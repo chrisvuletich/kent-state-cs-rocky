@@ -1,9 +1,12 @@
 <script lang="ts">
-	import { onDestroy, onMount } from 'svelte';
+	import { onDestroy, onMount, tick } from 'svelte';
 	import { page } from '$app/stores';
 	import {
 		addCourseMembers,
-		addGroupMember as addCourseGroupMember,
+		addGroupMembers as addCourseGroupMembers,
+		joinCourseGroup,
+		updateGroupJoinSettings,
+		fetchCourseWorkspace,
 		createCourseGroup as createCourseGroupRequest,
 		deleteCourseApiKey,
 		fetchCourseApiKeys,
@@ -26,6 +29,9 @@
 	import { focusScope } from '$lib/actions/focusScope';
 	import { handleTabListKeydown } from '$lib/accessibility/tabs';
 	import ViewShell from '$lib/components/ViewShell.svelte';
+	import GroupStudentsDialog from '$lib/components/GroupStudentsDialog.svelte';
+	import GroupJoinSettingsDialog from '$lib/components/GroupJoinSettingsDialog.svelte';
+	import StudentGroups from '$lib/components/StudentGroups.svelte';
 	import CourseEditorCard from '$lib/components/cards/CourseEditorCard.svelte';
 	import CourseKeySlotCard from '$lib/components/cards/CourseKeySlotCard.svelte';
 	import {
@@ -35,8 +41,13 @@
 	} from '$lib/config/courseEditor';
 	import { showErrorFeedback, showSuccessFeedback } from '$lib/stores/feedbackStore';
 	import type { Course, CourseApiKeySummary, CourseDetail, CourseGroup } from '$lib/types/course';
+	import { normalizeCourse, normalizeCourseDetail, normalizeCourseGroup } from '$lib/types/course';
 	import type { User } from '$lib/types/user';
-	import type { CourseApiHistoryEntry, CourseApiKeySummaryResponse } from '$lib/api/courses';
+	import type {
+		CourseApiHistoryEntry,
+		CourseApiKeySummaryResponse,
+		GroupJoinSettings
+	} from '$lib/api/courses';
 	import '$lib/styles/components/modules/popup.css';
 
 	type CourseTab =
@@ -98,7 +109,12 @@
 		taIds: [] as string[]
 	};
 	let newGroupName = '';
-	let pendingGroupMemberIdByGroupId: Record<string, string> = {};
+	let groupStudentsTarget: { courseId: number; group: CourseGroup } | null = null;
+	let groupJoinSettingsTarget: { courseId: number; group: CourseGroup } | null = null;
+	let joiningGroupId: string | null = null;
+	let groupJoinError: string | null = null;
+	let refreshingGroups = false;
+	let groupRequestRevision = 0;
 	let importCsvInput: HTMLInputElement | null = null;
 	let importCsvPending = false;
 	let previewApiKey: string | null = null;
@@ -753,6 +769,9 @@
 
 	onDestroy(() => {
 		clearSensitiveKeyState();
+		groupStudentsTarget = null;
+		groupJoinSettingsTarget = null;
+		groupRequestRevision += 1;
 	});
 
 	$: visibleCourses = baseVisibleCourses;
@@ -883,6 +902,7 @@
 		(key) => key.hasHash !== false && key.ownerType === 'group' && selectedGroupIds.has(key.ownerId)
 	);
 	$: studentVisibleGroups = selectedGroups.filter((group) => groupContainsCurrentUser(group));
+	$: joinedGroupIds = new Set(studentVisibleGroups.map((group) => group.id));
 	$: instructorVisibleStudents = studentMembers;
 	$: if (instructorVisibleStudents.length === 0) {
 		selectedInstructorStudentId = '';
@@ -952,7 +972,30 @@
 			(selectedDetail?.members || []).some((member) => memberMatchesCurrentUser(member)))
 	);
 	$: showCourseTabBar = availableTabs.length > 0;
-	$: selectableGroupMembers = selectedDetail?.members || [];
+	$: groupStudentOptions = rosterEntries
+		.filter((member) => !member.isInstructor && !member.isTeacherAssistant)
+		.map((member) => ({
+			id: getMemberIdentifier(member),
+			name: getMemberDisplayName(member),
+			email: member.email,
+			alreadyMember: Boolean(
+				groupStudentsTarget?.group.memberIds.some((id) =>
+					[normalizeIdentifier(member.id), normalizeIdentifier(member.email)].includes(
+						normalizeIdentifier(id)
+					)
+				)
+			)
+		}))
+		.sort((a, b) => a.name.localeCompare(b.name) || a.email.localeCompare(b.email));
+	$: if (
+		groupStudentsTarget &&
+		(selectedCourse?.id !== groupStudentsTarget.courseId ||
+			!canEditPeopleAndGroups ||
+			isSelectedCourseClosed ||
+			activeTab !== 'edit-groups')
+	) {
+		groupStudentsTarget = null;
+	}
 	$: availableTabs = canEditPeopleAndGroups
 		? ([
 				'home',
@@ -962,7 +1005,15 @@
 				'edit-groups',
 				...(canEditCourse ? (['course-settings'] as CourseTab[]) : [])
 			] as CourseTab[])
-		: (['home', ...studentGroupTabs] as CourseTab[]);
+		: (['home', 'groups', ...studentGroupTabs] as CourseTab[]);
+	$: if (
+		groupJoinSettingsTarget &&
+		(selectedCourse?.id !== groupJoinSettingsTarget.courseId ||
+			!canEditPeopleAndGroups ||
+			isSelectedCourseClosed ||
+			activeTab !== 'edit-groups')
+	)
+		groupJoinSettingsTarget = null;
 	$: if (!availableTabs.includes(activeTab)) {
 		activeTab = 'home';
 	}
@@ -1013,6 +1064,10 @@
 	}
 	$: if (selectedCourse?.id && selectedCourse.id !== lastSelectedCourseId) {
 		lastSelectedCourseId = selectedCourse.id;
+		groupRequestRevision += 1;
+		joiningGroupId = null;
+		groupJoinError = null;
+		refreshingGroups = false;
 		clearSensitiveKeyState();
 		newPersonalKeyName = '';
 		newGroupKeyNameByGroupId = {};
@@ -1359,29 +1414,135 @@
 		}
 	}
 
-	async function addGroupMember(groupId: string) {
-		if (!ensureCourseIsEditable()) {
-			return;
-		}
-		if (!selectedCourse) {
-			return;
-		}
+	function openGroupStudentsDialog(group: CourseGroup) {
+		if (!selectedCourse || !canEditPeopleAndGroups || !ensureCourseIsEditable()) return;
+		groupStudentsTarget = { courseId: selectedCourse.id, group };
+	}
 
-		const identifier = (pendingGroupMemberIdByGroupId[groupId] || '').trim();
-		if (!identifier) {
-			return;
-		}
+	function setSavedGroup(courseId: number, updated: CourseGroup) {
+		groupsByCourseId = {
+			...groupsByCourseId,
+			[courseId]: (groupsByCourseId[courseId] || []).map((group) =>
+				group.id === updated.id ? updated : group
+			)
+		};
+	}
 
+	function openGroupJoinSettings(group: CourseGroup) {
+		if (!selectedCourse || !canEditPeopleAndGroups || !ensureCourseIsEditable()) return;
+		groupJoinSettingsTarget = { courseId: selectedCourse.id, group };
+	}
+
+	async function saveGroupJoinSettings(settings: GroupJoinSettings) {
+		const target = groupJoinSettingsTarget;
+		if (!target || !canEditPeopleAndGroups || !ensureCourseIsEditable()) return;
+		const result = await updateGroupJoinSettings(target.courseId, target.group.id, settings);
+		if (groupJoinSettingsTarget !== target) return;
+		setSavedGroup(
+			target.courseId,
+			normalizeCourseGroup({ ...result.group, courseId: target.courseId })
+		);
+		groupJoinSettingsTarget = null;
+		loadedCourseApiHistoryForId = null;
+		showSuccessFeedback(`Joining settings saved for ${target.group.name}.`);
+	}
+
+	async function refreshStudentGroups() {
+		if (!selectedCourse || joiningGroupId || refreshingGroups) return;
+		const courseId = selectedCourse.id;
+		const revision = ++groupRequestRevision;
+		refreshingGroups = true;
+		groupJoinError = null;
 		try {
-			await addCourseGroupMember(selectedCourse.id, groupId, identifier);
-			await refreshAfterWrite();
-			pendingGroupMemberIdByGroupId = {
-				...pendingGroupMemberIdByGroupId,
-				[groupId]: ''
+			const raw = await fetchCourseWorkspace(courseId);
+			if (revision !== groupRequestRevision || selectedCourse?.id !== courseId) return;
+			allCourses = allCourses.map((course) =>
+				course.id === courseId ? normalizeCourse(raw) : course
+			);
+			detailsByCourseId = { ...detailsByCourseId, [courseId]: normalizeCourseDetail(raw) };
+			groupsByCourseId = {
+				...groupsByCourseId,
+				[courseId]: (raw.groups || []).map((group) => normalizeCourseGroup({ ...group, courseId }))
 			};
-		} catch {
-			// API layer already shows user-facing feedback.
+			// A membership may have changed since the last view of the course.
+			clearSensitiveKeyState();
+			void loadCourseApiKeys(courseId);
+		} catch (err) {
+			if (revision === groupRequestRevision && selectedCourse?.id === courseId) {
+				groupJoinError = err instanceof Error ? err.message : 'Unable to refresh groups.';
+			}
+		} finally {
+			if (revision === groupRequestRevision) refreshingGroups = false;
 		}
+	}
+
+	async function joinStudentGroup(group: CourseGroup) {
+		if (
+			!selectedCourse ||
+			canEditPeopleAndGroups ||
+			joiningGroupId ||
+			refreshingGroups ||
+			!ensureCourseIsEditable()
+		)
+			return;
+		const courseId = selectedCourse.id;
+		const revision = ++groupRequestRevision;
+		joiningGroupId = group.id;
+		groupJoinError = null;
+		try {
+			const result = await joinCourseGroup(courseId, group.id);
+			if (revision !== groupRequestRevision || selectedCourse?.id !== courseId) return;
+			setSavedGroup(courseId, normalizeCourseGroup({ ...result.group, courseId }));
+			void loadCourseApiKeys(courseId);
+			showSuccessFeedback(
+				result.already_member ? `You are already in ${group.name}.` : `You joined ${group.name}.`
+			);
+		} catch (err) {
+			if (revision === groupRequestRevision && selectedCourse?.id === courseId) {
+				groupJoinError =
+					(err instanceof Error ? err.message : 'Unable to join this group.') +
+					' Use Refresh groups to see the latest availability.';
+			}
+		} finally {
+			if (revision === groupRequestRevision) joiningGroupId = null;
+		}
+	}
+
+	async function openStudentGroup(group: CourseGroup) {
+		const courseId = selectedCourse?.id;
+		const tab: CourseTab = `group:${group.id}`;
+		activeTab = tab;
+		await tick();
+		if (selectedCourse?.id === courseId && activeTab === tab) {
+			document.getElementById(getCourseTabId(tab))?.focus();
+		}
+	}
+
+	async function addGroupStudents(memberIds: string[]) {
+		const target = groupStudentsTarget;
+		if (
+			!target ||
+			selectedCourse?.id !== target.courseId ||
+			!canEditPeopleAndGroups ||
+			!ensureCourseIsEditable()
+		) {
+			throw new Error('This course is no longer editable. Refresh the course and try again.');
+		}
+		const result = await addCourseGroupMembers(target.courseId, target.group.id, memberIds);
+		if (groupStudentsTarget !== target) return;
+		const updated = normalizeCourseGroup({ ...result.group, courseId: target.courseId });
+		setSavedGroup(target.courseId, updated);
+		groupStudentsTarget = null;
+		loadedCourseApiHistoryForId = null;
+		const addedMessage = result.added_count
+			? `Added ${result.added_count} ${result.added_count === 1 ? 'student' : 'students'} to ${updated.name}.`
+			: 'The selected students are already in this group.';
+		showSuccessFeedback(
+			addedMessage +
+				(result.added_count && result.already_member_count
+					? ` ${result.already_member_count} already in the group; skipped.`
+					: '')
+		);
 	}
 
 	async function removeGroupMember(groupId: string, id: string) {
@@ -1599,12 +1760,6 @@
 		} catch (err) {
 			apiKeyActionError = err instanceof Error ? err.message : 'Unable to delete API key.';
 		}
-	}
-
-	function getAvailableMembersForGroup(group: CourseGroup) {
-		return selectableGroupMembers.filter(
-			(member) => !group.memberIds.map(normalizeIdentifier).includes(getMemberIdentifier(member))
-		);
 	}
 
 	function getCourseStatusActionLabel(): string {
@@ -1914,6 +2069,20 @@
 								{/each}
 							{/if}
 						{/if}
+					</div>
+				{:else if activeTab === 'groups' && !canEditPeopleAndGroups}
+					<div class="section-content">
+						<StudentGroups
+							groups={selectedGroups}
+							{joinedGroupIds}
+							courseClosed={isSelectedCourseClosed}
+							pendingGroupId={joiningGroupId}
+							refreshing={refreshingGroups}
+							error={groupJoinError}
+							onJoin={joinStudentGroup}
+							onOpen={openStudentGroup}
+							onRefresh={refreshStudentGroups}
+						/>
 					</div>
 				{:else if activeTab === 'groups'}
 					<div class="section-content home-panel-stack">
@@ -2226,12 +2395,12 @@
 										<th>Group Name</th>
 										<th>Members</th>
 										<th>Keys</th>
-										<th>Add User</th>
+										<th>Membership</th>
 									</tr>
 								</thead>
 								<tbody>
 									{#if selectedGroups.length}
-										{#each selectedGroups as group}
+										{#each selectedGroups as group (group.id)}
 											<tr>
 												<td>{group.name}</td>
 												<td>
@@ -2240,7 +2409,10 @@
 															{#each group.memberIds as memberId}
 																{@const member = resolveMemberByIdentifier(memberId)}
 																<li>
-																	{member ? getMemberDisplayName(member) : 'Unknown user'}
+																	<span class="course-group-member-label">
+																		{member ? getMemberDisplayName(member) : memberId}
+																		{#if member?.email}<small>{member.email}</small>{/if}
+																	</span>
 																	{#if !isSelectedCourseClosed}
 																		<button
 																			type="button"
@@ -2291,40 +2463,26 @@
 													</div>
 												</td>
 												<td>
-													<div class="course-group-add-row">
-														{#if isSelectedCourseClosed}
-															<div class="text-input course-locked-field">
-																{pendingGroupMemberIdByGroupId[group.id] || 'Select course member'}
-															</div>
-														{:else}
-															<select
-																class="text-input"
-																value={pendingGroupMemberIdByGroupId[group.id] || ''}
-																aria-label={`Add member to ${group.name}`}
-																onchange={(event) => {
-																	const target = event.currentTarget as HTMLSelectElement;
-																	pendingGroupMemberIdByGroupId = {
-																		...pendingGroupMemberIdByGroupId,
-																		[group.id]: target.value
-																	};
-																}}
-															>
-																<option value="">Select course member</option>
-																{#each getAvailableMembersForGroup(group) as member}
-																	<option value={getMemberIdentifier(member)}
-																		>{getMemberDisplayName(member)}</option
-																	>
-																{/each}
-															</select>
-														{/if}
-														{#if !isSelectedCourseClosed}
-															<button
-																type="button"
-																class="list-go-btn"
-																onclick={() => addGroupMember(group.id)}>Add</button
-															>
-														{/if}
-													</div>
+													<button
+														type="button"
+														class="list-go-btn"
+														aria-label={`Add students to ${group.name}`}
+														disabled={isSelectedCourseClosed}
+														onclick={() => openGroupStudentsDialog(group)}>Add students</button
+													>
+													<p class="course-group-join-summary">
+														Self-join {group.selfJoinEnabled ? 'on' : 'off'} · {group.maxMembers ===
+														null
+															? 'No size limit'
+															: `Limit: ${group.maxMembers}`}
+													</p>
+													<button
+														type="button"
+														class="list-go-btn"
+														aria-label={`Joining settings for ${group.name}`}
+														disabled={isSelectedCourseClosed}
+														onclick={() => openGroupJoinSettings(group)}>Joining settings</button
+													>
 												</td>
 											</tr>
 										{/each}
@@ -2401,6 +2559,21 @@
 				{/if}
 			</div>
 		</section>
+	{/if}
+	{#if groupJoinSettingsTarget}
+		<GroupJoinSettingsDialog
+			group={groupJoinSettingsTarget.group}
+			onSave={saveGroupJoinSettings}
+			onClose={() => (groupJoinSettingsTarget = null)}
+		/>
+	{/if}
+	{#if groupStudentsTarget}
+		<GroupStudentsDialog
+			groupName={groupStudentsTarget.group.name}
+			students={groupStudentOptions}
+			onAdd={addGroupStudents}
+			onClose={() => (groupStudentsTarget = null)}
+		/>
 	{/if}
 	{#if showAddEmailPopup}
 		<div

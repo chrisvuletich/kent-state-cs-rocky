@@ -53,6 +53,16 @@ python manage.py doctor \
 3. Restart the backend and web frontend.
 4. Run the full doctor without `--skip-network`.
 
+For the course-key policy update, include the repository-root `rocky_common`
+package and restart the chat API **before** the management backend, as above.
+Do not leave an older chat API running with the newer backend: the backend no
+longer copies course status/limits into every key record. No forward database
+migration or extra worker is required. A rollback to the old key evaluator
+requires reconciling stored key flags against current course policy before
+serving API traffic; merely rolling back both binaries is not sufficient.
+Likewise, drain any `_pending_audit_events` through the current Audit Logs
+endpoint before reverting to a version without audit recovery.
+
 For streaming, enable Granite first, then Rocky, then the frontend. For image
 input, enable Granite first and Rocky second. Run the full doctor after the
 flags are aligned; it fails when rollout state or image limits differ.

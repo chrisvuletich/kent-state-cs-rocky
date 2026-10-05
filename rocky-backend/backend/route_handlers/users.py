@@ -28,7 +28,7 @@ def set_user_api_keys_active_state(api_keys, user_record: dict[str, Any], is_act
         if not is_active:
             # Preserve keys that were already disabled for another reason so
             # account reactivation cannot accidentally turn them back on.
-            if updated.get("is_active") is False:
+            if updated.get("is_active") is False and updated.get("disabled_reason") not in {"course", "limit"}:
                 continue
             updated["is_active"] = False
             updated["disabled_reason"] = "account-inactive"

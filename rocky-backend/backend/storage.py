@@ -49,6 +49,10 @@ def _create_index(collection, keys, **kwargs) -> None:
 
 
 def ensure_indexes(collections: Collections) -> None:
+    # Current-policy authorization performs these point lookups on each request.
+    _create_index(collections.courses, [("id", 1)], name="course_policy_id")
+    _create_index(collections.users, [("id", 1)], name="user_policy_id")
+    _create_index(collections.users, [("email", 1)], name="user_policy_email")
     _create_index(
         collections.telemetry_interactions,
         [("received_at", -1)],

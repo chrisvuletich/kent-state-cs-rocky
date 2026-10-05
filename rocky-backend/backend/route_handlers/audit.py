@@ -6,7 +6,17 @@ import json
 from datetime import datetime, timezone
 from typing import Any
 
+from bson import ObjectId
+from mongita.errors import DuplicateKeyError as MongitaDuplicateKeyError
+from pymongo.errors import DuplicateKeyError
 from flask import Response, jsonify, request
+
+PENDING_COURSE_AUDIT = "_pending_audit_events"
+MAX_PENDING_COURSE_EVENTS = 100
+
+
+class AuditBacklogFull(RuntimeError):
+    """Refuse changes rather than growing an undeliverable audit backlog."""
 
 
 ALLOWED_AUDIT_EVENTS = {
@@ -17,6 +27,9 @@ ALLOWED_AUDIT_EVENTS = {
     "course-group-created",
     "course-group-key-limit-updated",
     "course-group-member-added",
+    "course-group-members-added",
+    "course-group-join-settings-updated",
+    "course-group-self-joined",
     "course-group-member-removed",
     "course-instructor-handout-limit-updated",
     "course-instructor-key-limit-updated",
@@ -76,7 +89,7 @@ def _audit_value(value: Any, depth: int = 0):
     return str(value)[:1000]
 
 
-def record_audit_event(
+def build_audit_event(
     deps: dict[str, Any],
     event_type: str,
     *,
@@ -86,7 +99,7 @@ def record_audit_event(
     changes: dict[str, Any] | None = None,
     metadata: dict[str, Any] | None = None,
 ):
-    """Append a trusted, metadata-only event after a successful mutation."""
+    """Capture the original actor/time before a change, without writing yet."""
     normalized_event = str(event_type).strip().lower()
     if normalized_event not in ALLOWED_AUDIT_EVENTS:
         raise ValueError(f"Unsupported audit event: {normalized_event}")
@@ -114,6 +127,7 @@ def record_audit_event(
         event_metadata["changes"] = _audit_value(changes)
 
     document = {
+        "_id": ObjectId(),
         "u_id": actor_id or email,
         "c_id": normalize_str(course_record.get("code")),
         "course_id": course_record.get("id"),
@@ -124,8 +138,54 @@ def record_audit_event(
         "meta": event_metadata,
         "created": datetime.now(timezone.utc).isoformat(),
     }
+    return document
+
+
+def record_audit_event(deps, event_type, **kwargs):
+    document = build_audit_event(deps, event_type, **kwargs)
     deps["api_history"].insert_one(document)
     return document
+
+
+def stage_course_audit(before, after, events):
+    """Include audit records in the SAME compare-and-set as the course edit."""
+    pending = list(before.get(PENDING_COURSE_AUDIT, [])) + events
+    if len(pending) > MAX_PENDING_COURSE_EVENTS:
+        raise AuditBacklogFull("Course audit backlog must be delivered before further edits.")
+    if pending:
+        after[PENDING_COURSE_AUDIT] = pending
+
+
+def flush_course_audit(deps, course_object_id):
+    """Idempotently copy durable events, then CAS-clear only the copied batch.
+
+    No worker/queue service is needed: group requests and audit reads retry
+    delivery. A crash or uncertain insert outcome leaves the original event ID
+    on the course, so the next attempt cannot create a duplicate or lose it.
+    """
+    courses = deps["courses"]
+    try:
+        for _ in range(3):
+            course = courses.find_one({"_id": course_object_id})
+            pending = (course or {}).get(PENDING_COURSE_AUDIT, [])
+            if not pending:
+                return True
+            for event in pending:
+                try:
+                    deps["api_history"].insert_one(dict(event))
+                except (DuplicateKeyError, MongitaDuplicateKeyError):
+                    if deps["api_history"].find_one({"_id": event["_id"]}) != event:
+                        raise
+            cleared = courses.update_one(
+                {"_id": course_object_id, PENDING_COURSE_AUDIT: {"$eq": pending}},
+                {"$set": {PENDING_COURSE_AUDIT: []}},
+            )
+            if cleared.matched_count:
+                return True
+        return False  # Concurrent append: leave remaining events for retry.
+    except Exception as error:
+        deps["logger"].warning("audit.course_delivery_pending error_type=%s", type(error).__name__)
+        return False
 
 
 def _audit_rows(deps: dict[str, Any]):
@@ -134,6 +194,10 @@ def _audit_rows(deps: dict[str, Any]):
     whitelist_users = deps["whitelist_users"]
     normalize_str = deps["normalize_str"]
     _serialize_value = deps["_serialize_value"]
+
+    for course_record in deps["courses"].find():
+        if course_record.get(PENDING_COURSE_AUDIT):
+            flush_course_audit(deps, course_record["_id"])
 
     search = normalize_str(request.args.get("search")).lower()
     role = normalize_str(request.args.get("role")).lower()

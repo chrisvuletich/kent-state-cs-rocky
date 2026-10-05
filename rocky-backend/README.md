@@ -89,6 +89,33 @@ Default URL: `http://127.0.0.1:5001`
 
 Health check: `GET /health`
 
+## Course key access and membership audit recovery
+
+`rocky_common/course_keys.py` is the shared policy used by this backend and
+`api-rocky`. Course open/closed state and owner key-slot limits are read from the
+course document, not copied into every key. API-key summaries report effective
+access; the stored key's `is_active` flag describes manual/account disabling.
+Revoked, deleted, expired, manually disabled, and suspended keys remain denied.
+Existing `course`/`limit` disable markers are evaluated against current policy,
+so this change needs no key migration. Default web-chat and service keys are not
+course-scoped. Keep the repository-root `rocky_common` package with both services.
+
+Bulk group assignments, student self-joins, and joining settings save their
+audit events in the same compare-and-set as the course update. These private
+`_pending_audit_events` retain the original actor, timestamp, and unique event
+ID until copied to `api_history`. They are never returned in course responses.
+Delivery retries on group requests and administrative/course audit reads; no
+background worker is required. Duplicate delivery and lost acknowledgements
+are safe. Check backend warnings named `audit.course_delivery_pending` if an
+audit entry is delayed. After storage recovers, opening Audit Logs retries
+delivery for all courses, including after a process restart.
+
+A backlog of 100 events blocks further audited group changes with `503` until
+delivery succeeds. Course deletion is blocked while events remain undelivered.
+Do not manually clear the pending field: it is the durable audit record during
+an audit-storage outage. The normal membership `409` response still means a
+concurrent course edit won; reload and retry.
+
 ## Telemetry analytics
 
 Analytics are calculated from the permanent `telemetry_interactions` records

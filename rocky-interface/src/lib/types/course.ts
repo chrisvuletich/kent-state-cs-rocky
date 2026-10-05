@@ -78,6 +78,8 @@ export type ApiCourseGroup = Partial<{
 	name: string;
 	memberIds: string[];
 	key_limit: number;
+	self_join_enabled: boolean;
+	max_members: number | null;
 }>;
 
 export type CourseDetail = {
@@ -91,6 +93,8 @@ export type CourseGroup = {
 	name: string;
 	memberIds: string[];
 	keyLimit: number;
+	selfJoinEnabled: boolean;
+	maxMembers: number | null;
 };
 
 export type CourseApiKeySummary = {
@@ -229,7 +233,14 @@ export function normalizeCourseGroup(raw: ApiCourseGroup, index = 0): CourseGrou
 		keyLimit:
 			typeof raw.key_limit === 'number' && Number.isFinite(raw.key_limit) && raw.key_limit >= 0
 				? Math.floor(raw.key_limit)
-				: 1
+				: 1,
+		selfJoinEnabled: raw.self_join_enabled === true,
+		maxMembers:
+			typeof raw.max_members === 'number' &&
+			Number.isSafeInteger(raw.max_members) &&
+			raw.max_members > 0
+				? raw.max_members
+				: null
 	};
 }
 

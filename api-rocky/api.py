@@ -12,6 +12,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 from uuid import uuid4
 import time
+import sys
 
 from flask import Flask, g, request, jsonify, Response
 import requests
@@ -58,6 +59,9 @@ except Exception:  # pragma: no cover - optional dependency
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPOSITORY_ROOT))
+from rocky_common.course_keys import key_is_active
+
 SERVICE_ROOT = Path(__file__).resolve().parent
 load_dotenv(REPOSITORY_ROOT / ".env", override=False)
 load_dotenv(REPOSITORY_ROOT / ".env.local", override=True)
@@ -314,6 +318,8 @@ MONGITA_PATH = resolve_mongita_path(
 
 
 api_keys_col = None
+courses_col = None
+users_col = None
 conversations_col = None
 messages_col = None
 responses_col = None
@@ -459,6 +465,7 @@ MONGODB_RETRY_SECONDS = _env_float(
 
 def initialize_database():
     global api_keys_col
+    global courses_col, users_col
     global conversations_col
     global messages_col
     global responses_col
@@ -498,6 +505,8 @@ def initialize_database():
                 database = mongo_client[DB_NAME]
 
                 api_keys_col = database["api_keys"]
+                courses_col = database["courses"]
+                users_col = database["users"]
                 conversations_col = database["conversations"]
                 messages_col = database["messages"]
                 responses_col = database["responses"]
@@ -541,6 +550,8 @@ def initialize_database():
         database = client[DB_NAME]
 
         api_keys_col = database["api_keys"]
+        courses_col = database["courses"]
+        users_col = database["users"]
         conversations_col = database["conversations"]
         messages_col = database["messages"]
         responses_col = database["responses"]
@@ -2443,39 +2454,19 @@ def utc_now():
 def hash_api_key(key):
     return hash_api_key_value(key)
 
-def parse_expiration(value):
-    if value is None or value == "":
-        return None
-    if isinstance(value, datetime):
-        parsed = value
-    elif isinstance(value, str):
-        try:
-            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        except ValueError:
-            return None
-    else:
-        return None
-
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
 
 def key_doc_is_active(key_doc):
-    if not isinstance(key_doc, dict):
-        return False
-    if key_doc.get("is_active") is False:
-        return False
-    if key_doc.get("deleted_at") or key_doc.get("revoked_at"):
-        return False
+    return key_is_active(
+        key_doc, current_policy_collection("courses", courses_col),
+        current_policy_collection("users", users_col),
+    )
 
-    expiration_value = key_doc.get("expire") or key_doc.get("expires_at")
-    expires_at = parse_expiration(expiration_value)
-    if expiration_value is not None and expiration_value != "" and expires_at is None:
-        return False
-    if expires_at is not None and expires_at <= datetime.now(timezone.utc):
-        return False
 
-    return True
+def current_policy_collection(name, collection):
+    # Like key reads, local Mongita policy reads must see other processes' writes.
+    if MONGITA_KEY_READ_REFRESH_ENABLED:
+        return MongitaClientDisk(str(MONGITA_PATH))[DB_NAME][name]
+    return collection
 
 
 def is_service_key_doc(key_doc):

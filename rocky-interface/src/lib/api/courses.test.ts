@@ -1,9 +1,59 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { fetchCourseApiHistory } from './courses';
+import {
+	addGroupMembers,
+	fetchCourseApiHistory,
+	joinCourseGroup,
+	updateGroupJoinSettings
+} from './courses';
 
 afterEach(() => {
 	vi.unstubAllGlobals();
+});
+
+describe('addGroupMembers', () => {
+	it('sends the selection in one request and returns actual addition counts', async () => {
+		const result = {
+			group: { id: 'group-a', memberIds: ['student@kent.edu'] },
+			added_count: 1,
+			already_member_count: 2
+		};
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValue({ ok: true, text: async () => JSON.stringify(result) });
+		vi.stubGlobal('fetch', fetchMock);
+		const selection = ['student@kent.edu', 'existing1@kent.edu', 'existing2@kent.edu'];
+		await expect(addGroupMembers(1, 'group-a', selection)).resolves.toEqual(result);
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		expect(fetchMock).toHaveBeenCalledWith('/api/backend/courses/1/groups/group-a/members', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+			body: JSON.stringify({ memberIds: selection })
+		});
+	});
+
+	it('passes validation and conflict messages to the dialog without retrying', async () => {
+		const fetchMock = vi.fn().mockResolvedValue({
+			ok: false,
+			status: 409,
+			text: async () =>
+				JSON.stringify({ error: 'The course changed. Review your selection and try again.' })
+		});
+		vi.stubGlobal('fetch', fetchMock);
+		await expect(addGroupMembers(1, 'group-a', ['student@kent.edu'])).rejects.toThrow(
+			'The course changed. Review your selection and try again.'
+		);
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+	});
+
+	it('handles a lost connection without an automatic duplicate request', async () => {
+		const fetchMock = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'));
+		vi.stubGlobal('fetch', fetchMock);
+		await expect(addGroupMembers(1, 'group-a', ['student@kent.edu'])).rejects.toThrow(
+			'Unable to reach the server. Please try again.'
+		);
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+	});
 });
 
 describe('fetchCourseApiHistory', () => {
@@ -55,5 +105,53 @@ describe('fetchCourseApiHistory', () => {
 		);
 
 		await expect(fetchCourseApiHistory(1)).rejects.toThrow('Action failed. Please try again.');
+	});
+});
+
+describe('group self-joining', () => {
+	it('shows a structured account-inactive error clearly', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue({
+				ok: false,
+				status: 403,
+				text: async () => JSON.stringify({ error: { message: 'This account is inactive.' } })
+			})
+		);
+		await expect(joinCourseGroup(1, 'group-a')).rejects.toThrow('This account is inactive.');
+	});
+	it('joins as the signed-in student with no client-supplied identity', async () => {
+		const result = { group: { id: 'group-a' }, already_member: false };
+		const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => result });
+		vi.stubGlobal('fetch', fetchMock);
+		await expect(joinCourseGroup(1, 'group-a')).resolves.toEqual(result);
+		expect(fetchMock).toHaveBeenCalledWith(
+			'/api/backend/courses/1/groups/group-a/join',
+			expect.objectContaining({ method: 'POST', body: '{}' })
+		);
+	});
+
+	it('saves the explicit opt-in policy and optional limit together', async () => {
+		const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ group: {} }) });
+		vi.stubGlobal('fetch', fetchMock);
+		await updateGroupJoinSettings(1, 'group-a', { selfJoinEnabled: false, maxMembers: null });
+		expect(fetchMock).toHaveBeenCalledWith(
+			'/api/backend/courses/1/groups/group-a/join-settings',
+			expect.objectContaining({
+				method: 'PATCH',
+				body: JSON.stringify({ self_join_enabled: false, max_members: null })
+			})
+		);
+	});
+
+	it('surfaces a group filling up without silently retrying the request', async () => {
+		const fetchMock = vi.fn().mockResolvedValue({
+			ok: false,
+			status: 409,
+			text: async () => JSON.stringify({ error: 'This group is full.' })
+		});
+		vi.stubGlobal('fetch', fetchMock);
+		await expect(joinCourseGroup(1, 'group-a')).rejects.toThrow('This group is full.');
+		expect(fetchMock).toHaveBeenCalledTimes(1);
 	});
 });

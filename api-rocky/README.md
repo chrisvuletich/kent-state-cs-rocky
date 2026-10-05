@@ -33,7 +33,15 @@ curl http://127.0.0.1:5003/v1/responses \
 ```
 
 The plaintext API key is never stored by this service; it is SHA-256 hashed for
-lookup. `ROCKY_PUBLIC_MODEL` defines the one model identifier students may
+lookup. Course keys are also checked against the current course status and
+owner's key-slot limit on each authenticated request, using the same
+`rocky_common/course_keys.py` policy as the management backend. Missing courses
+or policy storage do not grant access. Manual disabling, revocation, expiry,
+and account suspension still apply. This avoids stale copied key flags after
+simultaneous course changes. Keep the repository-root `rocky_common` package
+with this service. Changes govern new requests, not generation already admitted.
+
+`ROCKY_PUBLIC_MODEL` defines the one model identifier students may
 request and defaults to `OLLAMA_MODEL`.
 Set `ROCKY_MODEL` to the identifier returned by an authenticated `GET /v1/models` request.
 Each listed model also includes a Rocky-specific `metadata` object populated

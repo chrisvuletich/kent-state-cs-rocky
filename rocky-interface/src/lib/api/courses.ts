@@ -1,4 +1,9 @@
-import { normalizeCourse, type ApiCourse, type Course } from '$lib/types/course';
+import {
+	normalizeCourse,
+	type ApiCourse,
+	type ApiCourseGroup,
+	type Course
+} from '$lib/types/course';
 import { showErrorFeedback, showSuccessFeedback } from '$lib/stores/feedbackStore';
 
 const USER_SAFE_ACTION_FAILURE = 'Action failed. Please try again.';
@@ -34,7 +39,9 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
 		}
 		console.error('[courses api] request failed', { url, status: response.status, raw: body });
 		if (parsed && typeof parsed === 'object' && (parsed.error || parsed.message)) {
-			throw new Error((parsed.error || parsed.message) as string);
+			const message =
+				typeof parsed.error === 'string' ? parsed.error : parsed.error?.message || parsed.message;
+			if (typeof message === 'string' && message.trim()) throw new Error(message);
 		}
 		throw new Error(USER_SAFE_ACTION_FAILURE);
 	}
@@ -275,24 +282,22 @@ export async function createCourseGroup(courseId: string | number, name: string)
 	}
 }
 
-export async function addGroupMember(
+export type AddGroupMembersResult = {
+	group: ApiCourseGroup;
+	added_count: number;
+	already_member_count: number;
+};
+
+export async function addGroupMembers(
 	courseId: string | number,
 	groupId: string,
-	id: string
-): Promise<void> {
-	try {
-		await fetchJson<ApiCourse>(`/api/backend/courses/${courseId}/groups/${groupId}/members`, {
-			method: 'POST',
-			headers: jsonHeaders(),
-			body: JSON.stringify({ id })
-		});
-
-		showSuccessFeedback('Group member added successfully.');
-	} catch (err) {
-		const message = getErrorMessage(err, 'Unable to add group member.');
-		showErrorFeedback(message);
-		throw err;
-	}
+	memberIds: string[]
+): Promise<AddGroupMembersResult> {
+	// The dialog keeps errors inline and retains the selection for a retry.
+	return fetchJson<AddGroupMembersResult>(
+		`/api/backend/courses/${courseId}/groups/${encodeURIComponent(groupId)}/members`,
+		{ method: 'POST', headers: jsonHeaders(), body: JSON.stringify({ memberIds }) }
+	);
 }
 
 export async function removeGroupMember(
@@ -313,6 +318,41 @@ export async function removeGroupMember(
 		showErrorFeedback(message);
 		throw err;
 	}
+}
+
+export type GroupJoinSettings = { selfJoinEnabled: boolean; maxMembers: number | null };
+
+export function updateGroupJoinSettings(
+	courseId: number,
+	groupId: string,
+	settings: GroupJoinSettings
+): Promise<{ group: ApiCourseGroup }> {
+	return fetchJson(
+		`/api/backend/courses/${courseId}/groups/${encodeURIComponent(groupId)}/join-settings`,
+		{
+			method: 'PATCH',
+			headers: jsonHeaders(),
+			body: JSON.stringify({
+				self_join_enabled: settings.selfJoinEnabled,
+				max_members: settings.maxMembers
+			})
+		}
+	);
+}
+
+export function joinCourseGroup(
+	courseId: number,
+	groupId: string
+): Promise<{ group: ApiCourseGroup; already_member: boolean }> {
+	return fetchJson(`/api/backend/courses/${courseId}/groups/${encodeURIComponent(groupId)}/join`, {
+		method: 'POST',
+		headers: jsonHeaders(),
+		body: JSON.stringify({})
+	});
+}
+
+export function fetchCourseWorkspace(courseId: number): Promise<ApiCourse> {
+	return fetchJson(`/api/backend/courses/${courseId}`);
 }
 
 export async function regenerateCourseApiKey(

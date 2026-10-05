@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any
 
@@ -9,9 +10,28 @@ from bson.errors import InvalidId
 from pymongo.errors import DuplicateKeyError
 
 from backend.api_key_generator import generate_api_key_id, generate_api_key_pair
-from backend.validation import is_valid_email, normalize_str, parse_semester
+from backend.validation import is_valid_email, normalize_str, parse_semester, validate_group_join_settings
 
 GROUP_ID_RE = re.compile(r"[^a-z0-9]+")
+
+
+def save_course_changes(courses_collection, before: dict[str, Any], after: dict[str, Any]) -> bool:
+    """Compare-and-set course edits; stale readers must reload instead of overwriting joins.
+
+    Keep this shared by roster, group, and course-setting writes. Only changed
+    fields are written, so unrelated metadata is preserved. No schema revision
+    or database transaction is needed for these single-document changes.
+    """
+    changes = {key: value for key, value in after.items() if key != "_id" and value != before.get(key)}
+    guarded = set(changes) | {
+        "groups", "members", "is_active", "instructor_id", "instructor_email",
+        "ta_ids", "ta_emails", "instructor_handout_limit",
+    }
+    expected = {"_id": before["_id"]}
+    expected.update({key: {"$eq": before.get(key)} for key in guarded})
+    return bool(courses_collection.update_one(
+        expected, {"$set": changes or {"id": before["id"]}}
+    ).matched_count)
 
 
 def _normalize_identifier_list(values: Any) -> list[str]:
@@ -408,6 +428,7 @@ def reconcile_course_members_for_user(courses_collection, user_record: dict[str,
         if not isinstance(members, list):
             continue
 
+        before = deepcopy(course)
         changed = False
         for member in members:
             if not isinstance(member, dict):
@@ -431,11 +452,10 @@ def reconcile_course_members_for_user(courses_collection, user_record: dict[str,
 
         if changed:
             _set_course_member_lists(course)
-            if "_id" in course:
-                courses_collection.replace_one({"_id": course["_id"]}, course)
-            elif isinstance(course.get("id"), int):
-                courses_collection.replace_one({"id": course.get("id")}, course)
-            updated_courses += 1
+            # Login reconciliation must not replace groups from an old snapshot.
+            # If a roster edit wins, the next identity refresh can reconcile again.
+            if save_course_changes(courses_collection, before, course):
+                updated_courses += 1
 
     return updated_courses
 
@@ -496,7 +516,10 @@ def create_course_group(course: dict[str, Any], name: str, global_existing_ids: 
         group_id = f"{safe_slug}-{suffix}"
 
     course.setdefault("groups", [])
-    course["groups"].append({"id": group_id, "name": group_name, "memberIds": [], "key_limit": 1})
+    course["groups"].append({
+        "id": group_id, "name": group_name, "memberIds": [], "key_limit": 1,
+        "self_join_enabled": False, "max_members": None,
+    })
     return course
 
 
@@ -535,14 +558,16 @@ def update_course_instructor_handout_limit(course: dict[str, Any], handout_limit
         if not isinstance(member, dict):
             continue
         current_limit = member.get("key_limit")
-        if isinstance(current_limit, int) and current_limit >= 0:
-            member["key_limit"] = min(current_limit, handout_limit)
+        if not isinstance(current_limit, int) or current_limit < 0:
+            current_limit = 1
+        member["key_limit"] = min(current_limit, handout_limit)
     for group in course.get("groups", []):
         if not isinstance(group, dict):
             continue
         current_limit = group.get("key_limit")
-        if isinstance(current_limit, int) and current_limit >= 0:
-            group["key_limit"] = min(current_limit, handout_limit)
+        if not isinstance(current_limit, int) or current_limit < 0:
+            current_limit = 1
+        group["key_limit"] = min(current_limit, handout_limit)
     _set_course_member_lists(course)
     return course
 
@@ -580,35 +605,74 @@ def update_course_group_key_limit(course: dict[str, Any], group_id: str, key_lim
     return course
 
 
-def add_group_member(course: dict[str, Any], group_id: str, member_id: str) -> dict[str, Any]:
+def add_group_members(course: dict[str, Any], group_id: str, member_ids: Any) -> dict[str, Any]:
+    """Validate the entire selection before adding canonical roster emails."""
     normalized_group_id = normalize_str(group_id)
-    normalized_member_id = normalize_str(member_id).lower()
     if not normalized_group_id:
         raise ValueError("groupId is required.")
-    if not normalized_member_id:
-        raise ValueError("id must be valid.")
+    if not isinstance(member_ids, list) or not member_ids:
+        raise ValueError("Select at least one student.")
+    if any(not isinstance(value, str) or not value.strip() for value in member_ids):
+        raise ValueError("memberIds must be a list of non-empty student identifiers.")
 
-    group = next((group for group in course.get("groups", []) if isinstance(group, dict) and normalize_str(group.get("id")) == normalized_group_id), None)
+    group = next(
+        (group for group in course.get("groups", [])
+         if isinstance(group, dict) and normalize_str(group.get("id")) == normalized_group_id),
+        None,
+    )
     if not group:
         raise ValueError("Group not found.")
 
-    target_member = next(
-        (
-            member
-            for member in course.get("members", [])
-            if isinstance(member, dict) and _member_matches_identifier(member, normalized_member_id)
-        ),
-        None,
-    )
-    target_email = _member_email(target_member) if isinstance(target_member, dict) else ""
-    if not target_email:
-        raise ValueError("Member must belong to the course.")
+    students_by_identifier: dict[str, str] = {}
+    for member in course.get("members", []):
+        if not isinstance(member, dict):
+            continue
+        email = _member_email(member)
+        aliases = {_member_identifier(member), email} - {""}
+        if not email or any(can_manage_people(course, alias, False) for alias in aliases):
+            continue
+        for alias in aliases:
+            students_by_identifier[alias] = email
 
-    member_ids = [normalize_str(group_member_id) for group_member_id in group.get("memberIds", [])]
-    if target_email not in member_ids:
-        member_ids.append(target_email)
-    group["memberIds"] = member_ids
-    return course
+    selected_emails: list[str] = []
+    for identifier in _normalize_identifier_list(member_ids):
+        email = students_by_identifier.get(identifier)
+        if not email:
+            raise ValueError(
+                "Every selected student must still be on this course's student roster. "
+                "Refresh the roster and try again."
+            )
+        if email not in selected_emails:
+            selected_emails.append(email)
+
+    existing_ids = list(group.get("memberIds", []))
+    existing_emails = {
+        students_by_identifier.get(identifier, identifier)
+        for identifier in _normalize_identifier_list(existing_ids)
+    }
+    added_emails = [email for email in selected_emails if email not in existing_emails]
+    limit = group.get("max_members")
+    if added_emails and type(limit) is int and len(existing_emails) + len(added_emails) > limit:
+        raise ValueError("This selection exceeds the group's size limit. Choose fewer students or increase the limit.")
+    group["memberIds"] = existing_ids + added_emails
+    return {
+        "group": group,
+        "added_member_ids": added_emails,
+        "added_count": len(added_emails),
+        "already_member_count": len(selected_emails) - len(added_emails),
+    }
+
+
+def update_group_join_settings(course: dict[str, Any], group_id: str, enabled: Any, max_members: Any) -> dict[str, Any]:
+    validate_group_join_settings(enabled, max_members)
+    group = next((group for group in course.get("groups", []) if group.get("id") == group_id), None)
+    if group is None:
+        raise ValueError("Group not found.")
+    if max_members is not None and len(_normalize_identifier_list(group.get("memberIds", []))) > max_members:
+        raise ValueError("Group size limit cannot be smaller than its current membership.")
+    group["self_join_enabled"] = enabled
+    group["max_members"] = max_members
+    return group
 
 
 def remove_group_member(course: dict[str, Any], group_id: str, member_id: str) -> dict[str, Any]:
@@ -773,43 +837,6 @@ def delete_course_api_keys(course: dict[str, Any], api_keys_collection) -> int:
     return deleted_count
 
 
-def set_course_active_state(course: dict[str, Any], api_keys_collection, is_active: bool) -> dict[str, Any]:
-    if not isinstance(is_active, bool):
-        raise ValueError("is_active must be a boolean.")
-
-    course["is_active"] = is_active
-
-    course_numeric_id = course.get("id") if isinstance(course.get("id"), int) else None
-    course_code = normalize_str(course.get("code"))
-    key_filters: list[dict[str, Any]] = []
-    if course_numeric_id is not None:
-        key_filters.append({"course_id": course_numeric_id})
-    if course_code:
-        key_filters.append({"c_id": course_code})
-
-    seen_ids: set[Any] = set()
-    for lookup in key_filters:
-        for key_entry in api_keys_collection.find(lookup):
-            if not isinstance(key_entry, dict):
-                continue
-            key_entry_id = key_entry.get("_id")
-            if key_entry_id in seen_ids:
-                continue
-            seen_ids.add(key_entry_id)
-            updated_entry = dict(key_entry)
-            if is_active:
-                if updated_entry.get("disabled_reason") != "course":
-                    continue
-                updated_entry["is_active"] = True
-                updated_entry.pop("disabled_reason", None)
-            elif updated_entry.get("is_active", True) is not False:
-                updated_entry["is_active"] = False
-                updated_entry["disabled_reason"] = "course"
-            else:
-                continue
-            api_keys_collection.replace_one({"_id": key_entry_id}, updated_entry)
-
-    return course
 
 
 def set_course_api_key_active_state(

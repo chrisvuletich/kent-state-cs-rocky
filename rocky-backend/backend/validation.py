@@ -112,6 +112,13 @@ def normalize_course_members(value: Any):
     return members, student_ids, None
 
 
+def validate_group_join_settings(enabled: Any, max_members: Any) -> None:
+    if not isinstance(enabled, bool):
+        raise ValueError("self_join_enabled must be a boolean.")
+    if max_members is not None and (type(max_members) is not int or not 1 <= max_members <= 2**53 - 1):
+        raise ValueError("max_members must be a positive safe integer or null for no limit.")
+
+
 def normalize_course_groups(value: Any):
     if value is None:
         return [], None
@@ -147,7 +154,18 @@ def normalize_course_groups(value: Any):
         if not isinstance(key_limit, int) or key_limit < 0:
             return None, "group key_limit must be an integer >= 0."
 
-        groups.append({"id": group_id, "name": name, "memberIds": normalized_ids, "key_limit": key_limit})
+        enabled = entry.get("self_join_enabled", False)
+        max_members = entry.get("max_members")
+        try:
+            validate_group_join_settings(enabled, max_members)
+        except ValueError as exc:
+            return None, str(exc)
+        if max_members is not None and len(set(normalized_ids)) > max_members:
+            return None, "Group size limit cannot be smaller than its current membership."
+        groups.append({
+            "id": group_id, "name": name, "memberIds": normalized_ids, "key_limit": key_limit,
+            "self_join_enabled": enabled, "max_members": max_members,
+        })
 
     return groups, None
 

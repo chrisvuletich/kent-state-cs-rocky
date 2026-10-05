@@ -62,3 +62,57 @@ Added students appear in the roster table with their name, email, role, key
 allowance, and available actions.
 
 ![An added student displayed in the course roster table](/class_doc_1.png)
+
+## 7. Assign students to groups
+
+Open **Edit Groups**, create a group if needed, then select its **Add students**
+button. Search by name or email and check the students you want to add.
+**Select all matching** selects the eligible students in the current search;
+selections stay checked when you change the search. **Clear selection** clears
+all selections, including ones hidden by the search.
+
+Students already in the group are marked **Already in group** and cannot be
+selected again. Students who have not signed in yet may show **Pending user**;
+use their email address to identify them. Course instructors and teaching
+assistants are not included in this student picker. Students can belong to more
+than one group.
+
+Select **Add N students** to save the full selection together. The confirmation
+reports how many students were actually added. If the request fails, the dialog
+keeps your selection and displays an error. If the roster changed and a selected
+student was removed, cancel, refresh the course, and reopen the dialog before
+trying again. Repeating a successful selection does not create duplicates.
+
+Group assignment is available to course instructors, teaching assistants, and
+admins. Closed courses must be reopened before editing. The Add students dialog
+does not turn on self-joining; use the separate setting below.
+
+## 8. Let students join groups themselves
+
+Self-joining is **off by default**, including for existing groups. In **Edit
+Groups**, select a group's **Joining settings**, enable **Allow students to join
+themselves**, and select **Save settings**. Instructors, course teaching
+assistants, and admins can manage this setting.
+
+Optionally enter **Maximum students**, or leave it blank for no limit. The limit
+also applies to staff's Add students action and cannot be set below the current
+membership count. When classmates join at the same time, Rocky checks the latest
+membership before saving so they cannot both take the last seat.
+
+Enrolled students can open **Courses → their course → Groups** and select
+**Join group** for an open group. They cannot enroll themselves in the course,
+join on behalf of someone else, or join a full group or a closed course. Joining
+is recorded durably with the membership change. If the audit log is temporarily
+unavailable, its entry is delivered on a later group request or audit-log read
+without duplicating the join. Students may belong to multiple groups.
+
+Turning self-joining off stops new joins without removing existing members.
+Students must contact staff to leave or switch groups: removal remains a staff
+action and revokes the group's shared keys. **Removing someone from a group
+does not block them from rejoining while self-joining stays on.** Disable it first
+if you do not want a removed student to rejoin.
+
+If settings change while someone has the page open, use **Refresh groups** or
+refresh the course. Failed saves show an error instead of overwriting a newer
+membership update. Joining never generates, regenerates, or reveals a shared
+API key; instructors still manage and distribute those keys.

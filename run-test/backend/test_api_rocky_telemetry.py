@@ -140,6 +140,13 @@ class ApiTelemetryTests(unittest.TestCase):
     def setUp(self):
         database = MongitaClientMemory()[uuid4().hex]
         rocky.api_keys_col = database["keys"]
+        rocky.courses_col = database["courses"]
+        rocky.users_col = database["users"]
+        rocky.courses_col.insert_one({
+            "id": 44001, "is_active": True,
+            "members": [{"id": "private-user-id", "email": "private.user@kent.edu", "key_limit": 1}],
+            "groups": [{"id": "group-a", "key_limit": 1}],
+        })
         rocky.conversations_col = database["conversations"]
         rocky.messages_col = database["messages"]
         rocky.responses_col = database["responses"]
@@ -627,6 +634,7 @@ class ApiTelemetryTests(unittest.TestCase):
             {
                 "hash": rocky.hash_api_key(group_key),
                 "key_id": "akid_group",
+                "slot_index": 1,
                 "owner_type": "group",
                 "owner_id": "group-a",
                 "course_id": 44001,

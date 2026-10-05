@@ -12,10 +12,13 @@ from bson import ObjectId
 from bson.errors import InvalidId
 from flask import Flask, jsonify, request
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from rocky_common.course_keys import key_is_active, owner_key_limit
+
 from backend.authz import get_requester, require_admin, require_internal_proxy, require_requester_identity
 from backend.course_actions import (
     add_course_members,
-    add_group_member,
+    add_group_members,
     apply_course_metadata_patch,
     can_manage_api_keys,
     can_manage_metadata,
@@ -30,7 +33,6 @@ from backend.course_actions import (
     regenerate_course_api_key,
     reconcile_course_members_for_user,
     resolve_course_key_owner,
-    set_course_active_state,
     set_course_api_key_active_state,
     update_course_group_key_limit,
     update_course_instructor_key_limit,
@@ -110,6 +112,11 @@ def _bad_request(message: str):
     return jsonify({"error": message}), 400
 
 
+@app.errorhandler(audit_handlers.AuditBacklogFull)
+def _audit_unavailable(error):
+    return jsonify({"error": "Audit logging is temporarily unavailable. Try again shortly."}), 503
+
+
 def _iter_course_api_keys(course: dict[str, Any]) -> list[dict[str, Any]]:
     course_code = normalize_str(course.get("code"))
     course_numeric_id = course.get("id") if isinstance(course.get("id"), int) else None
@@ -130,83 +137,19 @@ def _iter_course_api_keys(course: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _get_active_course_api_key(course: dict[str, Any]):
-    keys = [
-        entry
-        for entry in _iter_course_api_keys(course)
-        if normalize_str(entry.get("hash")) and bool(entry.get("is_active", True))
-    ]
-    if not keys:
-        return None
-    return max(keys, key=lambda entry: normalize_str(entry.get("created")))
+    # Check newest first instead of reading every key owner's account merely
+    # to display whether a course has an active key.
+    for entry in sorted(_iter_course_api_keys(course), key=lambda item: normalize_str(item.get("created")), reverse=True):
+        if normalize_str(entry.get("hash")) and key_is_active(entry, courses, users, course=course):
+            return entry
+    return None
 
 
 def _get_owner_key_limit(course: dict[str, Any], owner_type: str, owner_id: str) -> int:
-    normalized_owner_type = normalize_str(owner_type).lower() or "person"
-    normalized_owner_id = normalize_str(owner_id).lower()
-    if normalized_owner_type == "group":
-        target_group = next(
-            (
-                group
-                for group in course.get("groups", [])
-                if isinstance(group, dict) and normalize_str(group.get("id")).lower() == normalized_owner_id
-            ),
-            None,
-        )
-        key_limit = target_group.get("key_limit") if isinstance(target_group, dict) else None
-        return key_limit if isinstance(key_limit, int) and key_limit >= 0 else 1
-
-    def normalize_identifier(value: Any) -> str:
-        if value is None:
-            return ""
-        string_value = str(value) if not isinstance(value, str) else value
-        return normalize_str(string_value).lower()
-
-    instructor_identifiers = {
-        normalize_identifier(course.get("instructor_id") or course.get("instructorId")),
-        normalize_identifier(course.get("instructor_email") or course.get("instructorEmail")),
-    }
-    ta_ids_list = course.get("ta_ids") if isinstance(course.get("ta_ids"), list) else course.get("taIds") if isinstance(course.get("taIds"), list) else []
-    ta_emails_list = course.get("ta_emails") if isinstance(course.get("ta_emails"), list) else course.get("taEmails") if isinstance(course.get("taEmails"), list) else []
-    instructor_identifiers.update(
-        normalize_identifier(identifier)
-        for identifier in ta_ids_list
-    )
-    instructor_identifiers.update(
-        normalize_identifier(identifier)
-        for identifier in ta_emails_list
-    )
-    instructor_identifiers.discard("")
-    if normalized_owner_id in instructor_identifiers:
-        instructor_key_limit = course.get("instructor_key_limit") if course.get("instructor_key_limit") is not None else course.get("instructorKeyLimit")
-        instructor_handout_limit = course.get("instructor_handout_limit") if course.get("instructor_handout_limit") is not None else course.get("instructorHandoutLimit")
-        if normalized_owner_type == "person":
-            limit = instructor_key_limit if isinstance(instructor_key_limit, int) and instructor_key_limit >= 0 else 2
-            return limit
-        if isinstance(instructor_handout_limit, int) and instructor_handout_limit >= 0:
-            return instructor_handout_limit
-        limit = instructor_key_limit if isinstance(instructor_key_limit, int) and instructor_key_limit >= 0 else 2
-        return limit
-
-    target_member = next(
-        (
-            member
-            for member in course.get("members", [])
-            if isinstance(member, dict)
-            and (
-                normalize_str(member.get("id")).lower() == normalized_owner_id
-                or normalize_str(member.get("email")).lower() == normalized_owner_id
-            )
-        ),
-        None,
-    )
-    key_limit = target_member.get("key_limit") if isinstance(target_member, dict) else None
-    if isinstance(key_limit, int) and key_limit >= 0:
-        return key_limit
-    
-    return 0
+    return owner_key_limit(course, normalize_str(owner_type).lower() or "person", owner_id)
 
 
-def _serialize_api_key_summary(entry: dict[str, Any]) -> dict[str, Any]:
+def _serialize_api_key_summary(entry: dict[str, Any], course=None) -> dict[str, Any]:
     slot_index = entry.get("slot_index") if isinstance(entry.get("slot_index"), int) else None
     if slot_index is None or slot_index < 1:
         key_name = normalize_str(entry.get("key_name"))
@@ -224,7 +167,7 @@ def _serialize_api_key_summary(entry: dict[str, Any]) -> dict[str, Any]:
         "created": entry.get("created"),
         "course_id": entry.get("course_id"),
         "has_hash": bool(normalize_str(entry.get("hash"))),
-        "is_active": bool(entry.get("is_active", True)),
+        "is_active": key_is_active(entry, courses, users, course=course),
     }
 
 
@@ -261,7 +204,7 @@ def _serialize_value(value: Any):
     if isinstance(value, ObjectId):
         return str(value)
     if isinstance(value, dict):
-        return {k: _serialize_value(v) for k, v in value.items()}
+        return {k: _serialize_value(v) for k, v in value.items() if k != audit_handlers.PENDING_COURSE_AUDIT}
     if isinstance(value, list):
         return [_serialize_value(v) for v in value]
     return value
@@ -569,7 +512,7 @@ def _route_deps() -> dict[str, Any]:
         "add_course_members": add_course_members,
         "remove_course_member": remove_course_member,
         "create_course_group": create_course_group,
-        "add_group_member": add_group_member,
+        "add_group_members": add_group_members,
         "remove_group_member": remove_group_member,
         "update_course_member_key_limit": update_course_member_key_limit,
         "update_course_instructor_key_limit": update_course_instructor_key_limit,
@@ -579,7 +522,6 @@ def _route_deps() -> dict[str, Any]:
         "regenerate_course_api_key": regenerate_course_api_key,
         "resolve_course_key_owner": resolve_course_key_owner,
         "reconcile_course_members_for_user": reconcile_course_members_for_user,
-        "set_course_active_state": set_course_active_state,
         "set_course_api_key_active_state": set_course_api_key_active_state,
         "_get_owner_key_limit": _get_owner_key_limit,
         "_iter_course_api_keys": _iter_course_api_keys,
@@ -717,13 +659,23 @@ def create_course_group_route(course_id):
 
 
 @app.route("/courses/<course_id>/groups/<group_id>/members", methods=["POST"])
-def add_group_member_route(course_id, group_id):
-    return course_handlers.add_group_member_route(_route_deps(), course_id, group_id)
+def add_group_members_route(course_id, group_id):
+    return course_handlers.add_group_members_route(_route_deps(), course_id, group_id)
 
 
 @app.route("/courses/<course_id>/groups/<group_id>/members", methods=["DELETE"])
 def remove_group_member_route(course_id, group_id):
     return course_handlers.remove_group_member_route(_route_deps(), course_id, group_id)
+
+
+@app.route("/courses/<course_id>/groups/<group_id>/join-settings", methods=["PATCH"])
+def update_group_join_settings_route(course_id, group_id):
+    return course_handlers.update_group_join_settings_route(_route_deps(), course_id, group_id)
+
+
+@app.route("/courses/<course_id>/groups/<group_id>/join", methods=["POST"])
+def join_course_group_route(course_id, group_id):
+    return course_handlers.join_course_group_route(_route_deps(), course_id, group_id)
 
 
 @app.route("/courses/<course_id>/members/<member_id>/key-limit", methods=["PATCH"])

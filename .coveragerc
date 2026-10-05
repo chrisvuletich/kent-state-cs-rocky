@@ -3,6 +3,7 @@ branch = True
 parallel = True
 relative_files = True
 source =
+    rocky_common
     rocky-backend
     api-rocky
     granite-llm-server/app

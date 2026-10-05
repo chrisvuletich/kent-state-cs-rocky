@@ -129,7 +129,7 @@ export const documentation: DocumentationDocument[] = [
 		id: 'course-roster',
 		title: 'Course Roster Workflow',
 		description:
-			'Learn how to edit a course roster, add students manually, import a Canvas CSV, and confirm enrollment.',
+			'Edit course rosters, import Canvas CSVs, add students to groups, and enable group self-joining.',
 		category: 'administration',
 		audience: 'instructor',
 		order: 1,

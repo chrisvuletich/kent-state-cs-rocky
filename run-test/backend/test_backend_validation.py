@@ -451,7 +451,8 @@ class BackendValidationTests(BackendTestCase):
         self.assertEqual(third.status_code, 200)
 
     def test_admin_can_close_and_reopen_course_and_all_keys_follow_status(self):
-        self._log("Admin closes and reopens a course. Expecting course and all keys to mirror is_active state.")
+        self._log("Admin closes and reopens a course. Key summaries follow current policy without rewriting key records.")
+        original_keys = list(main.api_keys.find({"course_id": 1}))
 
         close_response = self.client.patch(
             "/courses/1/status",
@@ -462,7 +463,7 @@ class BackendValidationTests(BackendTestCase):
         close_payload = close_response.get_json() or {}
         self.assertEqual(close_payload.get("is_active"), False)
 
-        closed_keys = list(main.api_keys.find({"course_id": 1}))
+        closed_keys = self.client.get("/courses/1/api-keys", headers=self.admin_headers).json
         self.assertGreater(len(closed_keys), 0)
         self.assertTrue(all(key.get("is_active") is False for key in closed_keys))
 
@@ -475,9 +476,10 @@ class BackendValidationTests(BackendTestCase):
         reopen_payload = reopen_response.get_json() or {}
         self.assertEqual(reopen_payload.get("is_active"), True)
 
-        reopened_keys = list(main.api_keys.find({"course_id": 1}))
+        reopened_keys = self.client.get("/courses/1/api-keys", headers=self.admin_headers).json
         self.assertGreater(len(reopened_keys), 0)
         self.assertTrue(all(key.get("is_active") is True for key in reopened_keys))
+        self.assertEqual(list(main.api_keys.find({"course_id": 1})), original_keys)
 
     def test_closed_course_rejects_mutating_endpoints(self):
         self._log("Closing a course and verifying write endpoints are rejected with HTTP 403.")
