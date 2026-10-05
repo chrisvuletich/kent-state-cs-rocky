@@ -21,6 +21,7 @@
 	} from '$lib/api/courses';
 	import { fetchCourseDetails, fetchCourseGroups, fetchCourses } from '$lib/api/content';
 	import { fetchUsersForViews } from '$lib/api/users';
+	import { parseCanvasRosterEmails } from '$lib/courses/canvasRoster';
 	import { appHref, parseCourseId } from '$lib/navigation/appRoute';
 	import { focusScope } from '$lib/actions/focusScope';
 	import { handleTabListKeydown } from '$lib/accessibility/tabs';
@@ -32,7 +33,7 @@
 		COURSE_EDITOR_SEMESTER_YEAR_MAX,
 		COURSE_EDITOR_SEMESTER_YEAR_MIN
 	} from '$lib/config/courseEditor';
-	import { showErrorFeedback } from '$lib/stores/feedbackStore';
+	import { showErrorFeedback, showSuccessFeedback } from '$lib/stores/feedbackStore';
 	import type { Course, CourseApiKeySummary, CourseDetail, CourseGroup } from '$lib/types/course';
 	import type { User } from '$lib/types/user';
 	import type { CourseApiHistoryEntry, CourseApiKeySummaryResponse } from '$lib/api/courses';
@@ -99,6 +100,7 @@
 	let newGroupName = '';
 	let pendingGroupMemberIdByGroupId: Record<string, string> = {};
 	let importCsvInput: HTMLInputElement | null = null;
+	let importCsvPending = false;
 	let previewApiKey: string | null = null;
 	let apiKeyActionError: string | null = null;
 	let courseApiHistory: CourseApiHistoryEntry[] = [];
@@ -1235,7 +1237,7 @@
 	}
 
 	async function importPeopleFromCanvasCsv(event: Event) {
-		if (!ensureCourseIsEditable()) {
+		if (importCsvPending || !ensureCourseIsEditable()) {
 			return;
 		}
 		if (!selectedCourse || !selectedDetail) {
@@ -1244,38 +1246,57 @@
 
 		const target = event.currentTarget as HTMLInputElement | null;
 		const file = target?.files?.[0];
-		if (!file) {
+		if (!target || !file) {
 			return;
 		}
 
-		const csvText = await file.text();
-		const idMatches = csvText.match(/(?:KSUID|WLID)\d{9}/gi) || [];
-		const parsedIds = [...new Set(idMatches.map((value) => value.trim()))];
-		const nonAdminIds = parsedIds.filter((id) => {
-			const matchingUser = allUsers.find(
-				(user) => normalizeIdentifier(user.id) === normalizeIdentifier(id)
-			);
-			return !matchingUser?.isAdmin;
-		});
-		if (nonAdminIds.length !== parsedIds.length) {
-			showErrorFeedback('Admin accounts were excluded from the imported course list.');
-		}
-		if (nonAdminIds.length === 0) {
-			target.value = '';
-			return;
-		}
-
+		const courseId = selectedCourse.id;
+		const courseName = selectedCourse.name;
+		importCsvPending = true;
 		try {
-			await addCourseMembers(
-				selectedCourse.id,
-				nonAdminIds.map((id) => ({ id }))
+			let emails: string[];
+			try {
+				emails = parseCanvasRosterEmails(await file.text());
+			} catch (err) {
+				showErrorFeedback(
+					err instanceof Error ? err.message : 'Unable to read the CSV file.',
+					8000
+				);
+				return;
+			}
+			// Reading a file is asynchronous; never import into a newly selected course.
+			if (selectedCourse?.id !== courseId || !ensureCourseIsEditable()) return;
+			const adminEmails = new Set(
+				allUsers.filter((user) => user.isAdmin).map((user) => normalizeIdentifier(user.email))
 			);
-			await refreshAfterWrite();
-		} catch {
-			// API layer already shows user-facing feedback.
+			const memberEmails = emails.filter((email) => !adminEmails.has(email));
+			const excludedCount = emails.length - memberEmails.length;
+			if (!memberEmails.length) {
+				showErrorFeedback(
+					'No students were imported. Admin accounts cannot be added to course lists.'
+				);
+				return;
+			}
+			try {
+				await addCourseMembers(
+					courseId,
+					memberEmails.map((email) => ({ email }))
+				);
+				showSuccessFeedback(
+					`Imported ${memberEmails.length} unique email address${memberEmails.length === 1 ? '' : 'es'} into ${courseName}.` +
+						(excludedCount
+							? ` Excluded ${excludedCount} admin account${excludedCount === 1 ? '' : 's'}.`
+							: ''),
+					8000
+				);
+				await refreshAfterWrite();
+			} catch {
+				// API layer already shows user-facing feedback.
+			}
+		} finally {
+			importCsvPending = false;
+			target.value = '';
 		}
-
-		target.value = '';
 	}
 
 	function triggerCsvImportPicker() {
@@ -2005,14 +2026,20 @@
 								aria-label="Search course roster"
 							/>
 							<button type="button" class="view-btn" onclick={openAddEmailPopup}>Add Email</button>
-							<button type="button" class="view-btn" onclick={triggerCsvImportPicker}
-								>Import Canvas CSV</button
+							<button
+								type="button"
+								class="view-btn"
+								onclick={triggerCsvImportPicker}
+								disabled={importCsvPending}
 							>
+								{importCsvPending ? 'Importing…' : 'Import Canvas CSV'}
+							</button>
 							<input
 								class="course-hidden-input"
 								type="file"
 								accept=".csv,text/csv"
 								aria-label="Import course roster from Canvas CSV"
+								disabled={importCsvPending}
 								bind:this={importCsvInput}
 								onchange={importPeopleFromCanvasCsv}
 							/>

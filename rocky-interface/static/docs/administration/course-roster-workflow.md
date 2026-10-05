@@ -24,6 +24,29 @@ Enter the student’s Kent email address, then select **Add User**.
 
 To add the full class at once, select **Import Canvas CSV** and upload the roster exported from Canvas.
 
+In Canvas, open your course, select **Course Analytics** (sometimes labeled
+**New Analytics**), then **Reports**. Run the **Class Roster** report and
+download its CSV file.
+
+Rocky reads the **Email** column. A typical export looks like this:
+
+```csv
+Student Name,Student ID,Student SIS ID,Email,Section Name
+Example Student,123456,,student@kent.edu,Fall 2026 SOFTWARE ENGINEERING
+```
+
+Blank SIS IDs are fine; Canvas student IDs and SIS IDs are not used to match
+Rocky accounts. Other columns may appear in any order. A CSV containing just
+an **Email** column also works. Students can be added before their first Rocky
+login; their accounts are linked by email when they sign in.
+
+Duplicate emails are combined, existing roster members are updated without
+creating duplicates, and known admin accounts are excluded. The import shows
+a confirmation with the number of unique emails processed. Empty files,
+missing Email columns, malformed CSV, and student rows with missing or invalid
+emails show an error without importing any students. Correct the file and
+select it again to retry.
+
 ![The current Edit Roster page with the Import Canvas CSV control above the roster](/class_doc_2.png)
 
 ## 5. Set student key allowances
