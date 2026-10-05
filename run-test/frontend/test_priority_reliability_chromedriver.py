@@ -561,10 +561,12 @@ class PriorityReliabilityE2ETests(FrontendBrowserTestCase):
         )
         self.capture_evidence("analytics-shareable-filters")
 
-    def test_analytics_request_detail_shows_queue_admission(self):
+    @classmethod
+    def _seed_additional_fixtures(cls):
+        super()._seed_additional_fixtures()
         request_id = "req_queue_ui_evidence"
         now = datetime.now(timezone.utc)
-        client = MongitaClientDisk(self._mongita_dir)
+        client = MongitaClientDisk(cls._mongita_dir)
         try:
             client["rocky_db"]["telemetry_interactions"].insert_one({
                 "_id": request_id,
@@ -610,6 +612,8 @@ class PriorityReliabilityE2ETests(FrontendBrowserTestCase):
         finally:
             client.close()
 
+    def test_analytics_request_detail_shows_queue_admission(self):
+        request_id = "req_queue_ui_evidence"
         self._login_as_admin()
         self.driver.get(f"{BASE_URL}/?frame=analytics&request={request_id}")
         self._assert_title("Analytics")

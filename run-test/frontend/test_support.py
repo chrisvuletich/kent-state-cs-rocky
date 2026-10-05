@@ -78,6 +78,10 @@ class FrontendBrowserTestCase(unittest.TestCase):
             raise
 
     @classmethod
+    def _seed_additional_fixtures(cls):
+        """Seed class-specific data before the backend caches Mongita collections."""
+
+    @classmethod
     def _set_up_resources(cls):
         cls._log("Seeding and starting backend API for browser tests.")
         cls._mongita_dir = tempfile.mkdtemp(prefix="rocky-e2e-mongita-")
@@ -96,6 +100,7 @@ class FrontendBrowserTestCase(unittest.TestCase):
             env=backend_env,
             check=True,
         )
+        cls._seed_additional_fixtures()
         cls._process_log_dir = Path(tempfile.mkdtemp(prefix="rocky-e2e-process-logs-"))
         cls._backend_log_path = cls._process_log_dir / "backend.log"
         cls._frontend_log_path = cls._process_log_dir / "frontend.log"
