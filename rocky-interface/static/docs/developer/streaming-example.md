@@ -9,7 +9,8 @@ streaming option.
 
 `requests.iter_lines()` preserves SSE line boundaries even when network chunks
 split a JSON event. The example prints text deltas immediately and accepts only
-`response.completed` as success.
+`response.completed` as success. It reports `response.incomplete` separately
+when the output allowance is exhausted, preserving any partial text.
 
 ```python
 import json
@@ -39,7 +40,7 @@ payload = {
     "store": False,
 }
 
-completed = False
+finished = False
 event_name = None
 with requests.post(
     url,
@@ -74,11 +75,15 @@ with requests.post(
                 f"(request {request_id})"
             )
         elif event_name == "response.completed":
-            completed = True
+            finished = True
             print()
+        elif event_name == "response.incomplete":
+            finished = True
+            reason = event["response"]["incomplete_details"]["reason"]
+            print(f"\nAnswer unfinished: {reason} (request {request_id})")
 
-if not completed:
-    raise RuntimeError(f"Rocky stream ended before completion (request {request_id})")
+if not finished:
+    raise RuntimeError(f"Rocky stream ended without a terminal event (request {request_id})")
 ```
 
 ## JavaScript with fetch
@@ -125,7 +130,7 @@ const requestId = response.headers.get("x-request-id") ?? "not provided";
 const reader = response.body.getReader();
 const decoder = new TextDecoder("utf-8", { fatal: true });
 let buffer = "";
-let completed = false;
+let finished = false;
 
 function processFrame(frame) {
 	let eventName;
@@ -136,6 +141,7 @@ function processFrame(frame) {
 		else if (line.startsWith("data:")) dataLines.push(line.slice(5).trimStart());
 		else throw new Error("Malformed Rocky SSE field");
 	}
+	if (!eventName && dataLines.length === 0) return; // Queue/thinking keepalive comment.
 	if (!eventName || dataLines.length === 0) throw new Error("Incomplete Rocky SSE frame");
 
 	const event = JSON.parse(dataLines.join("\n"));
@@ -144,8 +150,12 @@ function processFrame(frame) {
 	else if (eventName === "error") {
 		throw new Error(`${event.code}: ${event.message} (request ${requestId})`);
 	} else if (eventName === "response.completed") {
-		completed = true;
+		finished = true;
 		process.stdout.write("\n");
+	} else if (eventName === "response.incomplete") {
+		finished = true;
+		process.stdout.write("\n");
+		console.warn(`Answer unfinished: ${event.response.incomplete_details.reason} (request ${requestId})`);
 	}
 }
 
@@ -163,7 +173,7 @@ while (true) {
 }
 
 if (buffer.trim()) processFrame(buffer);
-if (!completed) throw new Error(`Rocky stream ended before completion (request ${requestId})`);
+if (!finished) throw new Error(`Rocky stream ended without a terminal event (request ${requestId})`);
 ```
 
 ## Important behavior
@@ -173,5 +183,12 @@ if (!completed) throw new Error(`Rocky stream ended before completion (request $
   contract validation.
 - Do not wait for `[DONE]`; Rocky does not send that sentinel.
 - An `error` event is terminal even though the HTTP status is already 200.
-- A closed connection without `response.completed` or `error` is incomplete.
+- `response.incomplete` is a normal terminal event for token-limit exhaustion,
+  not a network error. Its response has `status: "incomplete"` and
+  `incomplete_details.reason: "max_output_tokens"`; output can be partial or empty.
+- A closed connection without `response.completed`, `response.incomplete`, or
+  `error` is an interrupted stream. Do not mistake it for a reported token limit.
+- These examples omit `max_output_tokens` to use the server default. Thinking
+  shares this allowance with the visible answer. An explicit smaller limit is
+  honored without a hidden retry or automatic increase.
 - Keep `x-request-id` for troubleshooting, but never log the API key.

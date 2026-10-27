@@ -20,6 +20,13 @@ def load_fixture_events() -> list[dict[str, object]]:
 
 
 class GraniteStreamContractTests(unittest.TestCase):
+    def test_token_limited_stream_may_finish_without_visible_deltas(self):
+        validate_stream([
+            {"type": "started", "model": "gemma4:latest"},
+            {"type": "completed", "metadata": {},
+             "telemetry": {"provider": {"stop_reason": "length", "eval_count": 300}}},
+        ])
+
     def test_golden_internal_stream_is_valid_and_deterministically_encoded(self):
         events = load_fixture_events()
 

@@ -41,13 +41,28 @@ request ID.
 | `500` | `internal_error` | An unexpected Rocky error occurred. | Record the request ID and retry once after a short delay. Report repeated failures. |
 | `502` | `model_service_unavailable`, `invalid_model_response`, `model_error` | Granite or Ollama could not be reached or returned an unusable response. | Retry once after a short delay. Report repeated failures with the request ID. |
 | `503` | `model_busy`, `request_logging_unavailable`, `rate_limit_unavailable`, `rate_limit_identity_unavailable` | The finite model queue was full or its wait expired, or a required internal service is unavailable. | For `model_busy`, honor the `Retry-After` header. Otherwise wait for the service to recover. |
-| `504` | `model_timeout` | Model generation exceeded the configured time limit. | Retry once, preferably with shorter input or a smaller `max_output_tokens`. |
+| `504` | `model_timeout` | Model generation exceeded the configured time limit. | Retry once with shorter input or ask for a more concise answer. Very small token allowances can instead prevent the model from producing an answer. |
 
 After Rocky authenticates and counts a request, the response includes
 `x-ratelimit-limit-requests`, `x-ratelimit-remaining-requests`, and
 `x-ratelimit-reset-requests`. The reset value is a duration such as `17s`.
 Rocky enforces request limits only, so token-limit headers are not present.
 `Retry-After` is returned in whole seconds when a temporary `429` limit is hit.
+
+## Token-limit exhaustion (HTTP 200)
+
+Running out of generation tokens is not a bad gateway or connectivity failure.
+Rocky returns `status: "incomplete"` and
+`incomplete_details: {"reason": "max_output_tokens"}`. Any `output_text` is partial;
+it can be empty if thinking consumed the allowance before visible output began.
+Usage is retained. Check this status even when `response.ok` is true.
+
+Omit `max_output_tokens` to use the advertised server default, or choose a larger
+value within the model's advertised ceiling if you deliberately set a smaller
+one. Thinking and visible output share the same allowance. Ask a shorter question
+or request a concise answer if the default is still insufficient. Rocky does not
+silently increase your limit or retry automatically. An explicit new request is
+needed; do not assume an incomplete answer is a finished result.
 
 ## Image-input errors
 
@@ -82,8 +97,9 @@ data: {"type":"error","sequence_number":5,"code":"model_timeout","message":"Mode
 
 ```
 
-Treat only `response.completed` as success. An `error` event is terminal, and a
-connection that closes without either terminal event is an incomplete request.
+Treat only `response.completed` as a finished answer. `response.incomplete`
+reports token-limit exhaustion; `error` reports a failure. All three are terminal.
+A connection that closes without any terminal event is an interrupted stream.
 Keep the response's `x-request-id`, when present, so an administrator can find
 the matching audit record. Rocky streams do not use a `[DONE]` sentinel.
 
@@ -116,7 +132,10 @@ response = requests.post(
 )
 
 if response.ok:
-    print(response.json()["output_text"])
+    data = response.json()
+    print(data["output_text"])
+    if data["status"] == "incomplete":
+        print("Answer unfinished:", data["incomplete_details"]["reason"])
 else:
     try:
         body = response.json()

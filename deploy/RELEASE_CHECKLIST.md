@@ -76,6 +76,17 @@ For streaming, enable Granite first, then Rocky, then the frontend. For image
 input, enable Granite first and Rocky second. Run the full doctor after the
 flags are aligned; it fails when rollout state or image limits differ.
 
+For the token-limit response fix, deploy the bridge, chat API, and frontend as
+one coordinated release (bridge first, API second, frontend last). An old bridge
+still turns empty token-limited output into 502; an old frontend cannot interpret
+`response.incomplete`. No database migration or new service is needed. Verify
+both buffered and streaming requests with an intentionally small allowance:
+expect HTTP 200 / `response.incomplete` with reason `max_output_tokens` if the
+limit is reached, and retained usage/partial output rather than a gateway error.
+The normal generation smoke checks omit an explicit budget, using the advertised
+default so that thinking models are not inadvertently capped at 32 tokens. They
+still require a finished answer and report token exhaustion distinctly.
+
 ## 4. Verify the deployed public surface
 
 Use a dedicated instructor or deployment-test key. The command tests buffered

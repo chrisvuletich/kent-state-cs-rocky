@@ -146,6 +146,19 @@ class StudentApiDocumentationTests(unittest.TestCase):
                     r"rocky_model\s*=\s*[\"'](?:rocky|gemma)",
                 )
 
+    def test_examples_use_default_token_budget_and_handle_incomplete_answers(self):
+        for filename in ("python-example.md", "javascript-example.md", "image-input-example.md", "errors.md"):
+            with self.subTest(filename=filename):
+                document = self.read_doc(filename)
+                self.assertIn("incomplete_details", document)
+                examples = "\n".join(re.findall(r"```[^\n]*\n(.*?)```", document, flags=re.DOTALL))
+                self.assertNotRegex(examples, r'["\']max_output_tokens["\']\s*:\s*\d+')
+        streaming = self.read_doc("streaming-example.md")
+        self.assertIn('event_name == "response.incomplete"', streaming)
+        self.assertIn('eventName === "response.incomplete"', streaming)
+        self.assertIn("if (!eventName && dataLines.length === 0) return", streaming)
+        self.assertIn('data["status"] != "completed"', self.read_doc("email-scam-detector.md"))
+
     def test_request_examples_allow_for_queue_and_generation_time(self):
         errors = self.read_doc("errors.md")
 

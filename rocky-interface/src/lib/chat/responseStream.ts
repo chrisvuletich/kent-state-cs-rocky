@@ -19,7 +19,7 @@ type StreamEvent = Record<string, unknown> & {
 	sequence_number: number;
 };
 
-export type RockyCompletedStream = {
+export type RockyFinishedStream = {
 	outputText: string;
 	response: Record<string, unknown>;
 };
@@ -112,7 +112,7 @@ function streamResponseObject(event: StreamEvent): Record<string, unknown> {
 export async function consumeRockyResponseStream(
 	response: Response,
 	onDelta: (outputText: string, delta: string) => void = () => undefined
-): Promise<RockyCompletedStream> {
+): Promise<RockyFinishedStream> {
 	if (!response.ok || !response.body) invalidStream();
 	const contentType = response.headers.get('content-type')?.toLowerCase() || '';
 	if (!contentType.startsWith('text/event-stream')) invalidStream();
@@ -124,7 +124,7 @@ export async function consumeRockyResponseStream(
 	let suffixIndex = 0;
 	let outputText = '';
 	let sawDelta = false;
-	let completed: RockyCompletedStream | null = null;
+	let completed: RockyFinishedStream | null = null;
 
 	const consumeEvent = (event: StreamEvent) => {
 		if (
@@ -157,16 +157,27 @@ export async function consumeRockyResponseStream(
 			return;
 		}
 
-		if (!sawDelta || event.type !== STREAM_SUFFIX[suffixIndex]) invalidStream();
+		const incomplete = event.type === 'response.incomplete';
+		const expectedType =
+			incomplete && suffixIndex === STREAM_SUFFIX.length - 1
+				? 'response.incomplete'
+				: STREAM_SUFFIX[suffixIndex];
+		if (event.type !== expectedType) invalidStream();
 		if (event.type === 'response.output_text.done' && event.text !== outputText) {
 			invalidStream();
 		}
-		if (event.type === 'response.completed') {
+		if (event.type === 'response.completed' || incomplete) {
 			const completedResponse = streamResponseObject(event);
 			if (
-				completedResponse.status !== 'completed' ||
+				completedResponse.status !== (incomplete ? 'incomplete' : 'completed') ||
 				completedResponse.output_text !== outputText
 			) {
+				invalidStream();
+			}
+			if (incomplete) {
+				const details = completedResponse.incomplete_details as { reason?: unknown } | null;
+				if (details?.reason !== 'max_output_tokens') invalidStream();
+			} else if (!sawDelta || !outputText.trim()) {
 				invalidStream();
 			}
 			completed = { outputText, response: completedResponse };

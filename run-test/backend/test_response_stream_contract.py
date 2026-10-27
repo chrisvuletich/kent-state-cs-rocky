@@ -14,6 +14,7 @@ from openai.types.responses import (
     ResponseCreatedEvent,
     ResponseErrorEvent,
     ResponseInProgressEvent,
+    ResponseIncompleteEvent,
     ResponseOutputItemAddedEvent,
     ResponseOutputItemDoneEvent,
     ResponseTextDeltaEvent,
@@ -31,6 +32,9 @@ sys.path.insert(0, str(API_ROCKY_DIR))
 try:
     from response_stream_contract import (
         build_stream_error_event,
+        build_text_stream_prefix,
+        build_text_stream_suffix,
+        build_text_delta_event,
         encode_sse_event,
         validate_text_stream_events,
     )
@@ -48,6 +52,7 @@ SDK_EVENT_TYPES = {
     "response.content_part.done": ResponseContentPartDoneEvent,
     "response.output_item.done": ResponseOutputItemDoneEvent,
     "response.completed": ResponseCompletedEvent,
+    "response.incomplete": ResponseIncompleteEvent,
 }
 
 
@@ -68,6 +73,24 @@ def load_fixture_events() -> list[dict[str, object]]:
 
 
 class ResponseStreamContractTests(unittest.TestCase):
+    def test_incomplete_streams_with_zero_or_partial_text_are_sdk_compatible(self):
+        for text in ("", "Partial answer"):
+            with self.subTest(text=text):
+                response = load_fixture_events()[-1]["response"]
+                response.update(status="incomplete", incomplete_details={"reason": "max_output_tokens"})
+                item_id = response["output"][0]["id"]
+                events = build_text_stream_prefix(response["id"], item_id, response["created_at"], response["model"])
+                if text:
+                    events.append(build_text_delta_event(item_id, text, len(events)))
+                events.extend(build_text_stream_suffix(response, item_id, text, len(events)))
+                validate_text_stream_events(events)
+                for event in events:
+                    SDK_EVENT_TYPES[event["type"]].model_validate(event)
+                self.assertEqual(events[-1]["response"]["output_text"], text)
+                events[-1]["response"]["incomplete_details"] = None
+                with self.assertRaisesRegex(ValueError, "output-token limit"):
+                    validate_text_stream_events(events)
+
     def test_golden_stream_satisfies_rocky_and_current_openai_sdk_contracts(self):
         events = load_fixture_events()
 

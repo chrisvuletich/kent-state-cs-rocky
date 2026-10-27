@@ -59,6 +59,16 @@ export function chatHttpFailure(
 ): ChatFailure {
 	const { code, message } = errorDetails(payload);
 	const requestId = context.requestId;
+	if (code === 'max_output_tokens') {
+		return {
+			kind: 'request',
+			message: withRequestId(
+				'Rocky reached the response token limit before finishing. Any partial answer has been kept. Try a shorter question or ask for a more concise answer.',
+				requestId
+			),
+			markUnavailable: false
+		};
+	}
 
 	if (status === 401 || status === 403 || code === 'invalid_api_key') {
 		return {

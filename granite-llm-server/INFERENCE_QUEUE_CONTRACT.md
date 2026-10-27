@@ -157,8 +157,10 @@ event sequence remains:
 2. zero or more `delta` events while output is being produced
 3. exactly one `completed` or `error` event
 
-The existing requirement for at least one non-empty delta before successful
-completion remains unchanged. Queueing must not expose Ollama events directly.
+Successful completion requires at least one non-empty delta. Token-limit
+exhaustion is the exception: private `completed` may have zero deltas when
+`telemetry.provider.stop_reason` is `length`; Rocky emits `response.incomplete`
+instead of `response.completed`. Queueing must not expose Ollama events directly.
 Once `started` has been emitted, Granite continues sending blank keepalives at
 the configured interval whenever the blocking provider iterator has not
 produced visible output. These keepalives contain no raw reasoning or provider

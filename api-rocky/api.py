@@ -1956,21 +1956,24 @@ def rocky_api():
             )
 
         assistant_reply = response["output_text"]
+        incomplete = (model_metrics or {}).get("stop_reason") == "length"
         if use_web_history:
             update_message_status(
                 conversation_id,
                 user_id,
                 user_message_id,
-                "sent",
+                "failed" if incomplete else "sent",
             )
-            assistant_message_id = save_message(
-                conversation_id=conversation_id,
-                user_id=user_id,
-                role="assistant",
-                content=assistant_reply,
-                model=response.get("model"),
-                user_context=chat_user_context
-            )
+            if assistant_reply.strip():
+                assistant_message_id = save_message(
+                    conversation_id=conversation_id,
+                    user_id=user_id,
+                    role="assistant",
+                    content=assistant_reply,
+                    model=response.get("model"),
+                    user_context=chat_user_context,
+                    status="failed" if incomplete else "sent",
+                )
 
         response_payload = build_response_payload(
             assistant_reply,
@@ -1983,6 +1986,9 @@ def rocky_api():
         if conversation_id is not None:
             response_payload["conversation_id"] = conversation_id
 
+        if incomplete and use_web_history:
+            response_payload["message_stored"] = bool(user_message_id)
+
         if store_response and not use_web_history:
             assistant_context_message = {
                 "role": "assistant",
@@ -1991,7 +1997,11 @@ def rocky_api():
             save_response_context(
                 response_payload["id"],
                 owner_scope,
-                [*retained_history, *current_messages, assistant_context_message],
+                [
+                    *retained_history,
+                    *current_messages,
+                    *([assistant_context_message] if assistant_reply.strip() else []),
+                ],
             )
             response_context_saved = True
     except Exception as error:
@@ -2076,8 +2086,10 @@ def rocky_api():
         interaction,
         response_payload,
         200,
-        "completed",
+        "failed" if incomplete else "completed",
         model_metrics=model_metrics,
+        error_stage="generation" if incomplete else None,
+        error_type="max_output_tokens" if incomplete else None,
         additional_fields=telemetry_model_fields(
             request_body,
             model_metrics,
@@ -3283,12 +3295,14 @@ def build_response_payload(
     message_id = message_id or f"msg_{uuid4().hex}"
     prompt_tokens = int((model_metrics or {}).get("prompt_eval_count") or 0)
     output_tokens = int((model_metrics or {}).get("eval_count") or 0)
+    incomplete = (model_metrics or {}).get("stop_reason") == "length"
+    status = "incomplete" if incomplete else "completed"
 
     payload = {
         "id": response_id,
         "object": "response",
         "created_at": int(time.time()) if created_at is None else created_at,
-        "status": "completed",
+        "status": status,
         "model": PUBLIC_MODEL,
         "parallel_tool_calls": False,
         "tool_choice": "none",
@@ -3296,7 +3310,7 @@ def build_response_payload(
         "output": [{
             "id": message_id,
             "type": "message",
-            "status": "completed",
+            "status": status,
             "role": "assistant",
             "content": [{
                 "type": "output_text",
@@ -3322,6 +3336,9 @@ def build_response_payload(
             "total_tokens": prompt_tokens + output_tokens,
         },
     }
+
+    if incomplete:
+        payload["incomplete_details"] = {"reason": "max_output_tokens"}
 
     if isinstance(request_body, dict):
         for field in ("max_output_tokens", "temperature", "top_p"):
@@ -3417,7 +3434,9 @@ def request_ai(request_body, *, normalized=False):
         return model_failure(error_type, model_metrics, message=safe_message)
 
     output_text = data.get("output_text")
-    if not isinstance(output_text, str) or not output_text.strip():
+    if not isinstance(output_text, str) or (
+        not output_text.strip() and model_metrics.get("stop_reason") != "length"
+    ):
         return model_failure("bad_response", model_metrics)
 
     result = dict(data)
@@ -3629,7 +3648,8 @@ class PublicResponseStream:
             "telemetry": terminal_event["telemetry"],
         })
         assistant_reply = self.output_text
-        if not assistant_reply.strip():
+        incomplete = self.model_metrics.get("stop_reason") == "length"
+        if not assistant_reply.strip() and not incomplete:
             raise PublicStreamFinalizationError(
                 "Granite returned an invalid response.",
                 "invalid_model_response",
@@ -3641,16 +3661,18 @@ class PublicResponseStream:
                 self.conversation_id,
                 self.user_id,
                 self.user_message_id,
-                "sent",
+                "failed" if incomplete else "sent",
             )
-            self.assistant_message_id = save_message(
-                conversation_id=self.conversation_id,
-                user_id=self.user_id,
-                role="assistant",
-                content=assistant_reply,
-                model=self.granite_stream.model,
-                user_context=self.chat_user_context,
-            )
+            if assistant_reply.strip():
+                self.assistant_message_id = save_message(
+                    conversation_id=self.conversation_id,
+                    user_id=self.user_id,
+                    role="assistant",
+                    content=assistant_reply,
+                    model=self.granite_stream.model,
+                    user_context=self.chat_user_context,
+                    status="failed" if incomplete else "sent",
+                )
 
         response_payload = build_response_payload(
             assistant_reply,
@@ -3666,6 +3688,9 @@ class PublicResponseStream:
         if self.conversation_id is not None:
             response_payload["conversation_id"] = self.conversation_id
 
+        if incomplete and self.use_web_history:
+            response_payload["message_stored"] = bool(self.user_message_id)
+
         if self.store_response and not self.use_web_history:
             assistant_context_message = {
                 "role": "assistant",
@@ -3680,7 +3705,7 @@ class PublicResponseStream:
                 [
                     *self.retained_history,
                     *self.current_messages,
-                    assistant_context_message,
+                    *([assistant_context_message] if assistant_reply.strip() else []),
                 ],
             )
             self._response_context_saved = True
@@ -3692,10 +3717,12 @@ class PublicResponseStream:
         additional_fields["delivery"] = {"status": "pending"}
         persisted = finish_telemetry_interaction(
             self.interaction,
-            "completed",
+            "failed" if incomplete else "completed",
             self.model_metrics,
             response_payload=response_payload,
             http_status=200,
+            error_stage="generation" if incomplete else None,
+            error_type="max_output_tokens" if incomplete else None,
             additional_fields=additional_fields,
         )
         if REQUIRE_REQUEST_LOGGING and not persisted:
@@ -3814,7 +3841,7 @@ class PublicResponseStream:
                         self.output_text,
                         self.sequence_number,
                     ):
-                        if event.get("type") == "response.completed":
+                        if event.get("type") in {"response.completed", "response.incomplete"}:
                             self._completion_frame_emitted = True
                         self.sequence_number += 1
                         yield encode_sse_event(event)
@@ -3826,6 +3853,8 @@ class PublicResponseStream:
                         failure_type = "timeout"
                     elif granite_error_type == "model_busy":
                         failure_type = "busy"
+                    elif granite_error_type == "invalid_model_response":
+                        failure_type = "bad_response"
                     else:
                         failure_type = "model_error"
                 else:

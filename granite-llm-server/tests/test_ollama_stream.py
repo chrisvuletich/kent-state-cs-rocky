@@ -68,6 +68,22 @@ def successful_body(*, include_thinking=False):
 
 
 class OllamaStreamingClientTests(unittest.TestCase):
+    def test_length_reason_does_not_excuse_missing_done_or_malformed_content(self):
+        for frame in (
+            {"message": {"content": ""}, "done": False, "done_reason": "length"},
+            {"message": {}, "done": True, "done_reason": "length"},
+            {"message": {"content": None}, "done": True, "done_reason": "length"},
+            {"message": {"content": ""}, "done": True, "done_reason": "stop"},
+        ):
+            with self.subTest(frame=frame):
+                response = FakeStreamingResponse([encode_event(frame)])
+                with patch.object(ollama_client.requests, "post", return_value=response):
+                    stream = call_ollama_chat_stream("gemma4:latest", [{"role": "user", "content": "Hello"}])
+                    with self.assertRaises(OllamaCallError) as raised:
+                        list(stream)
+                self.assertEqual(raised.exception.kind, "invalid_response")
+                self.assertEqual(response.close_calls, 1)
+
     def test_readiness_requires_vision_capability_when_image_input_is_enabled(self):
         tags = Mock()
         tags.json.return_value = {

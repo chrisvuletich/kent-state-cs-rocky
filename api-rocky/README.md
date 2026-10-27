@@ -81,6 +81,16 @@ credentials, malformed JSON, and health/readiness checks do not consume these
 limits. Authenticated validation failures do consume a request. Rocky does not
 enforce token-per-minute limits, so it does not emit token-limit headers.
 
+Generation-token exhaustion is separate from rate limiting. When the provider
+reports `stop_reason: length`, buffered responses return HTTP 200 with
+`status: incomplete` and `incomplete_details.reason: max_output_tokens`; streams
+terminate with `response.incomplete`. Partial or empty output and usage are
+preserved. Explicit budgets are never silently raised or retried. Public stored
+context omits empty assistant messages. Web-chat partial turns use the existing
+failed-message state so they remain visible but are excluded from automatic
+history. Audit telemetry records outcome `failed`, HTTP 200, error stage
+`generation`, and error type `max_output_tokens` (not a network failure).
+
 ## Permanent request records
 
 When telemetry is enabled, every `POST /v1/responses` attempt receives an

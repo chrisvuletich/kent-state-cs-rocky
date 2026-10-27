@@ -2,6 +2,17 @@ import { describe, expect, it } from 'vitest';
 import { chatExceptionFailure, chatHttpFailure, isAbortError } from './errors';
 
 describe('chat failure feedback', () => {
+	it('explains token exhaustion without marking the model unavailable', () => {
+		const failure = chatHttpFailure(
+			200,
+			{ error: { code: 'max_output_tokens' } },
+			{ requestId: 'req_limit' }
+		);
+		expect(failure).toMatchObject({ kind: 'request', markUnavailable: false });
+		expect(failure.message).toContain('response token limit');
+		expect(failure.message).toContain('req_limit');
+	});
+
 	it('distinguishes authentication failures', () => {
 		expect(chatHttpFailure(401, { error: { code: 'invalid_api_key' } })).toMatchObject({
 			kind: 'authentication',

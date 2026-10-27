@@ -73,7 +73,10 @@ response = requests.post(
 )
 response.raise_for_status()
 
-print(response.json()["output_text"])
+data = response.json()
+if data["status"] != "completed":
+    raise RuntimeError("Analysis unfinished; do not treat a partial answer as a classification.")
+print(data["output_text"])
 ```
 
 ## Example Output

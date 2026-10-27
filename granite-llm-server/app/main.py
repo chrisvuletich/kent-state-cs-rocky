@@ -158,7 +158,11 @@ def generation_metadata(reasoning, thinking_present):
 def model_error_details(kind):
     is_timeout = kind == "timeout"
     return {
-        "type": "model_timeout" if is_timeout else "model_error",
+        "type": (
+            "model_timeout" if is_timeout
+            else "invalid_model_response" if kind == "invalid_response"
+            else "model_error"
+        ),
         "message": (
             "Model request timed out."
             if is_timeout
@@ -329,7 +333,11 @@ def iter_stream_events(model, upstream, reasoning, heartbeat_seconds, ticket):
         })
         return
 
-    if reasoning is not None and not upstream.thinking_present:
+    if (
+        reasoning is not None
+        and not upstream.thinking_present
+        and upstream.telemetry.get("provider", {}).get("stop_reason") != "length"
+    ):
         yield encode_stream_event({
             "type": "error",
             "error": {
@@ -685,7 +693,11 @@ def generate():
     finally:
         end_admitted_inference(ticket)
     
-    if reasoning is not None and not ollama_result["thinking_present"]:
+    if (
+        reasoning is not None
+        and not ollama_result["thinking_present"]
+        and ollama_result["telemetry"].get("provider", {}).get("stop_reason") != "length"
+    ):
         return jsonify({
             "error": {
                 "type": "model_error",

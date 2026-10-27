@@ -283,6 +283,90 @@ class PriorityReliabilityE2ETests(FrontendBrowserTestCase):
         )
         self.capture_evidence("chat-streaming-completed")
 
+    def test_chat_token_limit_keeps_partial_text_and_composer_usable(self):
+        self.addCleanup(self.driver.execute_cdp_cmd, "Emulation.clearDeviceMetricsOverride", {})
+        for streaming in (False, True):
+            for text in ("", "   ", "Partial answer"):
+                with self.subTest(streaming=streaming, text=text):
+                    self._set_viewport("desktop")
+                    self._login_as_admin()
+                    self.driver.execute_script(
+                        """
+                        const streaming = arguments[0], text = arguments[1];
+                        const originalFetch = window.fetch.bind(window);
+                        window.__tokenLimitRequests = 0;
+                        window.fetch = (input, init = {}) => {
+                            const url = typeof input === 'string' ? input : input.url;
+                            if (url === '/api/chat/capabilities') {
+                                return Promise.resolve(Response.json({ imageInput: { enabled: false } }));
+                            }
+                            if (url === '/api/chat/conversations' && init.method === 'POST') {
+                                return Promise.resolve(Response.json({ conversations: [] }));
+                            }
+                            if (url === '/api/chat' && init.method === 'POST') {
+                                window.__tokenLimitRequests += 1;
+                                const response = {
+                                    status: 'incomplete', output_text: text,
+                                    incomplete_details: { reason: 'max_output_tokens' },
+                                    conversation_id: 'conversation-token-limit', message_stored: true
+                                };
+                                const headers = { 'X-Request-Id': 'req_token_limit' };
+                                if (!streaming) return Promise.resolve(Response.json(response, { headers }));
+                                const events = [
+                                    { type: 'response.created' }, { type: 'response.in_progress' },
+                                    { type: 'response.output_item.added' }, { type: 'response.content_part.added' }
+                                ];
+                                if (text) events.push({ type: 'response.output_text.delta', delta: text });
+                                events.push(
+                                    { type: 'response.output_text.done', text },
+                                    { type: 'response.content_part.done' },
+                                    { type: 'response.output_item.done' },
+                                    { type: 'response.incomplete', response }
+                                );
+                                const body = events.map((event, sequence_number) =>
+                                    `event: ${event.type}\ndata: ${JSON.stringify({ ...event, sequence_number })}\n\n`
+                                ).join('');
+                                return Promise.resolve(new Response(body, {
+                                    headers: { ...headers, 'Content-Type': 'text/event-stream' }
+                                }));
+                            }
+                            return originalFetch(input, init);
+                        };
+                        """,
+                        streaming, text,
+                    )
+                    self._click_sidebar_destination("Chat")
+                    textarea = self.wait.until(EC.element_to_be_clickable((By.ID, "rocky-chat-input")))
+                    textarea.send_keys("Explain a stack.")
+                    self._click_element(By.CSS_SELECTOR, "button[aria-label='Send message']")
+                    self.wait.until(EC.text_to_be_present_in_element(
+                        (By.CSS_SELECTOR, ".chat-error-notice"), "response token limit",
+                    ))
+                    self.wait.until(EC.presence_of_element_located(
+                        (By.CSS_SELECTOR, "button[aria-label='Send message']"),
+                    ))
+                    self.assertTrue(self.driver.find_element(By.ID, "rocky-chat-input").is_enabled())
+                    self.assertFalse(self.driver.find_elements(By.CSS_SELECTOR, ".chat-availability-notice"))
+                    messages = self.driver.find_elements(By.CSS_SELECTOR, ".chat-message-assistant")
+                    self.assertEqual(len(messages), 1 if text.strip() else 0)
+                    if text.strip():
+                        self.assertIn(text, messages[0].text)
+                    self.assertIn("req_token_limit", self.driver.find_element(By.CSS_SELECTOR, ".chat-error-notice").text)
+                    for viewport in ("desktop", "phone"):
+                        self._set_viewport(viewport)
+                        if viewport == "phone":
+                            self.wait.until(lambda driver: driver.execute_script(
+                                "return document.querySelector('nav.sidebar').getBoundingClientRect().right <= 1;"
+                            ), message="Expected the mobile sidebar transition to finish before capturing chat.")
+                        self._assert_no_document_horizontal_overflow()
+                        self._assert_no_framework_error_overlay()
+                        self.capture_evidence(f"chat-token-limit-{streaming}-{len(text)}-{viewport}")
+                    self._click_element(By.XPATH, "//button[normalize-space()='Edit and try again']")
+                    self.assertEqual(self.driver.find_element(By.ID, "rocky-chat-input").get_attribute("value"), "Explain a stack.")
+                    self.assertEqual(self.driver.execute_script("return window.__tokenLimitRequests"), 1)
+                    self._assert_no_browser_console_errors()
+        self._set_viewport("desktop")
+
     def test_chat_reconciles_browser_history_after_an_active_stream(self):
         self._login_as_admin()
         self.driver.execute_script(

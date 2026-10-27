@@ -35,6 +35,11 @@ unset ROCKY_MODEL
 `ROCKY_MODEL` must contain the exact identifier returned by the model-list
 request. Do not enter `rocky`; that is the service name, not a model name.
 
+Check the returned JSON's `status` as well as HTTP status. `incomplete` with
+reason `max_output_tokens` means the answer is partial or empty. These examples
+omit `max_output_tokens` to use the server default; thinking and visible output
+share that allowance.
+
 ## Stream a response
 
 If the selected model's metadata reports `supports_streaming: true`, use
@@ -64,6 +69,8 @@ unset ROCKY_MODEL
 ```
 
 The final success event is `response.completed`; Rocky does not send `[DONE]`.
+If the generation allowance runs out, the final event is `response.incomplete`
+with `incomplete_details.reason: "max_output_tokens"`. Any text received is partial.
 See the [Streaming Example](/?frame=help&doc=streaming) before writing an
 application parser.
 

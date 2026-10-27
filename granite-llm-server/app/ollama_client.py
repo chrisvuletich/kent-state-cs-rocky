@@ -266,7 +266,8 @@ class OllamaChatStream:
                     self._completed = True
                     break
 
-            if not self._completed or not self._content_present:
+            limit_reached = self._telemetry.get("provider", {}).get("stop_reason") == "length"
+            if not self._completed or (not self._content_present and not limit_reached):
                 raise OllamaCallError("invalid_response", self._telemetry)
         finally:
             self.close()
@@ -311,7 +312,10 @@ def call_ollama_chat(model, messages, options=None, think=None):
 
     message = data.get("message") if isinstance(data, dict) else None
     content = message.get("content") if isinstance(message, dict) else None
-    if not isinstance(content, str) or not content.strip():
+    # Thinking uses the same generation budget as visible output. A valid
+    # length-limited reply may therefore have no answer text at all.
+    limit_reached = telemetry["provider"].get("stop_reason") == "length"
+    if not isinstance(content, str) or (not content.strip() and not limit_reached):
         raise OllamaCallError("invalid_response", telemetry)
 
     return {

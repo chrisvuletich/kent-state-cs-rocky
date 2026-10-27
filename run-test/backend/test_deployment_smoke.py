@@ -275,7 +275,7 @@ class DeploymentSmokeTests(unittest.TestCase):
         generation_call = next(call for call in session.calls if call[0] == "POST")
         self.assertEqual(generation_call[2]["json"]["model"], "course-model")
         self.assertEqual(generation_call[2]["json"]["store"], False)
-        self.assertEqual(generation_call[2]["json"]["max_output_tokens"], 32)
+        self.assertNotIn("max_output_tokens", generation_call[2]["json"])
 
     def test_generation_reports_missing_rate_limit_headers_separately(self):
         routes = successful_routes()
@@ -321,6 +321,22 @@ class DeploymentSmokeTests(unittest.TestCase):
         output_text = smoke.validate_stream_events(events, "rocky-contract-model")
 
         self.assertEqual(output_text, "Hello Rocky!")
+
+    def test_smoke_identifies_token_limits_without_calling_them_transport_errors(self):
+        response = FakeResponse(200, {}, {"x-request-id": "req_limit"})
+        check = smoke.DeploymentSmoke.completed_json_check(
+            "generation", response,
+            {"status": "incomplete", "incomplete_details": {"reason": "max_output_tokens"}},
+            "course-model",
+        )
+        self.assertFalse(check.passed)
+        self.assertIn("token limit", check.detail)
+        self.assertIn("req_limit", check.detail)
+        fixture = ROOT / "run-test" / "fixtures" / "responses_text_stream.sse"
+        events = smoke.parse_stream_events(fixture.read_text(encoding="utf-8").splitlines())
+        events[-1] = ("response.incomplete", {"type": "response.incomplete", "sequence_number": len(events) - 1})
+        with self.assertRaisesRegex(smoke.StreamContractError, "token limit"):
+            smoke.validate_stream_events(events, "rocky-contract-model")
 
     def test_streaming_generation_rejects_a_sequence_gap(self):
         routes = successful_routes()
@@ -494,7 +510,7 @@ class DeploymentSmokeTests(unittest.TestCase):
         self.assertEqual(len(calls), smoke.QUEUE_BURST_REQUESTS)
         self.assertEqual(maximum_active, smoke.QUEUE_BURST_REQUESTS)
         self.assertTrue(all(
-            call[1]["json"]["max_output_tokens"] == 32
+            "max_output_tokens" not in call[1]["json"]
             and call[1]["json"]["store"] is False
             for call in calls
         ))

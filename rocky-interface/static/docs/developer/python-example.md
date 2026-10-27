@@ -48,18 +48,26 @@ model = models_response.json()["data"][0]["id"]
 payload = {
     "model": model,
     "input": "Hello Rocky!",
-    "max_output_tokens": 300,
     "store": False,
 }
 
 response = requests.post(url, headers=headers, json=payload, timeout=390)
 response.raise_for_status()
 
-print(response.json()["output_text"])
+data = response.json()
+print(data["output_text"])
+if data["status"] == "incomplete":
+    print("Answer unfinished:", data["incomplete_details"]["reason"])
 ```
 
 The model-list request prevents the example from depending on a model name that
 may change between semesters.
+
+Omit `max_output_tokens` for the advertised server default. This allowance covers
+both thinking and the visible answer; a small value such as 300 can be exhausted
+before any answer appears. An HTTP 200 can contain `status: "incomplete"`, so
+check the status before treating the text as a finished answer. Rocky does not
+silently increase a limit you explicitly set.
 
 ## Example Response
 
@@ -108,6 +116,8 @@ response = client.responses.create(
 )
 
 print(response.output_text)
+if response.status == "incomplete":
+    print("Answer unfinished:", response.incomplete_details.reason)
 ```
 
 ## Next Steps

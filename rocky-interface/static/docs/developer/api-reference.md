@@ -74,7 +74,7 @@ object does not change the required model-list fields.
 | `instructions` | string | No | System-level instructions applied before the input. | None |
 | `temperature` | number | No | Sampling temperature from 0 through 2. | Model default |
 | `top_p` | number | No | Nucleus sampling value from 0 through 1. | Model default |
-| `max_output_tokens` | integer | No | Maximum generated tokens. The text ceiling is `metadata.max_output_tokens`; requests containing an image may use `metadata.max_image_output_tokens`. | Applicable advertised ceiling |
+| `max_output_tokens` | integer | No | Maximum generated tokens, shared by thinking and visible output. The text ceiling is `metadata.max_output_tokens`; requests containing an image may use `metadata.max_image_output_tokens`. | Applicable advertised ceiling |
 | `frequency_penalty` | number | No | Frequency penalty from -2 through 2; its effect depends on the deployed model and Ollama runtime. | Model default |
 | `presence_penalty` | number | No | Presence penalty from -2 through 2; its effect depends on the deployed model and Ollama runtime. | Model default |
 | `metadata` | object | No | Application metadata returned with the response, up to 16 KiB when encoded as JSON. | `{}` |
@@ -190,6 +190,13 @@ Rocky's text stream starts with `response.created`, sends one or more
 is no `[DONE]` sentinel. Concatenate delta strings for live display, but treat
 the request as successful only after validating `response.completed`.
 
+If the generation allowance is exhausted, the stream ends with
+`response.incomplete` instead. Its response has `status: "incomplete"` and
+`incomplete_details: {"reason": "max_output_tokens"}`. It may contain partial
+text or no text deltas at all if thinking consumed the entire allowance.
+The output item's status is also `incomplete`; usage is retained. This is a
+reported generation limit, not a connection failure.
+
 Validation failures that occur before streaming begins remain ordinary JSON
 errors with their normal non-200 HTTP status. If generation fails after the SSE
 response begins, Rocky sends a terminal `error` event; the already-sent HTTP
@@ -235,6 +242,22 @@ Use `output_text` when you only need the generated text. The structured
 pattern. The built-in website uses a private conversation extension that is not
 part of the public student contract.
 
+## Incomplete response
+
+Buffered requests also return HTTP 200 when the model reaches its output limit.
+The response uses the same envelope as above, but `status` (including the
+assistant output item's status) is `incomplete`, and `incomplete_details` is
+`{"reason": "max_output_tokens"}`. `output_text` contains any partial answer,
+possibly an empty string. Check the response status before using the answer as
+finished data; HTTP status alone is not sufficient.
+
+Omit `max_output_tokens` to use the advertised server default. An explicitly
+smaller limit is honored without automatic increases or hidden retries. Thinking
+and the visible answer share the allowance. With `store: true`, the input and
+any nonempty partial answer can be used through `previous_response_id`; private
+thinking is not continuation context, and a new request does not resume that
+internal thinking exactly where it stopped.
+
 ## Error response
 
 ```json
@@ -263,7 +286,7 @@ when a retry is appropriate, and includes a Python `requests` example.
 
 | Status | Meaning |
 | --- | --- |
-| 200 | A buffered generation completed, or an SSE response began. Check the terminal SSE event for streamed success. |
+| 200 | A buffered response is available, or SSE began. Check `status` or the terminal SSE event: token-limited output is `incomplete`, not `completed`. |
 | 400 | The JSON, model, input, or generation settings are invalid. |
 | 401 | The Bearer key is missing, invalid, inactive, revoked, or expired. |
 | 404 | The requested previous response does not exist or is not owned by this credential. |

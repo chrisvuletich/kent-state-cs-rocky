@@ -355,6 +355,101 @@ class ApiRockyRouteContractTests(unittest.TestCase):
         )
         request_ai.assert_called_once()
 
+    def test_token_limited_responses_preserve_partial_text_usage_and_context(self):
+        for streaming in (False, True):
+            for text in ("", "Partial answer"):
+                with self.subTest(streaming=streaming, text=text):
+                    telemetry = {"provider": {
+                        "stop_reason": "length", "prompt_eval_count": 10, "eval_count": 300,
+                    }}
+                    upstream = Mock(status_code=200)
+                    upstream.json.return_value = {
+                        "output_text": text, "model": self.api.INFERENCE_MODEL,
+                        "metadata": {}, "telemetry": telemetry,
+                    }
+                    stream, stream_response = make_granite_event_stream(self.api, [
+                        *([{"type": "delta", "text": text}] if text else []),
+                        {"type": "completed", "metadata": {}, "telemetry": telemetry},
+                    ])
+                    with (
+                        patch.object(self.api, "ENABLE_STREAMING", True),
+                        patch.object(self.api, "get_key_doc", return_value={"owner_id": "limit-user"}),
+                        patch.object(self.api.requests, "post", return_value=upstream) as post,
+                        patch.object(self.api, "request_ai_stream", return_value=stream) as stream_request,
+                        patch.object(self.api, "save_response_context") as save_context,
+                        patch.object(self.api, "finish_telemetry_interaction", return_value=True) as finish,
+                    ):
+                        response = self.client.post(
+                            "/v1/responses",
+                            json={"model": self.api.PUBLIC_MODEL, "input": "Hello",
+                                  "max_output_tokens": 300, "stream": streaming},
+                            headers={"Authorization": "Bearer valid-key"}, buffered=True,
+                        )
+                    self.assertEqual(response.status_code, 200)
+                    if streaming:
+                        events = decode_sse_events(response)
+                        for event in events:
+                            STREAM_EVENT_ADAPTER.validate_python(event)
+                        self.assertEqual(events[-1]["type"], "response.incomplete")
+                        self.assertEqual([e["sequence_number"] for e in events], list(range(len(events))))
+                        data = events[-1]["response"]
+                        stream_request.assert_called_once()
+                        self.assertEqual(stream_request.call_args.args[0]["max_output_tokens"], 300)
+                        stream_response.close.assert_called_once()
+                    else:
+                        data = response.get_json()
+                        post.assert_called_once()
+                        self.assertEqual(post.call_args.kwargs["json"]["max_output_tokens"], 300)
+                    self.assertEqual(data["status"], "incomplete")
+                    self.assertEqual(data["incomplete_details"], {"reason": "max_output_tokens"})
+                    self.assertEqual(data["output_text"], text)
+                    self.assertEqual(data["output"][0]["status"], "incomplete")
+                    self.assertEqual(data["usage"]["output_tokens"], 300)
+                    context = save_context.call_args.args[2]
+                    self.assertEqual([m["role"] for m in context], ["user", "assistant"] if text else ["user"])
+                    self.assertEqual(finish.call_args.args[1], "failed")
+                    self.assertEqual(finish.call_args.kwargs["error_type"], "max_output_tokens")
+
+    def test_token_limited_web_turns_keep_failed_history_without_empty_assistant(self):
+        for streaming in (False, True):
+            for text in ("", "Partial answer"):
+                with self.subTest(streaming=streaming, text=text):
+                    stream, _response = make_granite_event_stream(self.api, [
+                        *([{"type": "delta", "text": text}] if text else []),
+                        {"type": "completed", "metadata": {},
+                         "telemetry": {"provider": {"stop_reason": "length", "eval_count": 300}}},
+                    ])
+                    with (
+                        patch.object(self.api, "ENABLE_STREAMING", True),
+                        patch.object(self.api, "get_key_doc", return_value={"owner_id": "student-one"}),
+                        patch.object(self.api, "should_use_web_history", return_value=True),
+                        patch.object(self.api, "get_chat_user_context", return_value={"user_id": "student-one"}),
+                        patch.object(self.api, "get_or_create_conversation", return_value="conversation-one"),
+                        patch.object(self.api, "load_recent_messages", return_value=[]),
+                        patch.object(self.api, "save_message", side_effect=["user-one", "assistant-one"]) as save,
+                        patch.object(self.api, "update_message_status") as update,
+                        patch.object(self.api, "request_ai_stream", return_value=stream),
+                        patch.object(self.api, "request_ai", return_value={
+                            "output_text": text, "model": self.api.INFERENCE_MODEL,
+                            "metadata": {}, "_telemetry": {"stop_reason": "length", "eval_count": 300},
+                        }),
+                        patch.object(self.api, "finish_telemetry_interaction", return_value=True),
+                    ):
+                        response = self.client.post(
+                            "/v1/responses", json={"model": self.api.PUBLIC_MODEL, "input": "Hello", "stream": streaming},
+                            headers={"Authorization": "Bearer valid-key"}, buffered=True,
+                        )
+                    self.assertEqual(response.status_code, 200)
+                    data = decode_sse_events(response)[-1]["response"] if streaming else response.get_json()
+                    self.assertEqual(data["status"], "incomplete")
+                    self.assertEqual(data["conversation_id"], "conversation-one")
+                    self.assertTrue(data["message_stored"])
+                    update.assert_called_once_with("conversation-one", "student-one", "user-one", "failed")
+                    self.assertEqual(save.call_count, 2 if text else 1)
+                    if text:
+                        self.assertEqual(save.call_args.kwargs["status"], "failed")
+                        self.assertEqual(save.call_args.kwargs["content"], text)
+
     def test_json_api_key_is_not_accepted(self):
         response = self.client.post(
             "/v1/responses",

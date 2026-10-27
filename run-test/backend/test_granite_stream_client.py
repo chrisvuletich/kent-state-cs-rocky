@@ -241,7 +241,8 @@ class GraniteStreamClientTests(unittest.TestCase):
             (503, "service_unavailable", "network"),
             (503, None, "network"),
             (504, "model_timeout", "timeout"),
-            (502, "model_error", "network"),
+            (502, "model_error", "model_error"),
+            (502, "invalid_model_response", "bad_response"),
         )
         for status, granite_type, expected_kind in cases:
             with self.subTest(status=status):

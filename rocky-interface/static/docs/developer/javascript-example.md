@@ -59,10 +59,18 @@ if (!response.ok) {
 const data = await response.json();
 
 console.log(data.output_text);
+if (data.status === "incomplete") {
+    console.warn("Answer unfinished:", data.incomplete_details.reason);
+}
 ```
 
 The model-list request prevents the example from depending on a model name that
 may change between semesters.
+
+The example omits `max_output_tokens` to use the advertised server default.
+Thinking and visible output share this allowance. Check `status` even after
+HTTP 200: `incomplete` with reason `max_output_tokens` means the answer is partial
+or empty, not that the model service is unavailable.
 
 ## Example Response
 

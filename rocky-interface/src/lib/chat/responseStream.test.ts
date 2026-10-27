@@ -47,6 +47,50 @@ function streamingResponse(chunks: Uint8Array[], contentType = 'text/event-strea
 }
 
 describe('consumeRockyResponseStream', () => {
+	it.each(['', '   ', 'Partial answer'])(
+		'accepts token-limited output %j without treating it as a broken stream',
+		async (text) => {
+			const events = successfulEvents().slice(0, 4);
+			if (text) events.push(event('response.output_text.delta', events.length, { delta: text }));
+			for (const type of [
+				'response.output_text.done',
+				'response.content_part.done',
+				'response.output_item.done'
+			]) {
+				events.push(event(type, events.length, { text }));
+			}
+			events.push(
+				event('response.incomplete', events.length, {
+					response: {
+						status: 'incomplete',
+						output_text: text,
+						incomplete_details: { reason: 'max_output_tokens' }
+					}
+				})
+			);
+			const result = await consumeRockyResponseStream(
+				streamingResponse([new TextEncoder().encode(encodeEvents(events))])
+			);
+			expect(result.response.status).toBe('incomplete');
+			expect(result.outputText).toBe(text);
+
+			for (const final of [
+				{ type: 'response.completed', response: { status: 'completed', output_text: '' } },
+				{ type: 'response.incomplete', response: { status: 'incomplete', output_text: text } },
+				{ type: 'response.incomplete', response: { status: 'completed', output_text: text } }
+			]) {
+				events[events.length - 1] = event(final.type, events.length - 1, {
+					response: final.response
+				});
+				await expect(
+					consumeRockyResponseStream(
+						streamingResponse([new TextEncoder().encode(encodeEvents(events))])
+					)
+				).rejects.toMatchObject({ code: 'invalid_model_response' });
+			}
+		}
+	);
+
 	it('decodes split UTF-8 chunks and reports cumulative text deltas', async () => {
 		const encoded = new TextEncoder().encode(encodeEvents(successfulEvents(), '\r\n'));
 		const emoji = new TextEncoder().encode('🪨');

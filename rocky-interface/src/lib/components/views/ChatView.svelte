@@ -306,6 +306,33 @@
 			const contentType = response.headers.get('content-type')?.toLowerCase() || '';
 			if (!contentType.startsWith('text/event-stream')) {
 				const data = await response.json().catch(() => null);
+				if (
+					data?.status === 'incomplete' &&
+					data?.incomplete_details?.reason === 'max_output_tokens'
+				) {
+					if (typeof data.conversation_id === 'string') setConversationId(data.conversation_id);
+					requestPersisted = requestPersisted || data.message_stored === true;
+					if (typeof data.output_text === 'string' && data.output_text.trim()) {
+						assistantMessageId = messageId();
+						messages = [
+							...messages,
+							{
+								id: assistantMessageId,
+								role: 'assistant',
+								content: data.output_text,
+								createdAt: new Date().toISOString(),
+								state: 'failed'
+							}
+						];
+					}
+					requestFailure = chatHttpFailure(
+						200,
+						{ error: { code: 'max_output_tokens' } },
+						{ requestId }
+					);
+					await loadConversations(false);
+					throw new Error(requestFailure.message);
+				}
 				if (typeof data?.output_text !== 'string' || !data.output_text.trim()) {
 					requestFailure = chatHttpFailure(
 						502,
@@ -342,6 +369,7 @@
 			}
 
 			const completed = await consumeRockyResponseStream(response, (outputText) => {
+				if (!assistantMessageId && !outputText.trim()) return;
 				const shouldFollow = messageList?.isNearBottom() ?? true;
 				if (!assistantMessageId) {
 					assistantMessageId = messageId();
@@ -379,6 +407,15 @@
 				setConversationId(completedConversationId);
 			}
 			requestPersisted = requestPersisted || completed.response.message_stored === true;
+			if (completed.response.status === 'incomplete') {
+				requestFailure = chatHttpFailure(
+					200,
+					{ error: { code: 'max_output_tokens' } },
+					{ requestId }
+				);
+				await loadConversations(false);
+				throw new Error(requestFailure.message);
+			}
 
 			messages = messages.map((message) =>
 				message.id === optimisticMessage.id

@@ -25,7 +25,10 @@ Always check that a request completed successfully before using the data returne
 ```javascript
 if (response.ok) {
     const data = await response.json();
-    console.log(data);
+    console.log(data.output_text);
+    if (data.status === "incomplete") {
+        console.warn("Answer unfinished:", data.incomplete_details.reason);
+    }
 } else {
     console.error("Request failed.");
 }
@@ -40,8 +43,18 @@ Network issues and server errors can happen. Make sure your application handles 
 - Retry requests only when appropriate.
 
 For streams, an HTTP 200 means only that SSE started. Treat
-`response.completed` as success, handle a terminal `error` event, and treat a
-connection that closes without either event as incomplete.
+`response.completed` as success, handle `response.incomplete` as token-limited
+output, and handle a terminal `error` event as a failure. A connection closing
+without any of these events is an interrupted stream.
+
+## Leave Room for Thinking and the Answer
+
+Omit `max_output_tokens` unless you need a specific allowance. The advertised
+default includes both thinking and visible output, not just the final answer.
+A small limit can produce partial text or no visible text at all. Rocky honors
+explicit limits; it will not raise them or retry silently. Check for
+`status: "incomplete"` and reason `max_output_tokens` before using an answer as
+finished data, especially in classification or code-generation tasks.
 
 ## Discover Optional Capabilities
 

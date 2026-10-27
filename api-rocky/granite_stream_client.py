@@ -44,13 +44,17 @@ def _request_error_kind(error):
 
 
 def granite_http_error_kind(status_code, granite_error_type):
-    """Map only Granite's explicit capacity signal to a public busy error."""
+    """Keep explicit capacity, timeout, and model failures distinct from transport errors."""
     if granite_error_type == "bad_request" or status_code == 400:
         return "bad_request"
     if granite_error_type == "model_busy":
         return "busy"
     if granite_error_type == "model_timeout" or status_code == 504:
         return "timeout"
+    if granite_error_type == "invalid_model_response":
+        return "bad_response"
+    if granite_error_type == "model_error":
+        return "model_error"
     return "network"
 
 
@@ -213,7 +217,9 @@ class GraniteEventStream:
             if terminal_event is None:
                 raise GraniteStreamError("bad_response")
             if terminal_event["type"] == "completed" and not saw_delta:
-                raise GraniteStreamError("bad_response")
+                provider = terminal_event["telemetry"].get("provider")
+                if not isinstance(provider, Mapping) or provider.get("stop_reason") != "length":
+                    raise GraniteStreamError("bad_response")
             yield terminal_event
         finally:
             self.close()

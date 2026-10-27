@@ -85,7 +85,9 @@ def validate_stream(events: Iterable[Mapping[str, object]]) -> None:
     if stream[-1]["type"] == "completed" and not any(
         event["type"] == "delta" for event in stream
     ):
-        raise ValueError("A completed Granite stream requires at least one text delta.")
+        provider = stream[-1]["telemetry"].get("provider")
+        if not isinstance(provider, Mapping) or provider.get("stop_reason") != "length":
+            raise ValueError("A completed Granite stream requires at least one text delta.")
 
 
 def _nonempty_string(value: object, name: str) -> str:

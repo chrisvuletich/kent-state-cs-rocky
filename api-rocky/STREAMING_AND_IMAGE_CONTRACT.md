@@ -53,6 +53,15 @@ Contract invariants:
 - Rocky declares `logprobs: []`; log probabilities are outside this subset.
 - The stream contains no `[DONE]` sentinel. `response.completed` is terminal.
 
+Token-limited generation uses the same framing, but may have zero deltas and
+ends with `response.incomplete`. The final response and message item have
+`status: incomplete`, and the response includes
+`incomplete_details: {"reason": "max_output_tokens"}`. Thinking consumes the
+same allowance as visible output, so the retained answer may be empty. Usage
+is preserved and explicit limits are never raised or retried automatically.
+Buffered requests use the same status/details under HTTP 200. Public stored
+context retains input and any nonempty partial answer, never an empty assistant.
+
 The required HTTP headers are:
 
 ```text
@@ -96,7 +105,10 @@ model outcome remains completed and the separate delivery status records
 `response.completed`.
 
 On success, response/context storage and required audit persistence complete
-before Rocky emits `response.completed`. If required terminal logging fails,
+before Rocky emits `response.completed` (or `response.incomplete` for a token
+limit). Token-limited interactions use audit outcome `failed`, HTTP 200, error
+stage `generation`, and error type `max_output_tokens`; the response body and
+stop reason distinguish them from model-service failures. If required terminal logging fails,
 Rocky deletes any newly saved continuation context and emits `error` instead of
 claiming completion. Delivery is marked completed only after the terminal frame
 has actually been yielded.
@@ -123,6 +135,13 @@ terminal stream error occurs. Stopping aborts the fetch and refreshes the owned
 conversation using the Rocky-specific response headers. The retained failed
 prompt and partial response remain visible for institutional review, while the
 immediate stop reconciliation does not offer a duplicate retry action.
+
+For `response.incomplete` (or a buffered incomplete response), chat shows an
+output-limit notice without marking the service unavailable, preserves partial
+text, and leaves the composer usable. It stores the prompt and any nonempty
+partial assistant reply with the existing `failed` status, excluding them from
+automatic conversation context. "Edit and try again" restores the prompt to the
+composer; it does not generate another request automatically.
 
 ## Internal Granite stream
 
@@ -157,7 +176,9 @@ Every admitted stream whose provider opens successfully:
 - Begins with exactly one `started` event.
 - Contains only `delta` events between start and termination.
 - Ends with exactly one of `completed`, `error`, or `cancelled`.
-- Requires at least one non-empty delta before `completed`.
+- Requires at least one non-empty delta before `completed`, unless terminal
+  `telemetry.provider.stop_reason` is `length`. Here `completed` means the
+  provider ended generation; Rocky translates the limit into `response.incomplete`.
 - Rejects unknown event fields so provider details cannot leak accidentally.
 
 A stream that expires or is cancelled while still waiting has not started

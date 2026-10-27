@@ -250,6 +250,11 @@ def validate_stream_events(
             raise StreamContractError(f"Rocky ended the stream with {code_text}: {message_text}")
 
     event_names = [event_name for event_name, _payload in events]
+    if event_names[-1] == "response.incomplete":
+        raise StreamContractError(
+            "Generation reached its token limit (response.incomplete); "
+            "the smoke check requires a finished answer, not partial output."
+        )
     required_prefix = [
         "response.created",
         "response.in_progress",
@@ -578,7 +583,6 @@ class DeploymentSmoke:
                 json={
                     "model": model.model_id,
                     "input": DEFAULT_PROMPT,
-                    "max_output_tokens": 32,
                     "store": False,
                 },
             )
@@ -631,7 +635,6 @@ class DeploymentSmoke:
                 json={
                     "model": model.model_id,
                     "input": DEFAULT_PROMPT,
-                    "max_output_tokens": 32,
                     "store": False,
                     "stream": True,
                 },
@@ -709,7 +712,6 @@ class DeploymentSmoke:
                             ],
                         }
                     ],
-                    "max_output_tokens": 32,
                     "store": False,
                     "stream": False,
                 },
@@ -757,7 +759,6 @@ class DeploymentSmoke:
                             f"Queue burst check {index + 1}. "
                             "Reply with one short sentence."
                         ),
-                        "max_output_tokens": 32,
                         "store": False,
                     },
                     timeout=self.config.timeout_seconds,
@@ -935,6 +936,12 @@ class DeploymentSmoke:
         output_text = payload.get("output_text")
         usage = payload.get("usage")
         request_id = request_id_for(response)
+        if payload.get("status") == "incomplete":
+            return SmokeCheck(
+                name, False,
+                f"Generation reached its token limit (request ID {request_id}); "
+                "the smoke check requires a finished answer, not partial output.",
+            )
         valid = (
             payload.get("status") == "completed"
             and payload.get("model") == expected_model

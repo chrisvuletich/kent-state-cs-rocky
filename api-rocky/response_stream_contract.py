@@ -27,7 +27,7 @@ TEXT_STREAM_SUFFIX = (
     "response.completed",
 )
 TEXT_STREAM_EVENT_TYPES = frozenset(
-    (*TEXT_STREAM_PREFIX, TEXT_STREAM_DELTA, *TEXT_STREAM_SUFFIX, TEXT_STREAM_ERROR)
+    (*TEXT_STREAM_PREFIX, TEXT_STREAM_DELTA, *TEXT_STREAM_SUFFIX, "response.incomplete", TEXT_STREAM_ERROR)
 )
 
 
@@ -112,7 +112,8 @@ def build_text_delta_event(item_id, text, sequence_number):
 
 
 def build_text_stream_suffix(final_response, item_id, output_text, sequence_number):
-    """Build the four successful terminal events after all deltas."""
+    """Close output items, then report completed or token-limited generation."""
+    status = final_response["status"]
     completed_part = {
         "type": "output_text",
         "text": output_text,
@@ -121,7 +122,7 @@ def build_text_stream_suffix(final_response, item_id, output_text, sequence_numb
     completed_item = {
         "id": item_id,
         "type": "message",
-        "status": "completed",
+        "status": status,
         "role": "assistant",
         "content": [completed_part],
     }
@@ -153,7 +154,7 @@ def build_text_stream_suffix(final_response, item_id, output_text, sequence_numb
             "item": completed_item,
         },
         {
-            "type": "response.completed",
+            "type": f"response.{status}",
             "sequence_number": sequence_number + 3,
             "response": response,
         },
@@ -176,16 +177,18 @@ def build_stream_error_event(message, code, sequence_number):
 
 
 def validate_text_stream_events(events: Iterable[Mapping[str, object]]) -> None:
-    """Validate Rocky's deliberately small successful text-stream subset."""
+    """Validate Rocky's completed or token-limited text-stream subset."""
     stream = [dict(event) for event in events]
-    if len(stream) < len(TEXT_STREAM_PREFIX) + len(TEXT_STREAM_SUFFIX) + 1:
-        raise ValueError("A text stream requires at least one delta event.")
+    incomplete = bool(stream and stream[-1].get("type") == "response.incomplete")
+    if len(stream) < len(TEXT_STREAM_PREFIX) + len(TEXT_STREAM_SUFFIX) + (0 if incomplete else 1):
+        raise ValueError("A completed text stream requires at least one delta event.")
 
     event_types = [event.get("type") for event in stream]
     delta_end = len(stream) - len(TEXT_STREAM_SUFFIX)
     if tuple(event_types[: len(TEXT_STREAM_PREFIX)]) != TEXT_STREAM_PREFIX:
         raise ValueError("Text stream prefix events are out of order.")
-    if tuple(event_types[delta_end:]) != TEXT_STREAM_SUFFIX:
+    expected_suffix = (*TEXT_STREAM_SUFFIX[:-1], "response.incomplete") if incomplete else TEXT_STREAM_SUFFIX
+    if tuple(event_types[delta_end:]) != expected_suffix:
         raise ValueError("Text stream terminal events are out of order.")
     if any(
         event_type != TEXT_STREAM_DELTA
@@ -210,8 +213,11 @@ def validate_text_stream_events(events: Iterable[Mapping[str, object]]) -> None:
         raise ValueError("The created response must be in progress.")
     if progress_response.get("status") != "in_progress":
         raise ValueError("The progress response must be in progress.")
-    if completed_response.get("status") != "completed":
-        raise ValueError("The completed response must have completed status.")
+    final_status = "incomplete" if incomplete else "completed"
+    if completed_response.get("status") != final_status:
+        raise ValueError("The final response status must match its terminal event.")
+    if incomplete and completed_response.get("incomplete_details") != {"reason": "max_output_tokens"}:
+        raise ValueError("An incomplete response must identify the output-token limit.")
 
     added_item = _object(stream[2].get("item"), "response.output_item.added.item")
     item_id = _nonempty_string(added_item.get("id"), "output item id")
@@ -240,7 +246,7 @@ def validate_text_stream_events(events: Iterable[Mapping[str, object]]) -> None:
     if done_part.get("text") != output_text:
         raise ValueError("The completed content part must contain the accumulated output.")
     completed_item = _object(item_done.get("item"), "response.output_item.done.item")
-    if completed_item.get("id") != item_id or completed_item.get("status") != "completed":
+    if completed_item.get("id") != item_id or completed_item.get("status") != final_status:
         raise ValueError("The completed item must match the added item.")
     completed_content = completed_item.get("content")
     if not isinstance(completed_content, list) or completed_content != [done_part]:

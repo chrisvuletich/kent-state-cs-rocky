@@ -53,6 +53,14 @@ to 16 MiB. A downstream disconnect closes the Ollama response and releases the
 inference slot immediately.
 
 Rocky consumes this private stream and translates it into public Responses SSE.
+
+The internal `completed` event means the provider finished generating, including
+when its token allowance ran out. In that case `telemetry.provider.stop_reason`
+is `length`, and zero visible text deltas are valid (thinking shares the output
+budget). Buffered replies likewise allow an empty string only for this stop
+reason. Rocky translates this into public `status: incomplete` /
+`response.incomplete`, preserving usage and partial output. Other empty or
+malformed model responses remain errors (`invalid_model_response`).
 Granite performs defense-in-depth image verification before contacting Ollama.
 Public rollout for either feature requires its matching flag in both services,
 and Granite readiness verifies the installed Ollama model advertises `vision`

@@ -65,7 +65,10 @@ response = requests.post(
     timeout=390,
 )
 response.raise_for_status()
-print(response.json()["output_text"])
+data = response.json()
+print(data["output_text"])
+if data["status"] == "incomplete":
+    print("Answer unfinished:", data["incomplete_details"]["reason"])
 ```
 
 ## JavaScript with Node.js
@@ -121,7 +124,11 @@ const response = await fetch("https://rocky.cs.kent.edu/v1/responses", {
 });
 
 if (!response.ok) throw new Error(await response.text());
-console.log((await response.json()).output_text);
+const data = await response.json();
+console.log(data.output_text);
+if (data.status === "incomplete") {
+    console.warn("Answer unfinished:", data.incomplete_details.reason);
+}
 ```
 
 ## Limits and rejected inputs

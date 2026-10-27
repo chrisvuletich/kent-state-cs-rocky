@@ -1660,8 +1660,77 @@ class TestGenerateRoute(unittest.TestCase):
                 response = self.client.post("/generate", json=granite_payload())
                 self.assertEqual(
                     (response.status_code, response.get_json()["error"]["type"]),
-                    (502, "model_error"),
+                    (502, "invalid_model_response"),
                 )
+
+    def test_token_limit_preserves_empty_or_partial_output_and_explicit_budget(self):
+        for text in ("", "Partial answer"):
+            for streaming in (False, True):
+                with self.subTest(text=text, streaming=streaming):
+                    provider_payload = {
+                        "model": "gemma4:latest",
+                        "message": {"content": text, "thinking": "private reasoning"},
+                        "done": True,
+                        "done_reason": "length",
+                        "eval_count": 300,
+                    }
+                    provider = make_ollama_response(provider_payload)
+                    provider.iter_content.return_value = [encode_json(provider_payload) + b"\n"]
+                    payload = {**granite_payload(), "stream": streaming, "max_output_tokens": 300}
+                    queue, ticket = make_admission()
+                    with (
+                        patch.object(granite_main, "ENABLE_STREAMING", True),
+                        patch.object(granite_main, "INFERENCE_QUEUE", queue),
+                        patch("app.ollama_client.requests.post", return_value=provider) as post,
+                    ):
+                        response = self.client.post("/generate", json=payload, buffered=True)
+                    self.assertEqual(response.status_code, 200)
+                    data = response.get_json() if not streaming else decode_ndjson(response)[-1]
+                    self.assertEqual(data["telemetry"]["provider"]["stop_reason"], "length")
+                    self.assertEqual(data["telemetry"]["provider"]["eval_count"], 300)
+                    if streaming:
+                        events = decode_ndjson(response)
+                        validate_stream(events)
+                        self.assertEqual("".join(e["text"] for e in events if e["type"] == "delta"), text)
+                    else:
+                        self.assertEqual(data["output_text"], text)
+                    self.assertNotIn("private reasoning", response.get_data(as_text=True))
+                    post.assert_called_once()
+                    self.assertEqual(json.loads(post.call_args.kwargs["data"])["options"]["num_predict"], 300)
+                    ticket.release.assert_called_once()
+
+    def test_explicit_reasoning_does_not_mask_token_exhaustion_without_thinking_metadata(self):
+        for streaming in (False, True):
+            with self.subTest(streaming=streaming):
+                provider_payload = {
+                    "message": {"content": ""}, "done": True, "done_reason": "length",
+                }
+                provider = make_ollama_response(provider_payload)
+                provider.iter_content.return_value = [encode_json(provider_payload) + b"\n"]
+                with (
+                    patch.object(granite_main, "ENABLE_STREAMING", True),
+                    patch("app.ollama_client.requests.post", return_value=provider),
+                ):
+                    response = self.client.post("/generate", json={
+                        **granite_payload(), "stream": streaming,
+                        "reasoning": {"effort": "medium", "summary": "detailed"},
+                    }, buffered=True)
+                self.assertEqual(response.status_code, 200)
+                if streaming:
+                    self.assertEqual(decode_ndjson(response)[-1]["type"], "completed")
+                else:
+                    self.assertEqual(response.get_json()["output_text"], "")
+
+    @patch("app.ollama_client.requests.post")
+    def test_token_limit_does_not_make_malformed_content_valid(self, post):
+        for message in ({}, {"content": None}, {"content": 123}):
+            with self.subTest(message=message):
+                post.return_value = make_ollama_response({
+                    "message": message, "done": True, "done_reason": "length",
+                })
+                response = self.client.post("/generate", json=granite_payload())
+                self.assertEqual(response.status_code, 502)
+                self.assertEqual(response.get_json()["error"]["type"], "invalid_model_response")
 
 
 if __name__ == "__main__":
